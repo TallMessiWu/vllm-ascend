@@ -1,0 +1,2495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fork Divergence —— 私仓相对上游的代码结构与变更</title>
+<style>
+:root {
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2129; --border:#30363d;
+  --fg:#e6edf3; --muted:#9da7b3; --add-bg:rgba(46,160,67,.18); --add-fg:#7ee787;
+  --del-bg:rgba(248,81,73,.18); --del-fg:#ffa198; --hunk:#79c0ff; --ctx:#c9d1d9;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+code,.diff,.path { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+a { color:var(--hunk); text-decoration:none; }
+header.top { padding:24px 28px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#161b22,#0d1117); }
+header.top h1 { margin:0 0 6px; font-size:22px; }
+header.top .sub { color:var(--muted); font-size:13px; line-height:1.7; }
+header.top .sub b { color:var(--fg); }
+.stats { display:flex; gap:14px; margin-top:14px; flex-wrap:wrap; }
+.stat-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 16px; min-width:96px; }
+.stat-card .n { font-size:22px; font-weight:700; }
+.stat-card .l { font-size:12px; color:var(--muted); }
+.layout { display:grid; grid-template-columns:300px 1fr; gap:0; align-items:start; }
+aside { position:sticky; top:0; align-self:start; height:100vh; overflow:auto;
+  border-right:1px solid var(--border); padding:16px; background:var(--panel); }
+aside h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:8px 0; }
+.tree { font-size:13px; line-height:1.9; }
+.tree ul { list-style:none; margin:0; padding-left:14px; border-left:1px dashed var(--border); }
+.tree > ul { padding-left:0; border:none; }
+.tree li.dir > .tname { color:var(--muted); }
+.tree li.file { position:relative; }
+.tree li.file a { color:var(--fg); }
+.tree li.file a:hover { color:var(--hunk); }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+main { padding:18px 22px 80px; min-width:0; }
+.toolbar { position:sticky; top:0; z-index:5; display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+  padding:12px 0; background:var(--bg); border-bottom:1px solid var(--border); margin-bottom:18px; }
+.cat-btn { cursor:pointer; border:1px solid var(--border); background:var(--panel); color:var(--fg);
+  padding:6px 12px; border-radius:20px; font-size:13px; display:inline-flex; align-items:center; }
+.cat-btn.active { background:var(--panel2); border-color:var(--muted); }
+.toolbar .spacer { flex:1; }
+.toolbar .mini { cursor:pointer; border:1px solid var(--border); background:transparent; color:var(--muted);
+  padding:6px 10px; border-radius:8px; font-size:12px; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:18px; overflow:hidden; }
+.card-h { display:flex; justify-content:space-between; align-items:center; gap:12px;
+  padding:12px 14px; border-bottom:1px solid var(--border); border-left:4px solid var(--c); background:var(--panel2); }
+.card-h-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
+.catbadge { color:#fff; font-size:11px; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+.newtag { font-size:11px; color:#fff; background:#16a34a; padding:2px 7px; border-radius:6px; }
+.prtag { font-size:11px; color:#fff; background:#db61a2; padding:2px 8px; border-radius:6px; text-decoration:none; white-space:nowrap; }
+.prtag:hover { filter:brightness(1.12); }
+.path { font-size:13px; color:var(--fg); word-break:break-all; }
+.card-h-right { display:flex; gap:8px; white-space:nowrap; }
+.stat { font-size:12px; font-weight:700; }
+.stat.add { color:var(--add-fg); } .stat.del { color:var(--del-fg); }
+.desc { padding:11px 14px; color:var(--muted); font-size:13.5px; line-height:1.7; border-bottom:1px solid var(--border); }
+.diff-wrap summary { cursor:pointer; padding:9px 14px; font-size:12.5px; color:var(--muted); user-select:none; }
+.diff-wrap summary:hover { color:var(--fg); }
+.diff { overflow-x:auto; font-size:12.5px; line-height:1.55; padding:6px 0 10px; }
+.dl { white-space:pre; padding:0 14px; }
+.dl.add { background:var(--add-bg); color:var(--add-fg); }
+.dl.del { background:var(--del-bg); color:var(--del-fg); }
+.dl.hunk { color:var(--hunk); background:rgba(56,139,253,.1); }
+.dl.meta { color:var(--muted); }
+.dl.ctx { color:var(--ctx); }
+.hidden { display:none !important; }
+footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px solid var(--border); }
+@media (max-width:900px) { .layout { grid-template-columns:1fr; } aside { position:static; height:auto; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
+  <div class="sub">
+    上游基线：<b>upstream/main</b> @ <b>28d7ed0a</b>　·　本仓分支：<b>alpha</b><br>
+    目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
+    分层说明：本仓由 <b>upstream/main → PR #9382 → 私仓自有 → PR #9310</b> 逐层叠加而成；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener">PR #9382</a>（[Ascend950][Feature] Support custom op for GDN on Ascend 950，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>
+    重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
+  </div>
+  <div class="stats">
+    <div class="stat-card"><div class="n">23</div><div class="l">变更文件</div></div>
+    <div class="stat-card"><div class="n">3</div><div class="l">分类</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+543</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-60</div><div class="l">删除行</div></div>
+  </div>
+</header>
+<div class="layout">
+  <aside>
+    <h2>文件结构</h2>
+    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">recurrent_gated_delta_rule/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" class="tname">recurrent_gated_delta_rule_tiling_arch35.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" class="tname">recurrent_gated_delta_rule.h</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">moe/</span><ul><li class="dir"><span class="tname">causal_conv1d/</span><ul><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" class="tname">causal_conv1d_regbase.h</a></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" class="tname">causal_conv1d.h</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_fwd_o/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" class="tname">chunk_fwd_o_def.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_gated_delta_rule_fwd_h/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" class="tname">chunk_gated_delta_rule_fwd_h_def.cpp</a></li></ul></li></ul></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_build_aclnn_sh__a5op_pr" class="tname">build_aclnn.sh</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_device_device_op_py__a5op_pr" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" class="tname">chunk_scaled_dot_kkt.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" class="tname">solve_tril.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_layernorm_py__a5op_pr" class="tname">layernorm.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <button class="cat-btn active" data-cat="all">全部 (23)</button>
+<button class="cat-btn" data-cat="a5op_pr" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复） (11)</button>
+<button class="cat-btn" data-cat="pr_9310" style="--c:#9333ea"><span class="dot" style="background:#9333ea"></span>来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode (11)</button>
+<button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (1)</button>
+      <span class="spacer"></span>
+      <button class="mini" id="expand">展开全部</button>
+      <button class="mini" id="collapse">折叠全部</button>
+    </div>
+    
+<section class="card" id="f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      <span class="newtag">新增</span>
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/attention/recurrent_gated_delta_rule/op_host/arch35/recurrent_gated_delta_rule_tiling_arch35.cpp</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+207</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">新增：A5（arch35）专用 AscendC tiling 实现（recurrent_gated_delta_rule）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">new file mode 100644</div>
+<div class="dl meta">index 00000000..05e3b7cc</div>
+<div class="dl meta">--- /dev/null</div>
+<div class="dl meta">+++ b/csrc/attention/recurrent_gated_delta_rule/op_host/arch35/recurrent_gated_delta_rule_tiling_arch35.cpp</div>
+<div class="dl hunk">@@ -0,0 +1,207 @@</div>
+<div class="dl add">+/**</div>
+<div class="dl add">+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.</div>
+<div class="dl add">+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of</div>
+<div class="dl add">+ * Please refer to the License for details. You may not use this file except in compliance with the License.</div>
+<div class="dl add">+ * THIS SOFTWARE IS PROVIDED ON AN &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,</div>
+<div class="dl add">+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.</div>
+<div class="dl add">+ * See LICENSE in the root of the software repository for the full text of the License.</div>
+<div class="dl add">+ */</div>
+<div class="dl add">+</div>
+<div class="dl add">+/*!</div>
+<div class="dl add">+ * \file recurrent_gated_delta_rule_tiling_arch35.cpp</div>
+<div class="dl add">+ * \brief</div>
+<div class="dl add">+ */</div>
+<div class="dl add">+#include &quot;recurrent_gated_delta_rule_tiling.h&quot;</div>
+<div class="dl add">+</div>
+<div class="dl add">+#include &lt;array&gt;</div>
+<div class="dl add">+</div>
+<div class="dl add">+#include &quot;platform/platform_ascendc.h&quot;</div>
+<div class="dl add">+#include &quot;tiling_base/tiling_templates_registry.h&quot;</div>
+<div class="dl add">+</div>
+<div class="dl add">+namespace optiling {</div>
+<div class="dl add">+namespace {</div>
+<div class="dl add">+</div>
+<div class="dl add">+constexpr uint64_t RGDR_ASCEND_950_TEMPLATE_PRIORITY = 1000;</div>
+<div class="dl add">+</div>
+<div class="dl add">+constexpr size_t QUERY_INDEX = 0;</div>
+<div class="dl add">+constexpr size_t KEY_INDEX = 1;</div>
+<div class="dl add">+constexpr size_t VALUE_INDEX = 2;</div>
+<div class="dl add">+constexpr size_t BETA_INDEX = 3;</div>
+<div class="dl add">+constexpr size_t STATE_INDEX = 4;</div>
+<div class="dl add">+constexpr size_t CUSEQLENS_INDEX = 5;</div>
+<div class="dl add">+constexpr size_t SSM_STATE_INDICES_INDEX = 6;</div>
+<div class="dl add">+</div>
+<div class="dl add">+constexpr size_t DIM_0 = 0;</div>
+<div class="dl add">+constexpr size_t DIM_1 = 1;</div>
+<div class="dl add">+constexpr size_t DIM_2 = 2;</div>
+<div class="dl add">+</div>
+<div class="dl add">+class RecurrentGatedDeltaRuleTilingArch35 final : public RecurrentGatedDeltaRuleTiling {</div>
+<div class="dl add">+public:</div>
+<div class="dl add">+    explicit RecurrentGatedDeltaRuleTilingArch35(gert::TilingContext *context)</div>
+<div class="dl add">+        : RecurrentGatedDeltaRuleTiling(context)</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+protected:</div>
+<div class="dl add">+    bool IsCapable() override</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        auto platformInfo = context_-&gt;GetPlatformInfo();</div>
+<div class="dl add">+        if (platformInfo == nullptr) {</div>
+<div class="dl add">+            return false;</div>
+<div class="dl add">+        }</div>
+<div class="dl add">+        auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);</div>
+<div class="dl add">+        return ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+    ge::graphStatus GetShapeAttrsInfo() override</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        OP_CHECK_IF(CheckContext() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid context.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(AnalyzeDtype() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid dtypes.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(AnalyzeShapesArch35() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid shapes.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(GetScale() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid GetScale.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(GetOptionalInput() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid GetOptionalInput.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(AnalyzeFormat() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid Format.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+    ge::graphStatus DoOpTiling() override</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        OP_CHECK_IF(CalUbSizeArch35() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;CalUbSize failed.&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        PrintTilingData();</div>
+<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+private:</div>
+<div class="dl add">+    ge::graphStatus AnalyzeShapesArch35()</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        const auto &amp;queryShape = context_-&gt;GetInputShape(QUERY_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;keyShape = context_-&gt;GetInputShape(KEY_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;valueShape = context_-&gt;GetInputShape(VALUE_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;betaShape = context_-&gt;GetInputShape(BETA_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;stateShape = context_-&gt;GetInputShape(STATE_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;cuSeqlensShape = context_-&gt;GetInputShape(CUSEQLENS_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+        const auto &amp;ssmStateShape = context_-&gt;GetInputShape(SSM_STATE_INDICES_INDEX)-&gt;GetOriginShape();</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(CheckShapeDimAndRelation(queryShape, keyShape, valueShape, betaShape, stateShape, cuSeqlensShape,</div>
+<div class="dl add">+                                             ssmStateShape) != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;AnalyzeShapes rule failed: CheckShapeDimAndRelation&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        tilingData_.t = queryShape.GetDim(DIM_0);</div>
+<div class="dl add">+        tilingData_.nk = queryShape.GetDim(DIM_1);</div>
+<div class="dl add">+        tilingData_.dk = queryShape.GetDim(DIM_2);</div>
+<div class="dl add">+        tilingData_.nv = valueShape.GetDim(DIM_1);</div>
+<div class="dl add">+        tilingData_.dv = valueShape.GetDim(DIM_2);</div>
+<div class="dl add">+        tilingData_.sBlockNum = stateShape.GetDim(DIM_0);</div>
+<div class="dl add">+        tilingData_.b = cuSeqlensShape.GetDim(DIM_0) - 1;</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(CheckShapeValueRangeAndRule() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;AnalyzeShapes rule failed: CheckShapeValueRangeAndRule&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        UpdateDynamicBlockDimByTaskUnits();</div>
+<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+    ge::graphStatus CalUbSizeArch35()</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        struct RuleItem {</div>
+<div class="dl add">+            const char *name;</div>
+<div class="dl add">+            HostRuleFn fn;</div>
+<div class="dl add">+        };</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(RuleInitUbCalcContext() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+            OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleInitUbCalcContext&quot;),</div>
+<div class="dl add">+            return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(RuleCalcFixedUbBytes() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcFixedUbBytes&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(RuleCalcWorkingUbBytes() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcWorkingUbBytes&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(RuleCalcVStepCoeff() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcVStepCoeff&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_CHECK_IF(FinalizeVStepFromUbArch35() != ge::GRAPH_SUCCESS,</div>
+<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: FinalizeVStepFromUbArch35&quot;),</div>
+<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
+<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+</div>
+<div class="dl add">+    ge::graphStatus FinalizeVStepFromUbArch35()</div>
+<div class="dl add">+    {</div>
+<div class="dl add">+        BufferProfile selected;</div>
+<div class="dl add">+        const std::array&lt;BufferProfile, 3&gt; candidates = {{</div>
+<div class="dl add">+            BufferProfile(1u, 1u, 0u, 0u, false),</div>
+<div class="dl add">+            BufferProfile(1u, 2u, 0u, 0u, false),</div>
+<div class="dl add">+            BufferProfile(2u, 2u, 0u, 0u, false),</div>
+<div class="dl add">+        }};</div>
+<div class="dl add">+</div>
+<div class="dl add">+        for (const auto &amp;candidate : candidates) {</div>
+<div class="dl add">+            BufferProfile profile;</div>
+<div class="dl add">+            if (!EvaluateBufferProfile(ubCalcCtx_.ubSize, ubCalcCtx_.workingUbBytes, ubCalcCtx_.aDk,</div>
+<div class="dl add">+                                       candidate.stateOutBufferNum, candidate.attnOutBufferNum, profile)) {</div>
+<div class="dl add">+                continue;</div>
+<div class="dl add">+            }</div>
+<div class="dl add">+            if (IsBetterProfile(profile, selected)) {</div>
+<div class="dl add">+                selected = profile;</div>
+<div class="dl add">+            }</div>
+<div class="dl add">+        }</div>
+<div class="dl add">+</div>
+<div class="dl add">+        OP_LOGD(context_-&gt;GetNodeName(),</div>
+<div class="dl add">+                &quot;selected profile: stateOutBufferNum=[%u], attnOutBufferNum=[%u], vStep=[%u], repeatTime=[%u], &quot;</div>
+<div class="dl add">+                &quot;valid=[%d]&quot;,</div>
+<div class="dl add">+                selected.stateOutBufferNum, selected.attnOutBufferNum, selected.vStep, selected.repeatTime,</div>
+<div class="dl add">+                selected.valid);</div>
+<div class="dl add">+</div>
+<div class="dl add">+        if (!selected.valid) {</div>
+<div class="dl add">+            OP_LOGE(context_-&gt;GetNodeName(), &quot;vStep should be bigger than 8, shape is too big&quot;);</div>
+<div class="dl add">+            return ge::GRAPH_FAILED;</div>
+<div class="dl add">+        }</div>
+<div class="dl add">+</div>
+<div class="dl add">+        auto stateDtype = context_-&gt;GetInputDesc(STATE_INDEX)-&gt;GetDataType();</div>
+<div class="dl add">+        int64_t stateDtypeSize = (stateDtype == ge::DT_FLOAT) ? 4 : 2;</div>
+<div class="dl add">+        int64_t queueCoeff =</div>
+<div class="dl add">+            (stateDtypeSize + static_cast&lt;int64_t&gt;(stateDtypeSize * selected.stateOutBufferNum)) * ubCalcCtx_.aDk +</div>
+<div class="dl add">+            static_cast&lt;int64_t&gt;(4 * selected.attnOutBufferNum);</div>
+<div class="dl add">+        int64_t ubRestBytes =</div>
+<div class="dl add">+            ubCalcCtx_.ubSize - ubCalcCtx_.fixedUbBytes - queueCoeff * static_cast&lt;int64_t&gt;(selected.vStep);</div>
+<div class="dl add">+        if (ubRestBytes &lt; 0) {</div>
+<div class="dl add">+            OP_LOGE(context_-&gt;GetNodeName(), &quot;ubRestBytes should be non-negative, but got %ld&quot;, ubRestBytes);</div>
+<div class="dl add">+            return ge::GRAPH_FAILED;</div>
+<div class="dl add">+        }</div>
+<div class="dl add">+</div>
+<div class="dl add">+        tilingData_.ubCalSize = compileInfo_.ubSize;</div>
+<div class="dl add">+        tilingData_.vStep = selected.vStep;</div>
+<div class="dl add">+        tilingData_.stateOutBufferNum = selected.stateOutBufferNum;</div>
+<div class="dl add">+        tilingData_.attnOutBufferNum = selected.attnOutBufferNum;</div>
+<div class="dl add">+        tilingData_.ubRestBytes = static_cast&lt;uint32_t&gt;(ubRestBytes);</div>
+<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
+<div class="dl add">+    }</div>
+<div class="dl add">+};</div>
+<div class="dl add">+</div>
+<div class="dl add">+} // namespace</div>
+<div class="dl add">+</div>
+<div class="dl add">+REGISTER_OPS_TILING_TEMPLATE(RecurrentGatedDeltaRule,</div>
+<div class="dl add">+                             RecurrentGatedDeltaRuleTilingArch35,</div>
+<div class="dl add">+                             RGDR_ASCEND_950_TEMPLATE_PRIORITY);</div>
+<div class="dl add">+</div>
+<div class="dl add">+} // namespace optiling</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+1</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index f8f40885..c5b126d0 100644</div>
+<div class="dl meta">--- a/csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</div>
+<div class="dl meta">+++ b/csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</div>
+<div class="dl hunk">@@ -623,4 +623,4 @@ private:</div>
+<div class="dl ctx">     uint64_t blockIdx;</div>
+<div class="dl ctx"> };</div>
+<div class="dl ctx"> } // namespace RecurrentGatedDeltaRule</div>
+<div class="dl del">-#endif</div>
+<div class="dl add">+#endif</div>
+<div class="dl ctx">\ No newline at end of file</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_build_aclnn_sh__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/build_aclnn.sh</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+3</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">在 ascend950 自定义算子编译列表加入 chunk_fwd_o / chunk_gated_delta_rule_fwd_h（causal_conv1d / recurrent_gated_delta_rule 已随 #9224 在列）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 1af0e091..6d3bee88 100755</div>
+<div class="dl meta">--- a/csrc/build_aclnn.sh</div>
+<div class="dl meta">+++ b/csrc/build_aclnn.sh</div>
+<div class="dl hunk">@@ -244,8 +244,10 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
+<div class="dl ctx">         &quot;swiglu_group_quant&quot;</div>
+<div class="dl ctx">         &quot;load_index_kv_cache&quot;</div>
+<div class="dl ctx">         &quot;indexer_compress_epilog_v2&quot;</div>
+<div class="dl del">-        &quot;recurrent_gated_delta_rule&quot;</div>
+<div class="dl ctx">         &quot;causal_conv1d&quot;</div>
+<div class="dl add">+        &quot;recurrent_gated_delta_rule&quot;</div>
+<div class="dl add">+        &quot;chunk_fwd_o&quot;</div>
+<div class="dl add">+        &quot;chunk_gated_delta_rule_fwd_h&quot;</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     CUSTOM_OPS=$(IFS=&#x27;;&#x27;; echo &quot;${CUSTOM_OPS_ARRAY[*]}&quot;)</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+1</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index d54b73be..cb12fb95 100644</div>
+<div class="dl meta">--- a/csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</div>
+<div class="dl meta">+++ b/csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</div>
+<div class="dl hunk">@@ -173,4 +173,4 @@ __aicore__ inline void AdvanceFnLocalPartialsRegbase(LocalTensor&lt;T&gt; ring, LocalT</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> } // namespace NsCausalConv1d</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-#endif // CAUSAL_CONV1D_REGBASE_H</div>
+<div class="dl add">+#endif // CAUSAL_CONV1D_REGBASE_H</div>
+<div class="dl ctx">\ No newline at end of file</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+3</span><span class="stat del">-4</span>
+    </div>
+  </div>
+  <div class="desc">kernel 收尾微调：补齐 namespace / #endif 注释与文件末尾换行</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 2a9b2165..f95cb572 100644</div>
+<div class="dl meta">--- a/csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</div>
+<div class="dl meta">+++ b/csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</div>
+<div class="dl hunk">@@ -1016,7 +1016,6 @@</div>
+<div class="dl ctx">  </div>
+<div class="dl ctx">  #undef CAUSAL_CONV1D_CLASS</div>
+<div class="dl ctx">  #undef CAUSAL_CONV1D_TEMPLATE_ARGS</div>
+<div class="dl del">- </div>
+<div class="dl del">- }</div>
+<div class="dl del">- #endif</div>
+<div class="dl del">- </div>
+<div class="dl ctx">\ No newline at end of file</div>
+<div class="dl add">+</div>
+<div class="dl add">+} // namespace NsCausalConv1d</div>
+<div class="dl add">+#endif // CAUSAL_CONV1D_H</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+2</span><span class="stat del">-2</span>
+    </div>
+  </div>
+  <div class="desc">启用 ascend950 AICore 配置（取消 ascend950 注释）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 1ac4af69..e71f19db 100644</div>
+<div class="dl meta">--- a/csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</div>
+<div class="dl meta">+++ b/csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</div>
+<div class="dl hunk">@@ -95,10 +95,10 @@ public:</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910b&quot;, aicore_config);</div>
+<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910_93&quot;, aicore_config);</div>
+<div class="dl del">-        // this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
+<div class="dl add">+        this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
+<div class="dl ctx">     }</div>
+<div class="dl ctx"> };</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> OP_ADD(ChunkFwdO);</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-} // namespace ops</div>
+<div class="dl ctx">\ No newline at end of file</div>
+<div class="dl add">+} // namespace ops</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+1</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">启用 ascend950 AICore 配置（取消 ascend950 注释）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 00b0dd31..2b7fc198 100644</div>
+<div class="dl meta">--- a/csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</div>
+<div class="dl meta">+++ b/csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</div>
+<div class="dl hunk">@@ -106,7 +106,7 @@ public:</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910b&quot;, aicore_config);</div>
+<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910_93&quot;, aicore_config);</div>
+<div class="dl del">-        // this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
+<div class="dl add">+        this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     }</div>
+<div class="dl ctx"> };</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_device_device_op_py__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">vllm_ascend/device/device_op.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+117</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">BaseDeviceAdaptor / A5DeviceAdaptor 新增 chunk_scaled_dot_kkt_fwd / solve_tril_16x16 / npu_gemma_rms_norm 三个设备算子封装：A5 走自定义算子、其余走 triton kernel，统一经 DeviceOperator 分发</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index e0ca9a79..b17f701e 100644</div>
+<div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
+<div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
+<div class="dl hunk">@@ -23,6 +23,8 @@ from vllm_ascend.device.mxfp_compat import (</div>
+<div class="dl ctx">     QUANT_DTYPES,</div>
+<div class="dl ctx">     SCALE_DTYPES,</div>
+<div class="dl ctx"> )</div>
+<div class="dl add">+from vllm_ascend.ops.triton.fla.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd_kernel</div>
+<div class="dl add">+from vllm_ascend.ops.triton.fla.solve_tril import solve_tril_16x16_kernel</div>
+<div class="dl ctx"> from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -308,6 +310,64 @@ class BaseDeviceAdaptor:</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         return context_layer</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def chunk_scaled_dot_kkt_fwd(NT, k, beta, g_cumsum, A, cu_seqlens, chunk_indices, T, B, H, Hg, K, BT, BK):</div>
+<div class="dl add">+        chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
+<div class="dl add">+            k=k,</div>
+<div class="dl add">+            beta=beta,</div>
+<div class="dl add">+            g_cumsum=g_cumsum,</div>
+<div class="dl add">+            A=A,</div>
+<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
+<div class="dl add">+            chunk_indices=chunk_indices,</div>
+<div class="dl add">+            T=T,</div>
+<div class="dl add">+            B=B,</div>
+<div class="dl add">+            H=H,</div>
+<div class="dl add">+            Hg=Hg,</div>
+<div class="dl add">+            K=K,</div>
+<div class="dl add">+            BT=BT,</div>
+<div class="dl add">+            BK=BK,</div>
+<div class="dl add">+            num_warps=8,</div>
+<div class="dl add">+            num_stages=3,</div>
+<div class="dl add">+            multibuffer=True,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        return A</div>
+<div class="dl add">+</div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def solve_tril_16x16(</div>
+<div class="dl add">+        A,</div>
+<div class="dl add">+        Ad,</div>
+<div class="dl add">+        cu_seqlens,</div>
+<div class="dl add">+        chunk_indices,</div>
+<div class="dl add">+        T,</div>
+<div class="dl add">+        H,</div>
+<div class="dl add">+        BT,</div>
+<div class="dl add">+        LARGE_BLOCK_T,</div>
+<div class="dl add">+        NT,</div>
+<div class="dl add">+        B,</div>
+<div class="dl add">+    ):</div>
+<div class="dl add">+        extract_slice_stride_1 = LARGE_BLOCK_T // 32</div>
+<div class="dl add">+        solve_tril_16x16_kernel[NT, B * H](</div>
+<div class="dl add">+            A=A,</div>
+<div class="dl add">+            Ad=Ad,</div>
+<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
+<div class="dl add">+            chunk_indices=chunk_indices,</div>
+<div class="dl add">+            T=T,</div>
+<div class="dl add">+            H=H,</div>
+<div class="dl add">+            BT=BT,</div>
+<div class="dl add">+            LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
+<div class="dl add">+            EXTRACT_SLICE_STRIDE_1=extract_slice_stride_1,</div>
+<div class="dl add">+            num_warps=1,</div>
+<div class="dl add">+            num_stages=4,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        return Ad</div>
+<div class="dl add">+</div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def npu_gemma_rms_norm(x, weight, variance_epsilon):</div>
+<div class="dl add">+        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, weight, variance_epsilon)</div>
+<div class="dl add">+        return x</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">     @classmethod</div>
+<div class="dl hunk">@@ -629,6 +689,63 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         return context_layer</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def chunk_scaled_dot_kkt_fwd(NT, k, beta, g_cumsum, A, cu_seqlens, chunk_indices, T, B, H, Hg, K, BT, BK):</div>
+<div class="dl add">+        chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
+<div class="dl add">+            k=k,</div>
+<div class="dl add">+            beta=beta,</div>
+<div class="dl add">+            g_cumsum=g_cumsum,</div>
+<div class="dl add">+            A=A,</div>
+<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
+<div class="dl add">+            chunk_indices=chunk_indices,</div>
+<div class="dl add">+            T=T,</div>
+<div class="dl add">+            B=B,</div>
+<div class="dl add">+            H=H,</div>
+<div class="dl add">+            Hg=Hg,</div>
+<div class="dl add">+            K=K,</div>
+<div class="dl add">+            BT=BT,</div>
+<div class="dl add">+            BK=BK,</div>
+<div class="dl add">+            num_warps=8,</div>
+<div class="dl add">+            num_stages=3,</div>
+<div class="dl add">+            multibuffer=True,</div>
+<div class="dl add">+            disable_tightly_coupled_buffer_reuse=True,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        return A</div>
+<div class="dl add">+</div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def solve_tril_16x16(</div>
+<div class="dl add">+        A,</div>
+<div class="dl add">+        Ad,</div>
+<div class="dl add">+        cu_seqlens,</div>
+<div class="dl add">+        chunk_indices,</div>
+<div class="dl add">+        T,</div>
+<div class="dl add">+        H,</div>
+<div class="dl add">+        BT,</div>
+<div class="dl add">+        LARGE_BLOCK_T,</div>
+<div class="dl add">+        NT,</div>
+<div class="dl add">+        B,</div>
+<div class="dl add">+    ):</div>
+<div class="dl add">+        solve_tril_16x16_kernel[NT, B * H](</div>
+<div class="dl add">+            A=A,</div>
+<div class="dl add">+            Ad=Ad,</div>
+<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
+<div class="dl add">+            chunk_indices=chunk_indices,</div>
+<div class="dl add">+            T=T,</div>
+<div class="dl add">+            H=H,</div>
+<div class="dl add">+            BT=BT,</div>
+<div class="dl add">+            LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
+<div class="dl add">+            EXTRACT_SLICE_STRIDE_1=1,</div>
+<div class="dl add">+            num_warps=1,</div>
+<div class="dl add">+            num_stages=4,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        return Ad</div>
+<div class="dl add">+</div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def npu_gemma_rms_norm(x, weight, variance_epsilon):</div>
+<div class="dl add">+        x, _ = torch_npu.npu_rms_norm(x, 1.0 + weight, variance_epsilon)</div>
+<div class="dl add">+        return x</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def get_device_adaptor() -&gt; type[&quot;BaseDeviceAdaptor&quot;]:</div>
+<div class="dl ctx">     ascend_device_type = get_ascend_device_type()</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_layernorm_py__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">vllm_ascend/ops/layernorm.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+3</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">AscendGemmaRMSNorm 改用 DeviceOperator.npu_gemma_rms_norm 分发（A5 自定义算子 / 通用实现）—— 此前私仓「规避自定义 gemma rms norm」已并入 PR #9382</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 2e057efa..ed4a6a02 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/layernorm.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/layernorm.py</div>
+<div class="dl hunk">@@ -20,6 +20,7 @@ from torch import nn</div>
+<div class="dl ctx"> from vllm.config import get_current_vllm_config</div>
+<div class="dl ctx"> from vllm.model_executor.layers.layernorm import GemmaRMSNorm, RMSNorm, RMSNormGated</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+from vllm_ascend.device.device_op import DeviceOperator</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.layernorm_gated import layer_norm_fwd_npu</div>
+<div class="dl ctx"> from vllm_ascend.utils import enable_custom_op, get_weight_prefetch_method</div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -105,7 +106,8 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):</div>
+<div class="dl ctx">                 x, _, residual = torch_npu.npu_add_rms_norm(x, residual, 1.0 + self.weight, self.variance_epsilon)</div>
+<div class="dl ctx">             return x, residual</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)</div>
+<div class="dl add">+        x = DeviceOperator.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)</div>
+<div class="dl add">+</div>
+<div class="dl ctx">         return x</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+4</span><span class="stat del">-4</span>
+    </div>
+  </div>
+  <div class="desc">chunk_scaled_dot_kkt_fwd 改经 DeviceOperator.chunk_scaled_dot_kkt_fwd 分发（替代直接调用 triton kernel），A5 路由到自定义算子 —— 此前私仓「A5 精度修复」已并入 PR #9382</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 864a29e6..542a277d 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</div>
+<div class="dl hunk">@@ -121,7 +121,10 @@ def chunk_scaled_dot_kkt_fwd(</div>
+<div class="dl ctx">     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)</div>
+<div class="dl ctx">     A = torch.empty(B, T, H, BT, device=k.device, dtype=output_dtype)</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
+<div class="dl add">+    from vllm_ascend.device.device_op import DeviceOperator</div>
+<div class="dl add">+</div>
+<div class="dl add">+    A = DeviceOperator.chunk_scaled_dot_kkt_fwd(</div>
+<div class="dl add">+        NT=NT,</div>
+<div class="dl ctx">         k=k,</div>
+<div class="dl ctx">         beta=torch.permute(beta, (2, 0, 1)).contiguous(),</div>
+<div class="dl ctx">         g_cumsum=torch.permute(g_cumsum, (2, 0, 1)).contiguous(),</div>
+<div class="dl hunk">@@ -135,8 +138,5 @@ def chunk_scaled_dot_kkt_fwd(</div>
+<div class="dl ctx">         K=K,</div>
+<div class="dl ctx">         BT=BT,</div>
+<div class="dl ctx">         BK=128,</div>
+<div class="dl del">-        num_warps=8,</div>
+<div class="dl del">-        num_stages=3,</div>
+<div class="dl del">-        multibuffer=True,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     return A</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" data-cats="a5op_pr">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
+      <code class="path">vllm_ascend/ops/triton/fla/solve_tril.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+8</span><span class="stat del">-4</span>
+    </div>
+  </div>
+  <div class="desc">solve_tril 改经 DeviceOperator.solve_tril_16x16 分发；kernel 新增 EXTRACT_SLICE_STRIDE_1 constexpr 参数控制 extract_slice 的 stride —— 此前私仓「编译错误修复」已并入 PR #9382</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index fb46ccfa..d1151afd 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/triton/fla/solve_tril.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/solve_tril.py</div>
+<div class="dl hunk">@@ -29,6 +29,7 @@ def solve_tril_16x16_kernel(</div>
+<div class="dl ctx">     BT: tl.constexpr,</div>
+<div class="dl ctx">     IS_VARLEN: tl.constexpr,</div>
+<div class="dl ctx">     LARGE_BLOCK_T: tl.constexpr,</div>
+<div class="dl add">+    EXTRACT_SLICE_STRIDE_1: tl.constexpr,</div>
+<div class="dl ctx"> ):</div>
+<div class="dl ctx">     i_t, i_bh = tl.program_id(0), tl.program_id(1)</div>
+<div class="dl ctx">     i_b, i_h = i_bh // H, i_bh % H</div>
+<div class="dl hunk">@@ -102,7 +103,7 @@ def solve_tril_16x16_kernel(</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         # for loop to update N_BLOCKS row vector</div>
+<div class="dl ctx">         for i in range(1, 16):</div>
+<div class="dl del">-            nblks_vec16 = -extract_slice(local_ori_A, (i, 0), (1, 16 * N_BLOCKS), (16 * N_BLOCKS, 1))</div>
+<div class="dl add">+            nblks_vec16 = -extract_slice(local_ori_A, (i, 0), (1, 16 * N_BLOCKS), (EXTRACT_SLICE_STRIDE_1, 1))</div>
+<div class="dl ctx">             b_a = tl.reshape(nblks_vec16, (N_BLOCKS, 16))</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">             dot_tmp = tl.trans(b_a[:, :, None] * b_A, (1, 0, 2))</div>
+<div class="dl hunk">@@ -362,7 +363,9 @@ def solve_tril(</div>
+<div class="dl ctx">     chunk_indices = chunk_indices_large_block</div>
+<div class="dl ctx">     NT = len(chunk_indices) if cu_seqlens is not None else triton.cdiv(T, LARGE_BLOCK_T)</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    solve_tril_16x16_kernel[NT, B * H](</div>
+<div class="dl add">+    from vllm_ascend.device.device_op import DeviceOperator</div>
+<div class="dl add">+</div>
+<div class="dl add">+    DeviceOperator.solve_tril_16x16(</div>
+<div class="dl ctx">         A=A,</div>
+<div class="dl ctx">         Ad=Ad,</div>
+<div class="dl ctx">         cu_seqlens=cu_seqlens,</div>
+<div class="dl hunk">@@ -371,8 +374,8 @@ def solve_tril(</div>
+<div class="dl ctx">         H=H,</div>
+<div class="dl ctx">         BT=BT,</div>
+<div class="dl ctx">         LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
+<div class="dl del">-        num_warps=1,</div>
+<div class="dl del">-        num_stages=4,</div>
+<div class="dl add">+        NT=NT,</div>
+<div class="dl add">+        B=B,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     if BT == 16:</div>
+<div class="dl hunk">@@ -397,4 +400,5 @@ def solve_tril(</div>
+<div class="dl ctx">         num_warps=4,</div>
+<div class="dl ctx">         num_stages=3,</div>
+<div class="dl ctx">     )</div>
+<div class="dl add">+</div>
+<div class="dl ctx">     return Ai</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_tests_ut_attention_test_attention_v1_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">tests/ut/attention/test_attention_v1.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+26</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">在既有上游单测中新增用例 test_unpadded_preserves_internal_seq_lens_cpu：校验 unpadded 后内部 _seq_lens_cpu 正确截断、seq_lens_cpu 保持 None</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 4ac75d5e..dfc169e5 100644</div>
+<div class="dl meta">--- a/tests/ut/attention/test_attention_v1.py</div>
+<div class="dl meta">+++ b/tests/ut/attention/test_attention_v1.py</div>
+<div class="dl hunk">@@ -82,6 +82,32 @@ class TestAscendAttentionMetadataBuilder(TestBase):</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         self.assertFalse(result)</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    def test_unpadded_preserves_internal_seq_lens_cpu(self):</div>
+<div class="dl add">+        internal_seq_lens_cpu = torch.tensor([4, 5, 6], dtype=torch.int32)</div>
+<div class="dl add">+        common_attn_metadata = AscendCommonAttentionMetadata(</div>
+<div class="dl add">+            query_start_loc=torch.tensor([0, 2, 5, 9]),</div>
+<div class="dl add">+            query_start_loc_cpu=torch.tensor([0, 2, 5, 9]),</div>
+<div class="dl add">+            seq_lens=torch.tensor([4, 5, 6], dtype=torch.int32),</div>
+<div class="dl add">+            _seq_lens_cpu=internal_seq_lens_cpu,</div>
+<div class="dl add">+            seq_lens_cpu=None,</div>
+<div class="dl add">+            num_computed_tokens_cpu=None,</div>
+<div class="dl add">+            num_reqs=3,</div>
+<div class="dl add">+            num_actual_tokens=9,</div>
+<div class="dl add">+            max_query_len=4,</div>
+<div class="dl add">+            block_table_tensor=torch.zeros((3, 1), dtype=torch.int32),</div>
+<div class="dl add">+            slot_mapping=torch.arange(9, dtype=torch.int32),</div>
+<div class="dl add">+            causal=True,</div>
+<div class="dl add">+            actual_seq_lengths_q=[2, 3, 4],</div>
+<div class="dl add">+            positions=torch.arange(9),</div>
+<div class="dl add">+            attn_state=AscendAttentionState.ChunkedPrefill,</div>
+<div class="dl add">+            max_seq_len=6,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        unpadded_metadata = common_attn_metadata.unpadded(num_actual_tokens=5, num_actual_reqs=2)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        self.assertTrue(torch.equal(unpadded_metadata._seq_lens_cpu, internal_seq_lens_cpu[:2]))</div>
+<div class="dl add">+        self.assertIsNone(unpadded_metadata.seq_lens_cpu)</div>
+<div class="dl add">+</div>
+<div class="dl ctx">     @patch(&quot;vllm_ascend.attention.attention_v1.AscendMetadata&quot;)</div>
+<div class="dl ctx">     def test_build(self, mock_ascend_metadata):</div>
+<div class="dl ctx">         common_attn_metadata = AscendCommonAttentionMetadata(</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">tests/ut/ops/test_gdn_attn_builder.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+-</span><span class="stat del">--</span>
+    </div>
+  </div>
+  <div class="desc">由 tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py 重命名迁移并扩展：覆盖 AscendGDNAttentionMetadataBuilder 的 chunk meta 预构建与 argsort stable 排序逻辑</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">similarity index 86%</div>
+<div class="dl meta">rename from tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py</div>
+<div class="dl meta">rename to tests/ut/ops/test_gdn_attn_builder.py</div>
+<div class="dl meta">index 44fcf320..b94b90e4 100644</div>
+<div class="dl meta">--- a/tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py</div>
+<div class="dl meta">+++ b/tests/ut/ops/test_gdn_attn_builder.py</div>
+<div class="dl hunk">@@ -9,15 +9,19 @@ import torch</div>
+<div class="dl ctx"> from vllm.config.compilation import CUDAGraphMode</div>
+<div class="dl ctx"> from vllm.model_executor.layers.fla.ops import index as _fla_index</div>
+<div class="dl ctx"> from vllm.v1.attention.backend import CommonAttentionMetadata</div>
+<div class="dl del">-from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder</div>
+<div class="dl ctx"> from vllm.v1.kv_cache_interface import MambaSpec</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-import vllm_ascend.patch.worker.patch_gdn_attn as patch_gdn_attn</div>
+<div class="dl add">+from vllm_ascend.ops import gdn_attn_builder as ascend_gdn_attn_builder</div>
+<div class="dl ctx"> from vllm_ascend.ops.gdn import (</div>
+<div class="dl add">+    AscendGatedDeltaNetAttention,</div>
+<div class="dl ctx">     get_non_spec_causal_conv1d_host_args,</div>
+<div class="dl ctx">     get_non_spec_chunked_prefill_meta,</div>
+<div class="dl ctx">     to_int64_tuple,</div>
+<div class="dl ctx"> )</div>
+<div class="dl add">+from vllm_ascend.ops.gdn_attn_builder import (</div>
+<div class="dl add">+    AscendGDNAttentionBackend,</div>
+<div class="dl add">+    AscendGDNAttentionMetadataBuilder,</div>
+<div class="dl add">+)</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla import utils as fla_utils</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import (</div>
+<div class="dl ctx">     prepare_chunk_indices as runtime_prepare_chunk_indices,</div>
+<div class="dl hunk">@@ -150,7 +154,7 @@ def _make_builder(*, device: torch.device, num_heads: int, num_speculative_token</div>
+<div class="dl ctx">         dtypes=(torch.float32,),</div>
+<div class="dl ctx">         mamba_cache_mode=&quot;none&quot;,</div>
+<div class="dl ctx">     )</div>
+<div class="dl del">-    return GDNAttentionMetadataBuilder(spec, [&quot;layer0&quot;], vllm_config, device)</div>
+<div class="dl add">+    return AscendGDNAttentionMetadataBuilder(spec, [&quot;layer0&quot;], vllm_config, device)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def _build_attn_metadata(</div>
+<div class="dl hunk">@@ -190,31 +194,31 @@ def _build_attn_metadata(</div>
+<div class="dl ctx"> def _assert_chunk_meta_matches_runtime(builder, chunk_meta, cu_seqlens: torch.Tensor) -&gt; None:</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl ctx">         chunk_meta.chunk_indices_chunk64,</div>
+<div class="dl del">-        runtime_prepare_chunk_indices(cu_seqlens, patch_gdn_attn._GDN_CHUNK_SIZE),</div>
+<div class="dl add">+        runtime_prepare_chunk_indices(cu_seqlens, ascend_gdn_attn_builder._GDN_CHUNK_SIZE),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl ctx">         chunk_meta.chunk_offsets_chunk64,</div>
+<div class="dl del">-        runtime_prepare_chunk_offsets(cu_seqlens, patch_gdn_attn._GDN_CHUNK_SIZE),</div>
+<div class="dl add">+        runtime_prepare_chunk_offsets(cu_seqlens, ascend_gdn_attn_builder._GDN_CHUNK_SIZE),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl ctx">         chunk_meta.update_chunk_offsets_chunk64,</div>
+<div class="dl ctx">         runtime_prepare_update_chunk_offsets(</div>
+<div class="dl ctx">             cu_seqlens,</div>
+<div class="dl del">-            patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+            ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">         ),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl ctx">         chunk_meta.final_chunk_indices_chunk64,</div>
+<div class="dl ctx">         runtime_prepare_final_chunk_indices(</div>
+<div class="dl ctx">             cu_seqlens,</div>
+<div class="dl del">-            patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+            ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">         ),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl ctx">         chunk_meta.chunk_indices_large_block,</div>
+<div class="dl ctx">         runtime_prepare_chunk_indices(</div>
+<div class="dl ctx">             cu_seqlens,</div>
+<div class="dl del">-            patch_gdn_attn._GDN_SOLVE_TRIL_LARGE_BLOCK_SIZE,</div>
+<div class="dl add">+            ascend_gdn_attn_builder._GDN_SOLVE_TRIL_LARGE_BLOCK_SIZE,</div>
+<div class="dl ctx">         ),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     assert torch.equal(</div>
+<div class="dl hunk">@@ -237,6 +241,28 @@ def _patch_missing_runtime_cdiv(monkeypatch: pytest.MonkeyPatch) -&gt; None:</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl add">+def test_ascend_gdn_attention_uses_ascend_backend():</div>
+<div class="dl add">+    assert AscendGatedDeltaNetAttention.get_attn_backend(object()) is AscendGDNAttentionBackend</div>
+<div class="dl add">+    assert AscendGDNAttentionBackend.get_builder_cls() is AscendGDNAttentionMetadataBuilder</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl add">+def test_sequence_index_buffers_cover_spec_decode_when_cudagraph_disabled():</div>
+<div class="dl add">+    builder = _make_builder(</div>
+<div class="dl add">+        device=torch.device(&quot;cpu&quot;),</div>
+<div class="dl add">+        num_heads=32,</div>
+<div class="dl add">+        num_speculative_tokens=3,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+    assert builder.spec_sequence_indices_cpu.numel() &gt;= builder.vllm_config.scheduler_config.max_num_seqs</div>
+<div class="dl add">+</div>
+<div class="dl add">+    spec_indices, non_spec_indices = builder._copy_sequence_indices_to_device(</div>
+<div class="dl add">+        torch.tensor([True], dtype=torch.bool),</div>
+<div class="dl add">+        num_spec_decodes=1,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+</div>
+<div class="dl add">+    assert torch.equal(spec_indices.cpu(), torch.tensor([0]))</div>
+<div class="dl add">+    assert non_spec_indices.numel() == 0</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> def _expected_conv1d_host_args(attn_metadata) -&gt; tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:</div>
+<div class="dl ctx">     return (</div>
+<div class="dl ctx">         to_int64_tuple(attn_metadata.non_spec_query_start_loc),</div>
+<div class="dl hunk">@@ -317,7 +343,7 @@ def test_build_non_spec_causal_conv1d_host_meta_avoids_seq_lens_cpu_fallback():</div>
+<div class="dl ctx">         has_initial_state=torch.tensor([True, False]),</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    host_meta = patch_gdn_attn._build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl add">+    host_meta = ascend_gdn_attn_builder._build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl ctx">         builder,</div>
+<div class="dl ctx">         attn_metadata,</div>
+<div class="dl ctx">         non_spec_query_start_loc_cpu=torch.tensor([0, 4, 12], dtype=torch.int32),</div>
+<div class="dl hunk">@@ -338,7 +364,7 @@ def test_build_non_spec_causal_conv1d_host_meta_requires_has_initial_state():</div>
+<div class="dl ctx">         has_initial_state=None,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     with pytest.raises(RuntimeError, match=&quot;has_initial_state&quot;):</div>
+<div class="dl del">-        patch_gdn_attn._build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl add">+        ascend_gdn_attn_builder._build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl ctx">             builder,</div>
+<div class="dl ctx">             attn_metadata,</div>
+<div class="dl ctx">             non_spec_query_start_loc_cpu=torch.tensor([0, 4, 12], dtype=torch.int32),</div>
+<div class="dl hunk">@@ -386,8 +412,8 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     builder._ascend_gdn_chunk_meta_initialized = True</div>
+<div class="dl ctx">     builder._ascend_gdn_chunk_meta_device = SimpleNamespace(type=&quot;npu&quot;)</div>
+<div class="dl del">-    builder._ascend_gdn_chunk_size = patch_gdn_attn._GDN_CHUNK_SIZE</div>
+<div class="dl del">-    builder._ascend_gdn_large_block_size = patch_gdn_attn._GDN_SOLVE_TRIL_LARGE_BLOCK_SIZE</div>
+<div class="dl add">+    builder._ascend_gdn_chunk_size = ascend_gdn_attn_builder._GDN_CHUNK_SIZE</div>
+<div class="dl add">+    builder._ascend_gdn_large_block_size = ascend_gdn_attn_builder._GDN_SOLVE_TRIL_LARGE_BLOCK_SIZE</div>
+<div class="dl ctx">     builder._ascend_gdn_cumsum_block_size = 256</div>
+<div class="dl ctx">     builder._ascend_gdn_chunked_prefill_pool_idx = -1</div>
+<div class="dl ctx">     builder._ascend_gdn_chunked_prefill_pool = [</div>
+<div class="dl hunk">@@ -410,16 +436,11 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl ctx">         helper_calls[kwargs[&quot;chunk_size&quot;]] = kwargs</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     monkeypatch.setattr(</div>
+<div class="dl del">-        patch_gdn_attn,</div>
+<div class="dl add">+        ascend_gdn_attn_builder,</div>
+<div class="dl ctx">         &quot;build_chunk_meta_device&quot;,</div>
+<div class="dl ctx">         fake_build_chunk_meta_device,</div>
+<div class="dl ctx">         raising=False,</div>
+<div class="dl ctx">     )</div>
+<div class="dl del">-    monkeypatch.setattr(</div>
+<div class="dl del">-        patch_gdn_attn,</div>
+<div class="dl del">-        &quot;_prepare_chunk_counts_cpu&quot;,</div>
+<div class="dl del">-        lambda *args, **kwargs: pytest.fail(&quot;_prepare_chunk_counts_cpu should not be used on the device path&quot;),</div>
+<div class="dl del">-    )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     attn_metadata = builder.build(</div>
+<div class="dl ctx">         0,</div>
+<div class="dl hunk">@@ -430,22 +451,22 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     expected_chunk_indices = runtime_prepare_chunk_indices(</div>
+<div class="dl ctx">         attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl del">-        patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+        ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     expected_chunk_offsets = runtime_prepare_chunk_offsets(</div>
+<div class="dl ctx">         attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl del">-        patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+        ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     expected_update_chunk_offsets = runtime_prepare_update_chunk_offsets(</div>
+<div class="dl ctx">         attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl del">-        patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+        ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     expected_final_chunk_indices = runtime_prepare_final_chunk_indices(</div>
+<div class="dl ctx">         attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl del">-        patch_gdn_attn._GDN_CHUNK_SIZE,</div>
+<div class="dl add">+        ascend_gdn_attn_builder._GDN_CHUNK_SIZE,</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    chunk64_call = helper_calls[patch_gdn_attn._GDN_CHUNK_SIZE]</div>
+<div class="dl add">+    chunk64_call = helper_calls[ascend_gdn_attn_builder._GDN_CHUNK_SIZE]</div>
+<div class="dl ctx">     out_chunk_indices = cast(torch.Tensor, chunk64_call[&quot;out_chunk_indices&quot;])</div>
+<div class="dl ctx">     out_chunk_offsets = cast(torch.Tensor, chunk64_call[&quot;out_chunk_offsets&quot;])</div>
+<div class="dl ctx">     out_update_chunk_offsets = cast(</div>
+<div class="dl hunk">@@ -456,6 +477,7 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl ctx">         torch.Tensor,</div>
+<div class="dl ctx">         chunk64_call[&quot;out_final_chunk_indices&quot;],</div>
+<div class="dl ctx">     )</div>
+<div class="dl add">+    fallback_meta = get_non_spec_chunked_prefill_meta(attn_metadata)</div>
+<div class="dl ctx">     assert chunk64_call[&quot;cu_seqlens&quot;] is attn_metadata.non_spec_query_start_loc</div>
+<div class="dl ctx">     assert out_chunk_indices.shape == expected_chunk_indices.shape</div>
+<div class="dl ctx">     assert out_chunk_indices.dtype == expected_chunk_indices.dtype</div>
+<div class="dl hunk">@@ -465,6 +487,10 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl ctx">     assert out_update_chunk_offsets.dtype == torch.int32</div>
+<div class="dl ctx">     assert out_final_chunk_indices.shape == expected_final_chunk_indices.shape</div>
+<div class="dl ctx">     assert out_final_chunk_indices.dtype == torch.int32</div>
+<div class="dl add">+    assert fallback_meta.cu_seqlens_host == tuple(attn_metadata.non_spec_query_start_loc.to(torch.int64).tolist())</div>
+<div class="dl add">+    assert fallback_meta.chunk_indices_chunk64_host == tuple(</div>
+<div class="dl add">+        expected_chunk_indices.to(torch.int64).reshape(-1).tolist()</div>
+<div class="dl add">+    )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> @pytest.mark.parametrize(</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">tests/ut/ops/test_gdn_chunk_meta.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+82</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">新增 GDN chunk 元数据用例，覆盖 _build_seq_lens / _validate_cu_seqlens / build_chunk_meta_device</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 34ae1e6f..318eaeb1 100644</div>
+<div class="dl meta">--- a/tests/ut/ops/test_gdn_chunk_meta.py</div>
+<div class="dl meta">+++ b/tests/ut/ops/test_gdn_chunk_meta.py</div>
+<div class="dl hunk">@@ -159,6 +159,8 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
+<div class="dl ctx">         (),</div>
+<div class="dl ctx">         {</div>
+<div class="dl ctx">             &quot;block_indices_cumsum&quot;: None,</div>
+<div class="dl add">+            &quot;cu_seqlens_host&quot;: (0, 4, 7),</div>
+<div class="dl add">+            &quot;chunk_indices_chunk64_host&quot;: (0, 0, 1, 0),</div>
+<div class="dl ctx">             &quot;chunk_indices_chunk64&quot;: None,</div>
+<div class="dl ctx">             &quot;chunk_offsets_chunk64&quot;: chunk_offsets,</div>
+<div class="dl ctx">             &quot;update_chunk_offsets_chunk64&quot;: update_chunk_offsets,</div>
+<div class="dl hunk">@@ -259,6 +261,86 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
+<div class="dl ctx">     assert pcp_calls == [(&quot;o_update&quot;, chunk_offsets)]</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl add">+def test_chunk_gated_delta_rule_fwd_uses_prebuilt_host_meta_without_runtime_tolist(</div>
+<div class="dl add">+    monkeypatch: pytest.MonkeyPatch,</div>
+<div class="dl add">+):</div>
+<div class="dl add">+    prebuilt_meta = type(</div>
+<div class="dl add">+        &quot;PrebuiltMeta&quot;,</div>
+<div class="dl add">+        (),</div>
+<div class="dl add">+        {</div>
+<div class="dl add">+            &quot;block_indices_cumsum&quot;: None,</div>
+<div class="dl add">+            &quot;cu_seqlens_host&quot;: (0, 4, 7),</div>
+<div class="dl add">+            &quot;chunk_indices_chunk64_host&quot;: (0, 0, 1, 0),</div>
+<div class="dl add">+            &quot;chunk_indices_chunk64&quot;: torch.tensor([[0, 0], [1, 0]], dtype=torch.int32),</div>
+<div class="dl add">+            &quot;chunk_offsets_chunk64&quot;: torch.tensor([0, 1, 2], dtype=torch.int32),</div>
+<div class="dl add">+            &quot;update_chunk_offsets_chunk64&quot;: torch.tensor([0, 2, 4], dtype=torch.int32),</div>
+<div class="dl add">+            &quot;final_chunk_indices_chunk64&quot;: torch.tensor([1, 3], dtype=torch.int32),</div>
+<div class="dl add">+            &quot;chunk_indices_large_block&quot;: None,</div>
+<div class="dl add">+        },</div>
+<div class="dl add">+    )()</div>
+<div class="dl add">+</div>
+<div class="dl add">+    q = _DummyTensor(&quot;q&quot;)</div>
+<div class="dl add">+    k = _DummyTensor(&quot;k&quot;)</div>
+<div class="dl add">+    v = _DummyTensor(&quot;v&quot;)</div>
+<div class="dl add">+    g = _DummyTensor(&quot;g&quot;)</div>
+<div class="dl add">+    beta = _DummyTensor(&quot;beta&quot;)</div>
+<div class="dl add">+    initial_state = _DummyTensor(&quot;initial_state&quot;)</div>
+<div class="dl add">+</div>
+<div class="dl add">+    captured: dict[str, tuple[int, ...] | None] = {}</div>
+<div class="dl add">+</div>
+<div class="dl add">+    monkeypatch.setattr(chunk, &quot;get_forward_context&quot;, lambda: type(&quot;Ctx&quot;, (), {&quot;attn_metadata&quot;: None})())</div>
+<div class="dl add">+    monkeypatch.setattr(</div>
+<div class="dl add">+        chunk,</div>
+<div class="dl add">+        &quot;get_pcp_group&quot;,</div>
+<div class="dl add">+        lambda: type(&quot;Group&quot;, (), {&quot;world_size&quot;: 1, &quot;rank_in_group&quot;: 0})(),</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+    monkeypatch.setattr(chunk, &quot;chunk_local_cumsum&quot;, lambda *args, **kwargs: _DummyTensor(&quot;g_cumsum&quot;))</div>
+<div class="dl add">+    monkeypatch.setattr(chunk, &quot;chunk_scaled_dot_kkt_fwd&quot;, lambda *args, **kwargs: _DummyTensor(&quot;A&quot;))</div>
+<div class="dl add">+    monkeypatch.setattr(chunk, &quot;solve_tril&quot;, lambda *args, **kwargs: _DummyTensor(&quot;A_solved&quot;))</div>
+<div class="dl add">+    monkeypatch.setattr(chunk, &quot;recompute_w_u_fwd&quot;, lambda *args, **kwargs: (_DummyTensor(&quot;w&quot;), _DummyTensor(&quot;u&quot;)))</div>
+<div class="dl add">+    monkeypatch.setattr(</div>
+<div class="dl add">+        torch.ops._C_ascend,</div>
+<div class="dl add">+        &quot;chunk_gated_delta_rule_fwd_h&quot;,</div>
+<div class="dl add">+        lambda *args, **kwargs: (</div>
+<div class="dl add">+            captured.update(</div>
+<div class="dl add">+                {</div>
+<div class="dl add">+                    &quot;cu_seqlens&quot;: kwargs[&quot;cu_seqlens&quot;],</div>
+<div class="dl add">+                    &quot;chunk_indices&quot;: kwargs[&quot;chunk_indices&quot;],</div>
+<div class="dl add">+                }</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            or (_DummyTensor(&quot;h&quot;), _DummyTensor(&quot;v_new&quot;), _DummyTensor(&quot;final_state&quot;))</div>
+<div class="dl add">+        ),</div>
+<div class="dl add">+        raising=False,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+    monkeypatch.setattr(</div>
+<div class="dl add">+        torch.ops._C_ascend,</div>
+<div class="dl add">+        &quot;chunk_fwd_o&quot;,</div>
+<div class="dl add">+        lambda *args, **kwargs: _DummyTensor(&quot;o_ascend&quot;),</div>
+<div class="dl add">+        raising=False,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+    monkeypatch.setattr(</div>
+<div class="dl add">+        torch.Tensor,</div>
+<div class="dl add">+        &quot;tolist&quot;,</div>
+<div class="dl add">+        lambda self: pytest.fail(&quot;runtime should not convert device tensors to host tuples&quot;),</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+</div>
+<div class="dl add">+    chunk.chunk_gated_delta_rule_fwd(</div>
+<div class="dl add">+        q=q,</div>
+<div class="dl add">+        k=k,</div>
+<div class="dl add">+        v=v,</div>
+<div class="dl add">+        g=g,</div>
+<div class="dl add">+        beta=beta,</div>
+<div class="dl add">+        scale=1.0,</div>
+<div class="dl add">+        initial_state=initial_state,</div>
+<div class="dl add">+        output_final_state=False,</div>
+<div class="dl add">+        cu_seqlens=torch.tensor([0, 4, 7], dtype=torch.int32),</div>
+<div class="dl add">+        prebuilt_meta=prebuilt_meta,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+</div>
+<div class="dl add">+    assert captured[&quot;cu_seqlens&quot;] == prebuilt_meta.cu_seqlens_host</div>
+<div class="dl add">+    assert captured[&quot;chunk_indices&quot;] == prebuilt_meta.chunk_indices_chunk64_host</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> def test_build_chunk_meta_device_rejects_non_npu_input():</div>
+<div class="dl ctx">     cu_seqlens = torch.tensor([0, 4, 4, 12], dtype=torch.int32)</div>
+<div class="dl ctx"> </div></div>
+  </details>
+</section>
+
+<section class="card" id="f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">tests/ut/spec_decode/test_eagle_proposer.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+44</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">新增 Ascend Eagle Proposer 用例，覆盖异步 spec decode 下 proposer 初始化与行为</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 42c3a382..90f571db 100644</div>
+<div class="dl meta">--- a/tests/ut/spec_decode/test_eagle_proposer.py</div>
+<div class="dl meta">+++ b/tests/ut/spec_decode/test_eagle_proposer.py</div>
+<div class="dl hunk">@@ -145,6 +145,50 @@ def assert_attr_equal(attr: str | tuple[str, Any, Any], expect: Any, actual: Any</div>
+<div class="dl ctx">         assert expect_value == actual_value, f&quot;{attr_name} value mismatch&quot;</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl add">+def test_prepare_inputs_padded_preserves_internal_seq_lens_cpu():</div>
+<div class="dl add">+    proposer = AscendEagleProposer.__new__(AscendEagleProposer)</div>
+<div class="dl add">+    proposer.pcp_size = 1</div>
+<div class="dl add">+    proposer.arange = torch.arange(16, dtype=torch.int32)</div>
+<div class="dl add">+    proposer.runner = MagicMock()</div>
+<div class="dl add">+    proposer.runner.actual_seq_lengths_q = [3, 3]</div>
+<div class="dl add">+    proposer.runner.attn_state = AscendAttentionState.SpecDecoding</div>
+<div class="dl add">+    proposer.runner.decode_token_per_req = 4</div>
+<div class="dl add">+</div>
+<div class="dl add">+    internal_seq_lens_cpu = torch.tensor([7, 9], dtype=torch.int32)</div>
+<div class="dl add">+    common_attn_metadata = AscendCommonAttentionMetadata(</div>
+<div class="dl add">+        query_start_loc=torch.tensor([0, 3, 6], dtype=torch.int32),</div>
+<div class="dl add">+        query_start_loc_cpu=torch.tensor([0, 3, 6], dtype=torch.int32),</div>
+<div class="dl add">+        seq_lens=torch.tensor([7, 9], dtype=torch.int32),</div>
+<div class="dl add">+        _seq_lens_cpu=internal_seq_lens_cpu,</div>
+<div class="dl add">+        seq_lens_cpu=None,</div>
+<div class="dl add">+        num_computed_tokens_cpu=None,</div>
+<div class="dl add">+        num_reqs=2,</div>
+<div class="dl add">+        num_actual_tokens=6,</div>
+<div class="dl add">+        num_input_tokens=6,</div>
+<div class="dl add">+        max_query_len=3,</div>
+<div class="dl add">+        actual_seq_lengths_q=[3, 3],</div>
+<div class="dl add">+        block_table_tensor=torch.zeros((2, 1), dtype=torch.int32),</div>
+<div class="dl add">+        slot_mapping=torch.arange(6, dtype=torch.int32),</div>
+<div class="dl add">+        positions=torch.arange(6),</div>
+<div class="dl add">+        attn_state=AscendAttentionState.SpecDecoding,</div>
+<div class="dl add">+        decode_token_per_req=4,</div>
+<div class="dl add">+        max_seq_len=9,</div>
+<div class="dl add">+    )</div>
+<div class="dl add">+    spec_decode_metadata = MagicMock()</div>
+<div class="dl add">+    spec_decode_metadata.cu_num_draft_tokens = torch.tensor([2, 3], dtype=torch.int32)</div>
+<div class="dl add">+    valid_sampled_tokens_count = torch.tensor([3, 1], dtype=torch.int32)</div>
+<div class="dl add">+</div>
+<div class="dl add">+    with patch.object(llm_base_proposer, &quot;HAS_TRITON&quot;, False):</div>
+<div class="dl add">+        spec_common_attn_metadata, *_ = proposer.prepare_inputs_padded(</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl add">+            spec_decode_metadata,</div>
+<div class="dl add">+            valid_sampled_tokens_count,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+    assert spec_common_attn_metadata._seq_lens_cpu is internal_seq_lens_cpu</div>
+<div class="dl add">+    assert spec_common_attn_metadata.seq_lens_cpu is None</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> class TestEagleProposerInitialization(TestBase):</div>
+<div class="dl ctx">     def setUp(self):</div>
+<div class="dl ctx">         self.vllm_config = MagicMock(spec=VllmConfig)</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_gdn_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/ops/gdn.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+6</span><span class="stat del">-4</span>
+    </div>
+  </div>
+  <div class="desc">新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖，改用正式 ops 模块</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 22db95bf..defd5c30 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/gdn.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/gdn.py</div>
+<div class="dl hunk">@@ -23,7 +23,7 @@ from vllm.forward_context import get_forward_context</div>
+<div class="dl ctx"> from vllm.model_executor.layers.fla.ops.l2norm import l2norm_fwd</div>
+<div class="dl ctx"> from vllm.model_executor.layers.mamba.gdn_linear_attn import GatedDeltaNetAttention</div>
+<div class="dl ctx"> from vllm.triton_utils import triton</div>
+<div class="dl del">-from vllm.v1.attention.backend import AttentionMetadata  # type: ignore</div>
+<div class="dl add">+from vllm.v1.attention.backend import AttentionBackend, AttentionMetadata  # type: ignore</div>
+<div class="dl ctx"> from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata</div>
+<div class="dl ctx"> from vllm.v1.attention.backends.utils import PAD_SLOT_ID</div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -33,6 +33,7 @@ from vllm_ascend.compilation.acl_graph import (</div>
+<div class="dl ctx">     get_draft_graph_params,</div>
+<div class="dl ctx">     get_graph_params,</div>
+<div class="dl ctx"> )</div>
+<div class="dl add">+from vllm_ascend.ops.gdn_attn_builder import AscendGDNAttentionBackend</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import clear_ssm_states</div>
+<div class="dl hunk">@@ -50,9 +51,7 @@ def to_int64_tuple(tensor: torch.Tensor) -&gt; tuple[int, ...]:</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def _check_and_get_host_args(attn_metadata, field_name: str, sub_field_name: str):</div>
+<div class="dl ctx">     if (fallback_meta := getattr(attn_metadata, field_name, None)) is None:</div>
+<div class="dl del">-        raise RuntimeError(</div>
+<div class="dl del">-            f&quot;Expected attn_metadata.{field_name}.{sub_field_name} for patched GDN non-spec prefill path.&quot;</div>
+<div class="dl del">-        )</div>
+<div class="dl add">+        raise RuntimeError(f&quot;Expected attn_metadata.{field_name}.{sub_field_name} for Ascend GDN fallback path.&quot;)</div>
+<div class="dl ctx">     return fallback_meta</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -241,6 +240,9 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):</div>
+<div class="dl add">+    def get_attn_backend(self) -&gt; type[AttentionBackend]:</div>
+<div class="dl add">+        return AscendGDNAttentionBackend</div>
+<div class="dl add">+</div>
+<div class="dl ctx">     def forward(</div>
+<div class="dl ctx">         self,</div>
+<div class="dl ctx">         hidden_states: torch.Tensor,</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/ops/gdn_attn_builder.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+-</span><span class="stat del">--</span>
+    </div>
+  </div>
+  <div class="desc">由 vllm_ascend/patch/worker/patch_gdn_attn.py 重命名重构为正式 ops 模块：实现 AscendGDNAttentionBackend / AscendGDNAttentionMetadataBuilder / GDNChunkedPrefillMetadata，prefill/decode 路径预构建 varlen chunk 元数据并附加到 attn_metadata，避免 forward 时 host→device round-trip</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">similarity index 51%</div>
+<div class="dl meta">rename from vllm_ascend/patch/worker/patch_gdn_attn.py</div>
+<div class="dl meta">rename to vllm_ascend/ops/gdn_attn_builder.py</div>
+<div class="dl meta">index 1ae91032..f44f0f36 100644</div>
+<div class="dl meta">--- a/vllm_ascend/patch/worker/patch_gdn_attn.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/gdn_attn_builder.py</div>
+<div class="dl hunk">@@ -16,28 +16,44 @@</div>
+<div class="dl ctx"> from dataclasses import dataclass</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> import torch</div>
+<div class="dl del">-import vllm.v1.attention.backends.gdn_attn as gdn_attn</div>
+<div class="dl del">-from vllm.v1.attention.backends.utils import NULL_BLOCK_ID</div>
+<div class="dl add">+from vllm.config import VllmConfig</div>
+<div class="dl add">+from vllm.v1.attention.backend import AttentionCGSupport, CommonAttentionMetadata</div>
+<div class="dl add">+from vllm.v1.attention.backends.gdn_attn import (</div>
+<div class="dl add">+    GDNAttentionBackend,</div>
+<div class="dl add">+    GDNAttentionMetadata,</div>
+<div class="dl add">+    GDNAttentionMetadataBuilder,</div>
+<div class="dl add">+)</div>
+<div class="dl add">+from vllm.v1.attention.backends.utils import (</div>
+<div class="dl add">+    NULL_BLOCK_ID,</div>
+<div class="dl add">+    compute_causal_conv1d_metadata,</div>
+<div class="dl add">+    mamba_get_block_table_tensor,</div>
+<div class="dl add">+    split_decodes_and_prefills,</div>
+<div class="dl add">+)</div>
+<div class="dl add">+from vllm.v1.kv_cache_interface import AttentionSpec</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.gdn_chunk_meta import (</div>
+<div class="dl ctx">     _build_seq_lens,</div>
+<div class="dl ctx">     _validate_cu_seqlens,</div>
+<div class="dl ctx">     build_chunk_meta_device,</div>
+<div class="dl ctx"> )</div>
+<div class="dl del">-from vllm_ascend.utils import is_310p</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> _GDN_CHUNK_SIZE = 64</div>
+<div class="dl ctx"> # Keep this aligned with solve_tril.LARGE_BLOCK_T in ops/triton/fla/solve_tril.py.</div>
+<div class="dl ctx"> _GDN_SOLVE_TRIL_LARGE_BLOCK_SIZE = 608 * 2</div>
+<div class="dl ctx"> _GDN_CUMSUM_WORKING_SET = 2**18</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-_IS_PATCHED = False</div>
+<div class="dl del">-_ORIGINAL_BUILD = gdn_attn.GDNAttentionMetadataBuilder.build</div>
+<div class="dl del">-_ORIGINAL_INIT_THRESHOLD = gdn_attn.GDNAttentionMetadataBuilder._init_reorder_batch_threshold</div>
+<div class="dl add">+</div>
+<div class="dl add">+def _stable_argsort_for_npu(tensor: torch.Tensor) -&gt; torch.Tensor:</div>
+<div class="dl add">+    if tensor.dtype == torch.bool:</div>
+<div class="dl add">+        tensor = tensor.to(torch.int32)</div>
+<div class="dl add">+    return torch.argsort(tensor, stable=True)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> @dataclass</div>
+<div class="dl ctx"> class GDNChunkedPrefillMetadata:</div>
+<div class="dl add">+    cu_seqlens_cpu: torch.Tensor</div>
+<div class="dl add">+    cu_seqlens_host: tuple[int, ...]</div>
+<div class="dl add">+    chunk_indices_chunk64_host: tuple[int, ...]</div>
+<div class="dl ctx">     chunk_indices_chunk64: torch.Tensor</div>
+<div class="dl ctx">     chunk_offsets_chunk64: torch.Tensor</div>
+<div class="dl ctx">     update_chunk_offsets_chunk64: torch.Tensor</div>
+<div class="dl hunk">@@ -145,6 +161,14 @@ def _fill_chunk_indices_cpu(out: torch.Tensor, chunk_counts: torch.Tensor) -&gt; in</div>
+<div class="dl ctx">     return cursor</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl add">+def _build_chunk_indices_host(cu_seqlens_cpu: torch.Tensor, chunk_size: int) -&gt; tuple[int, ...]:</div>
+<div class="dl add">+    chunk_counts = _prepare_chunk_counts_cpu(cu_seqlens_cpu, chunk_size)</div>
+<div class="dl add">+    num_chunk_indices = int(chunk_counts.sum().item())</div>
+<div class="dl add">+    chunk_indices = torch.empty((num_chunk_indices, 2), dtype=torch.int64)</div>
+<div class="dl add">+    _fill_chunk_indices_cpu(chunk_indices, chunk_counts)</div>
+<div class="dl add">+    return tuple(chunk_indices.reshape(-1).tolist())</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> def _fill_chunk_offsets_cpu(out: torch.Tensor, chunk_counts: torch.Tensor) -&gt; int:</div>
+<div class="dl ctx">     out[0] = 0</div>
+<div class="dl ctx">     if chunk_counts.numel() &gt; 0:</div>
+<div class="dl hunk">@@ -341,9 +365,16 @@ def _build_chunked_prefill_metadata(</div>
+<div class="dl ctx">     builder,</div>
+<div class="dl ctx">     tensors: dict[str, torch.Tensor],</div>
+<div class="dl ctx">     *,</div>
+<div class="dl add">+    cu_seqlens_cpu: torch.Tensor,</div>
+<div class="dl ctx">     slot: _GDNChunkedPrefillBufferSlot | None = None,</div>
+<div class="dl ctx"> ) -&gt; GDNChunkedPrefillMetadata:</div>
+<div class="dl ctx">     return GDNChunkedPrefillMetadata(</div>
+<div class="dl add">+        cu_seqlens_cpu=cu_seqlens_cpu,</div>
+<div class="dl add">+        cu_seqlens_host=tuple(cu_seqlens_cpu.to(torch.int64).tolist()),</div>
+<div class="dl add">+        chunk_indices_chunk64_host=_build_chunk_indices_host(</div>
+<div class="dl add">+            cu_seqlens_cpu,</div>
+<div class="dl add">+            builder._ascend_gdn_chunk_size,</div>
+<div class="dl add">+        ),</div>
+<div class="dl ctx">         chunk_indices_chunk64=tensors[&quot;chunk_indices_chunk64&quot;],</div>
+<div class="dl ctx">         chunk_offsets_chunk64=tensors[&quot;chunk_offsets_chunk64&quot;],</div>
+<div class="dl ctx">         update_chunk_offsets_chunk64=tensors[&quot;update_chunk_offsets_chunk64&quot;],</div>
+<div class="dl hunk">@@ -429,9 +460,13 @@ def _build_spec_sequence_masks_cpu(builder, num_decode_draft_tokens_cpu: torch.T</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def _build_non_spec_query_start_loc_cpu(</div>
+<div class="dl ctx">     builder,</div>
+<div class="dl add">+    attn_metadata,</div>
+<div class="dl ctx">     common_attn_metadata,</div>
+<div class="dl ctx">     num_decode_draft_tokens_cpu: torch.Tensor | None,</div>
+<div class="dl ctx"> ) -&gt; torch.Tensor | None:</div>
+<div class="dl add">+    if attn_metadata.num_prefills &lt;= 0 and attn_metadata.num_decodes &lt;= 0:</div>
+<div class="dl add">+        return None</div>
+<div class="dl add">+</div>
+<div class="dl ctx">     query_start_loc_cpu = common_attn_metadata.query_start_loc_cpu</div>
+<div class="dl ctx">     spec_sequence_masks_cpu = _build_spec_sequence_masks_cpu(builder, num_decode_draft_tokens_cpu)</div>
+<div class="dl ctx">     if spec_sequence_masks_cpu is None:</div>
+<div class="dl hunk">@@ -461,7 +496,6 @@ def _build_spec_query_start_loc_cpu(</div>
+<div class="dl ctx">     if spec_sequence_masks_cpu is None:</div>
+<div class="dl ctx">         return query_start_loc_cpu</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    # query_start_loc_cpu is type of cumsum</div>
+<div class="dl ctx">     query_lens_cpu = query_start_loc_cpu[1:] - query_start_loc_cpu[:-1]</div>
+<div class="dl ctx">     spec_query_lens_cpu = query_lens_cpu[spec_sequence_masks_cpu]</div>
+<div class="dl ctx">     spec_query_start_loc_cpu = torch.zeros(</div>
+<div class="dl hunk">@@ -593,11 +627,9 @@ def _build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl ctx"> ) -&gt; GDNCausalConv1dHostMetadata:</div>
+<div class="dl ctx">     assert attn_metadata.num_prefills &gt; 0</div>
+<div class="dl ctx">     if attn_metadata.non_spec_state_indices_tensor is None:</div>
+<div class="dl del">-        raise RuntimeError(</div>
+<div class="dl del">-            &quot;Expected attn_metadata.non_spec_state_indices_tensor for patched GDN non-spec prefill path.&quot;</div>
+<div class="dl del">-        )</div>
+<div class="dl add">+        raise RuntimeError(&quot;Expected attn_metadata.non_spec_state_indices_tensor for Ascend GDN non-spec prefill path.&quot;)</div>
+<div class="dl ctx">     if attn_metadata.has_initial_state is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected attn_metadata.has_initial_state for patched GDN non-spec prefill path.&quot;)</div>
+<div class="dl add">+        raise RuntimeError(&quot;Expected attn_metadata.has_initial_state for Ascend GDN non-spec prefill path.&quot;)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     slot = None</div>
+<div class="dl ctx">     if (</div>
+<div class="dl hunk">@@ -629,7 +661,7 @@ def _build_non_spec_decode_causal_conv1d_host_meta(</div>
+<div class="dl ctx">     non_spec_query_start_loc_cpu: torch.Tensor,</div>
+<div class="dl ctx"> ) -&gt; GDNCausalConv1dHostMetadata:</div>
+<div class="dl ctx">     if attn_metadata.non_spec_state_indices_tensor is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected attn_metadata.non_spec_state_indices_tensor for patched GDN non-spec decode path.&quot;)</div>
+<div class="dl add">+        raise RuntimeError(&quot;Expected attn_metadata.non_spec_state_indices_tensor for Ascend GDN non-spec decode path.&quot;)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     slot = None</div>
+<div class="dl ctx">     if attn_metadata.non_spec_state_indices_tensor.device.type != &quot;cpu&quot;:</div>
+<div class="dl hunk">@@ -655,7 +687,7 @@ def _build_spec_causal_conv1d_host_meta(</div>
+<div class="dl ctx"> ) -&gt; GDNSpecCausalConv1dHostMetadata:</div>
+<div class="dl ctx">     assert attn_metadata.spec_sequence_masks is not None</div>
+<div class="dl ctx">     if attn_metadata.spec_state_indices_tensor is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected attn_metadata.spec_state_indices_tensor for patched GDN speculative path.&quot;)</div>
+<div class="dl add">+        raise RuntimeError(&quot;Expected attn_metadata.spec_state_indices_tensor for Ascend GDN speculative path.&quot;)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     slot = None</div>
+<div class="dl ctx">     if attn_metadata.spec_state_indices_tensor.device.type != &quot;cpu&quot;:</div>
+<div class="dl hunk">@@ -684,7 +716,7 @@ def _build_non_spec_chunked_prefill_meta_cpu(builder, cu_seqlens_cpu: torch.Tens</div>
+<div class="dl ctx">     shape_info = _build_chunk_meta_shape_info(builder, cu_seqlens_cpu)</div>
+<div class="dl ctx">     tensors = _allocate_chunk_meta_cpu_tensors(shape_info)</div>
+<div class="dl ctx">     _fill_chunk_meta_cpu_tensors(tensors, shape_info)</div>
+<div class="dl del">-    return _build_chunked_prefill_metadata(builder, tensors)</div>
+<div class="dl add">+    return _build_chunked_prefill_metadata(builder, tensors, cu_seqlens_cpu=cu_seqlens_cpu)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def _build_non_spec_chunked_prefill_meta(</div>
+<div class="dl hunk">@@ -703,167 +735,526 @@ def _build_non_spec_chunked_prefill_meta(</div>
+<div class="dl ctx">     slot = builder._ascend_gdn_chunked_prefill_pool[builder._ascend_gdn_chunked_prefill_pool_idx]</div>
+<div class="dl ctx">     tensors = _slice_chunk_meta_slot_tensors(slot, shape_info)</div>
+<div class="dl ctx">     _fill_chunk_meta_device_tensors(builder, cu_seqlens, tensors)</div>
+<div class="dl del">-    return _build_chunked_prefill_metadata(builder, tensors, slot=slot)</div>
+<div class="dl add">+    return _build_chunked_prefill_metadata(builder, tensors, cu_seqlens_cpu=cu_seqlens_cpu, slot=slot)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl del">-def _patched_build(</div>
+<div class="dl del">-    self,</div>
+<div class="dl del">-    common_prefix_len: int,</div>
+<div class="dl del">-    common_attn_metadata,</div>
+<div class="dl del">-    num_accepted_tokens: torch.Tensor | None = None,</div>
+<div class="dl del">-    num_decode_draft_tokens_cpu: torch.Tensor | None = None,</div>
+<div class="dl del">-    fast_build: bool = False,</div>
+<div class="dl del">-):</div>
+<div class="dl del">-    attn_metadata = _ORIGINAL_BUILD(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        common_prefix_len,</div>
+<div class="dl del">-        common_attn_metadata,</div>
+<div class="dl del">-        num_accepted_tokens=num_accepted_tokens,</div>
+<div class="dl del">-        num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,</div>
+<div class="dl del">-        fast_build=fast_build,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    attn_metadata.non_spec_prefill_fallback_meta = None</div>
+<div class="dl del">-    attn_metadata.non_spec_decode_fallback_meta = None</div>
+<div class="dl del">-    attn_metadata.spec_decode_fallback_meta = None</div>
+<div class="dl del">-    if attn_metadata.spec_sequence_masks is not None:</div>
+<div class="dl del">-        _patched_build_spec(self, attn_metadata, common_attn_metadata, num_decode_draft_tokens_cpu)</div>
+<div class="dl add">+class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):</div>
+<div class="dl add">+    _cudagraph_support = AttentionCGSupport.UNIFORM_BATCH</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    if attn_metadata.num_prefills &gt; 0:</div>
+<div class="dl del">-        _patched_build_prefill(self, attn_metadata, common_attn_metadata, num_decode_draft_tokens_cpu)</div>
+<div class="dl del">-</div>
+<div class="dl del">-    if attn_metadata.num_decodes &gt; 0:</div>
+<div class="dl del">-        _patched_build_decode(self, attn_metadata, common_attn_metadata, num_decode_draft_tokens_cpu)</div>
+<div class="dl del">-</div>
+<div class="dl del">-    if (</div>
+<div class="dl del">-        self.use_full_cuda_graph</div>
+<div class="dl del">-        and attn_metadata.num_prefills == 0</div>
+<div class="dl del">-        and attn_metadata.num_spec_decodes == 0</div>
+<div class="dl del">-        and attn_metadata.num_decodes &lt;= self.decode_cudagraph_max_bs</div>
+<div class="dl add">+    def __init__(</div>
+<div class="dl add">+        self,</div>
+<div class="dl add">+        kv_cache_spec: AttentionSpec,</div>
+<div class="dl add">+        layer_names: list[str],</div>
+<div class="dl add">+        vllm_config: VllmConfig,</div>
+<div class="dl add">+        device: torch.device,</div>
+<div class="dl ctx">     ):</div>
+<div class="dl del">-        self.non_spec_state_indices_tensor[attn_metadata.num_actual_tokens :].fill_(NULL_BLOCK_ID)</div>
+<div class="dl del">-    return attn_metadata</div>
+<div class="dl add">+        super().__init__(kv_cache_spec, layer_names, vllm_config, device)</div>
+<div class="dl add">+        sequence_index_capacity = max(</div>
+<div class="dl add">+            self.vllm_config.scheduler_config.max_num_seqs,</div>
+<div class="dl add">+            self.decode_cudagraph_max_bs,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        self.spec_sequence_masks_cpu: torch.Tensor = torch.empty(</div>
+<div class="dl add">+            (sequence_index_capacity,),</div>
+<div class="dl add">+            dtype=torch.bool,</div>
+<div class="dl add">+            device=&quot;cpu&quot;,</div>
+<div class="dl add">+            pin_memory=device.type != &quot;cpu&quot;,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        self.spec_sequence_indices_cpu: torch.Tensor = torch.empty(</div>
+<div class="dl add">+            (sequence_index_capacity,),</div>
+<div class="dl add">+            dtype=torch.int64,</div>
+<div class="dl add">+            device=&quot;cpu&quot;,</div>
+<div class="dl add">+            pin_memory=device.type != &quot;cpu&quot;,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        self.non_spec_sequence_indices_cpu: torch.Tensor = torch.empty(</div>
+<div class="dl add">+            (sequence_index_capacity,),</div>
+<div class="dl add">+            dtype=torch.int64,</div>
+<div class="dl add">+            device=&quot;cpu&quot;,</div>
+<div class="dl add">+            pin_memory=device.type != &quot;cpu&quot;,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        self.spec_sequence_indices: torch.Tensor = torch.empty(</div>
+<div class="dl add">+            (sequence_index_capacity,),</div>
+<div class="dl add">+            dtype=torch.int64,</div>
+<div class="dl add">+            device=device,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        self.non_spec_sequence_indices: torch.Tensor = torch.empty(</div>
+<div class="dl add">+            (sequence_index_capacity,),</div>
+<div class="dl add">+            dtype=torch.int64,</div>
+<div class="dl add">+            device=device,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+</div>
+<div class="dl add">+    def _init_reorder_batch_threshold(</div>
+<div class="dl add">+        self,</div>
+<div class="dl add">+        reorder_batch_threshold: int | None = 1,</div>
+<div class="dl add">+        supports_spec_as_decode: bool = False,</div>
+<div class="dl add">+        supports_dcp_with_varlen: bool = False,</div>
+<div class="dl add">+    ) -&gt; None:</div>
+<div class="dl add">+        super()._init_reorder_batch_threshold(</div>
+<div class="dl add">+            reorder_batch_threshold,</div>
+<div class="dl add">+            supports_spec_as_decode,</div>
+<div class="dl add">+            supports_dcp_with_varlen,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        if self.reorder_batch_threshold != 1:  # type: ignore</div>
+<div class="dl add">+            speculative_config = self.vllm_config.speculative_config</div>
+<div class="dl add">+            if (</div>
+<div class="dl add">+                speculative_config is not None</div>
+<div class="dl add">+                and speculative_config.num_speculative_tokens is not None</div>
+<div class="dl add">+                and hasattr(speculative_config, &quot;method&quot;)</div>
+<div class="dl add">+                and speculative_config.method == &quot;dflash&quot;</div>
+<div class="dl add">+            ):</div>
+<div class="dl add">+                self.reorder_batch_threshold = 1 + speculative_config.num_speculative_tokens</div>
+<div class="dl add">+</div>
+<div class="dl add">+    def _copy_sequence_indices_to_device(</div>
+<div class="dl add">+        self,</div>
+<div class="dl add">+        spec_sequence_masks_cpu: torch.Tensor,</div>
+<div class="dl add">+        num_spec_decodes: int,</div>
+<div class="dl add">+    ) -&gt; tuple[torch.Tensor, torch.Tensor]:</div>
+<div class="dl add">+        num_reqs = spec_sequence_masks_cpu.numel()</div>
+<div class="dl add">+        num_non_spec_decodes = num_reqs - num_spec_decodes</div>
+<div class="dl add">+</div>
+<div class="dl add">+        spec_indices_cpu = self.spec_sequence_indices_cpu[:num_spec_decodes]</div>
+<div class="dl add">+        spec_indices_cpu.copy_(</div>
+<div class="dl add">+            torch.nonzero(spec_sequence_masks_cpu, as_tuple=True)[0],</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        spec_indices = self.spec_sequence_indices[:num_spec_decodes]</div>
+<div class="dl add">+        spec_indices.copy_(spec_indices_cpu, non_blocking=True)</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+        non_spec_indices_cpu = self.non_spec_sequence_indices_cpu[:num_non_spec_decodes]</div>
+<div class="dl add">+        non_spec_indices_cpu.copy_(</div>
+<div class="dl add">+            torch.nonzero(~spec_sequence_masks_cpu, as_tuple=True)[0],</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        non_spec_indices = self.non_spec_sequence_indices[:num_non_spec_decodes]</div>
+<div class="dl add">+        non_spec_indices.copy_(non_spec_indices_cpu, non_blocking=True)</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-def _patched_build_prefill(</div>
+<div class="dl del">-    self,</div>
+<div class="dl del">-    attn_metadata: gdn_attn.GDNAttentionMetadata,</div>
+<div class="dl del">-    common_attn_metadata,</div>
+<div class="dl del">-    num_decode_draft_tokens_cpu: torch.Tensor | None = None,</div>
+<div class="dl del">-):</div>
+<div class="dl del">-    assert attn_metadata.num_prefills &gt; 0</div>
+<div class="dl add">+        return spec_indices, non_spec_indices</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    _ensure_chunk_meta_state(self, common_attn_metadata.query_start_loc.device)</div>
+<div class="dl del">-    _ensure_causal_conv1d_host_meta_state(</div>
+<div class="dl add">+    def _attach_non_spec_prefill_fallback_meta(</div>
+<div class="dl ctx">         self,</div>
+<div class="dl del">-        common_attn_metadata.query_start_loc.device,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    non_spec_query_start_loc_cpu = _build_non_spec_query_start_loc_cpu(</div>
+<div class="dl add">+        attn_metadata: GDNAttentionMetadata,</div>
+<div class="dl add">+        common_attn_metadata: CommonAttentionMetadata,</div>
+<div class="dl add">+        non_spec_query_start_loc_cpu: torch.Tensor | None,</div>
+<div class="dl add">+    ) -&gt; GDNAttentionMetadata:</div>
+<div class="dl add">+        attn_metadata.non_spec_prefill_fallback_meta = None</div>
+<div class="dl add">+        if attn_metadata.num_prefills &lt;= 0:</div>
+<div class="dl add">+            return attn_metadata</div>
+<div class="dl add">+</div>
+<div class="dl add">+        _ensure_chunk_meta_state(self, common_attn_metadata.query_start_loc.device)</div>
+<div class="dl add">+        _ensure_causal_conv1d_host_meta_state(</div>
+<div class="dl add">+            self,</div>
+<div class="dl add">+            common_attn_metadata.query_start_loc.device,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        if non_spec_query_start_loc_cpu is None:</div>
+<div class="dl add">+            raise RuntimeError(&quot;Expected non_spec_query_start_loc_cpu for Ascend GDN non-spec prefill path.&quot;)</div>
+<div class="dl add">+        if attn_metadata.non_spec_query_start_loc is None:</div>
+<div class="dl add">+            raise RuntimeError(&quot;Expected attn_metadata.non_spec_query_start_loc for Ascend GDN non-spec prefill path.&quot;)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        attn_metadata.non_spec_prefill_fallback_meta = GDNPrefillFallbackMeta(</div>
+<div class="dl add">+            causal_conv1d=_build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl add">+                self,</div>
+<div class="dl add">+                attn_metadata,</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+            ),</div>
+<div class="dl add">+            chunk=_build_non_spec_chunked_prefill_meta(</div>
+<div class="dl add">+                self,</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+                attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl add">+            ),</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        return attn_metadata</div>
+<div class="dl add">+</div>
+<div class="dl add">+    def _attach_spec_decode_fallback_meta(</div>
+<div class="dl ctx">         self,</div>
+<div class="dl del">-        common_attn_metadata,</div>
+<div class="dl del">-        num_decode_draft_tokens_cpu,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    assert non_spec_query_start_loc_cpu is not None</div>
+<div class="dl del">-    if attn_metadata.non_spec_query_start_loc is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected attn_metadata.non_spec_query_start_loc for patched GDN non-spec prefill path.&quot;)</div>
+<div class="dl del">-    attn_metadata.non_spec_prefill_fallback_meta = GDNPrefillFallbackMeta(</div>
+<div class="dl del">-        causal_conv1d=_build_non_spec_causal_conv1d_host_meta(</div>
+<div class="dl add">+        attn_metadata: GDNAttentionMetadata,</div>
+<div class="dl add">+        common_attn_metadata: CommonAttentionMetadata,</div>
+<div class="dl add">+        num_decode_draft_tokens_cpu: torch.Tensor | None,</div>
+<div class="dl add">+    ) -&gt; GDNAttentionMetadata:</div>
+<div class="dl add">+        attn_metadata.spec_decode_fallback_meta = None</div>
+<div class="dl add">+        if attn_metadata.spec_sequence_masks is None:</div>
+<div class="dl add">+            return attn_metadata</div>
+<div class="dl add">+</div>
+<div class="dl add">+        _ensure_spec_causal_conv1d_host_meta_state(</div>
+<div class="dl ctx">             self,</div>
+<div class="dl del">-            attn_metadata,</div>
+<div class="dl del">-            non_spec_query_start_loc_cpu,</div>
+<div class="dl del">-        ),</div>
+<div class="dl del">-        chunk=_build_non_spec_chunked_prefill_meta(</div>
+<div class="dl add">+            common_attn_metadata.query_start_loc.device,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        spec_query_start_loc_cpu = _build_spec_query_start_loc_cpu(</div>
+<div class="dl ctx">             self,</div>
+<div class="dl del">-            non_spec_query_start_loc_cpu,</div>
+<div class="dl del">-            attn_metadata.non_spec_query_start_loc,</div>
+<div class="dl del">-        ),</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    return attn_metadata</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl add">+            num_decode_draft_tokens_cpu,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        if spec_query_start_loc_cpu is None:</div>
+<div class="dl add">+            raise RuntimeError(&quot;Expected spec query_start_loc_cpu for Ascend GDN speculative path.&quot;)</div>
+<div class="dl add">+        if attn_metadata.spec_query_start_loc is None:</div>
+<div class="dl add">+            raise RuntimeError(&quot;Expected attn_metadata.spec_query_start_loc for Ascend GDN speculative path.&quot;)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        attn_metadata.spec_decode_fallback_meta = GDNSpecDecodeFallbackMeta(</div>
+<div class="dl add">+            spec_causal_conv1d=_build_spec_causal_conv1d_host_meta(</div>
+<div class="dl add">+                self,</div>
+<div class="dl add">+                attn_metadata,</div>
+<div class="dl add">+                spec_query_start_loc_cpu,</div>
+<div class="dl add">+            ),</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        return attn_metadata</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    def _attach_non_spec_decode_fallback_meta(</div>
+<div class="dl add">+        self,</div>
+<div class="dl add">+        attn_metadata: GDNAttentionMetadata,</div>
+<div class="dl add">+        common_attn_metadata: CommonAttentionMetadata,</div>
+<div class="dl add">+        num_decode_draft_tokens_cpu: torch.Tensor | None,</div>
+<div class="dl add">+    ) -&gt; GDNAttentionMetadata:</div>
+<div class="dl add">+        attn_metadata.non_spec_decode_fallback_meta = None</div>
+<div class="dl add">+        if attn_metadata.num_decodes &lt;= 0:</div>
+<div class="dl add">+            return attn_metadata</div>
+<div class="dl add">+</div>
+<div class="dl add">+        _ensure_causal_conv1d_host_meta_state(</div>
+<div class="dl add">+            self,</div>
+<div class="dl add">+            common_attn_metadata.query_start_loc.device,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        non_spec_query_start_loc_cpu = _build_non_spec_query_start_loc_cpu(</div>
+<div class="dl add">+            self,</div>
+<div class="dl add">+            attn_metadata,</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl add">+            num_decode_draft_tokens_cpu,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        if non_spec_query_start_loc_cpu is None:</div>
+<div class="dl add">+            raise RuntimeError(&quot;Expected non-spec query_start_loc_cpu for Ascend GDN non-spec decode path.&quot;)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        attn_metadata.non_spec_decode_fallback_meta = GDNDecodeFallbackMeta(</div>
+<div class="dl add">+            causal_conv1d=_build_non_spec_decode_causal_conv1d_host_meta(</div>
+<div class="dl add">+                self,</div>
+<div class="dl add">+                attn_metadata,</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+            ),</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        return attn_metadata</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-def _init_reorder_batch_threshold(</div>
+<div class="dl del">-    self,</div>
+<div class="dl del">-    reorder_batch_threshold: int | None = 1,</div>
+<div class="dl del">-    supports_spec_as_decode: bool = False,</div>
+<div class="dl del">-    supports_dcp_with_varlen: bool = False,</div>
+<div class="dl del">-) -&gt; None:</div>
+<div class="dl del">-    _ORIGINAL_INIT_THRESHOLD(</div>
+<div class="dl add">+    def build(  # type: ignore[override]</div>
+<div class="dl ctx">         self,</div>
+<div class="dl del">-        reorder_batch_threshold,</div>
+<div class="dl del">-        supports_spec_as_decode,</div>
+<div class="dl del">-        supports_dcp_with_varlen,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    if self.reorder_batch_threshold != 1:</div>
+<div class="dl del">-        speculative_config = self.vllm_config.speculative_config</div>
+<div class="dl del">-        if (</div>
+<div class="dl del">-            speculative_config is not None</div>
+<div class="dl del">-            and speculative_config.num_speculative_tokens is not None</div>
+<div class="dl del">-            and hasattr(speculative_config, &quot;method&quot;)</div>
+<div class="dl del">-            and speculative_config.method == &quot;dflash&quot;</div>
+<div class="dl del">-        ):</div>
+<div class="dl del">-            self.reorder_batch_threshold = 1 + speculative_config.num_speculative_tokens</div>
+<div class="dl add">+        common_prefix_len: int,</div>
+<div class="dl add">+        common_attn_metadata: CommonAttentionMetadata,</div>
+<div class="dl add">+        num_accepted_tokens: torch.Tensor | None = None,</div>
+<div class="dl add">+        num_decode_draft_tokens_cpu: torch.Tensor | None = None,</div>
+<div class="dl add">+        fast_build: bool = False,</div>
+<div class="dl add">+    ) -&gt; GDNAttentionMetadata:</div>
+<div class="dl add">+        m = common_attn_metadata</div>
+<div class="dl add">+</div>
+<div class="dl add">+        query_start_loc = m.query_start_loc</div>
+<div class="dl add">+        query_start_loc_cpu = m.query_start_loc_cpu</div>
+<div class="dl add">+        context_lens_tensor = m.compute_num_computed_tokens()</div>
+<div class="dl add">+        nums_dict, batch_ptr, token_chunk_offset_ptr = None, None, None</div>
+<div class="dl add">+        block_table_tensor = mamba_get_block_table_tensor(</div>
+<div class="dl add">+            m.block_table_tensor,</div>
+<div class="dl add">+            m.seq_lens,</div>
+<div class="dl add">+            self.kv_cache_spec,</div>
+<div class="dl add">+            self.vllm_config.cache_config.mamba_cache_mode,</div>
+<div class="dl add">+        )</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+        spec_sequence_masks_cpu: torch.Tensor | None = None</div>
+<div class="dl add">+        spec_sequence_indices: torch.Tensor | None = None</div>
+<div class="dl add">+        non_spec_sequence_indices: torch.Tensor | None = None</div>
+<div class="dl add">+        if not self.use_spec_decode or num_decode_draft_tokens_cpu is None:</div>
+<div class="dl add">+            spec_sequence_masks = None</div>
+<div class="dl add">+            num_spec_decodes = 0</div>
+<div class="dl add">+        else:</div>
+<div class="dl add">+            num_reqs = num_decode_draft_tokens_cpu.numel()</div>
+<div class="dl add">+            spec_sequence_masks_cpu = self.spec_sequence_masks_cpu[:num_reqs]</div>
+<div class="dl add">+            torch.ge(</div>
+<div class="dl add">+                num_decode_draft_tokens_cpu,</div>
+<div class="dl add">+                0,</div>
+<div class="dl add">+                out=spec_sequence_masks_cpu,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            num_spec_decodes = spec_sequence_masks_cpu.sum().item()</div>
+<div class="dl add">+            if num_spec_decodes == 0:</div>
+<div class="dl add">+                spec_sequence_masks = None</div>
+<div class="dl add">+                spec_sequence_masks_cpu = None</div>
+<div class="dl add">+            else:</div>
+<div class="dl add">+                spec_sequence_masks = self.spec_sequence_masks[:num_reqs]</div>
+<div class="dl add">+                spec_sequence_masks.copy_(spec_sequence_masks_cpu, non_blocking=True)</div>
+<div class="dl add">+                spec_sequence_indices, non_spec_sequence_indices = self._copy_sequence_indices_to_device(</div>
+<div class="dl add">+                    spec_sequence_masks_cpu,</div>
+<div class="dl add">+                    num_spec_decodes,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        if spec_sequence_masks is None:</div>
+<div class="dl add">+            num_decodes, num_prefills, num_decode_tokens, num_prefill_tokens = split_decodes_and_prefills(</div>
+<div class="dl add">+                m,</div>
+<div class="dl add">+                decode_threshold=1,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            num_spec_decode_tokens = 0</div>
+<div class="dl add">+            spec_token_indx = None</div>
+<div class="dl add">+            non_spec_token_indx = None</div>
+<div class="dl add">+            spec_state_indices_tensor = None</div>
+<div class="dl add">+            non_spec_state_indices_tensor = block_table_tensor[:, 0]</div>
+<div class="dl add">+            spec_query_start_loc = None</div>
+<div class="dl add">+            non_spec_query_start_loc = query_start_loc</div>
+<div class="dl add">+            non_spec_query_start_loc_cpu = query_start_loc_cpu</div>
+<div class="dl add">+            num_accepted_tokens = None</div>
+<div class="dl add">+        else:</div>
+<div class="dl add">+            query_lens = query_start_loc[1:] - query_start_loc[:-1]</div>
+<div class="dl add">+            query_lens_cpu = query_start_loc_cpu[1:] - query_start_loc_cpu[:-1]</div>
+<div class="dl add">+            assert spec_sequence_masks_cpu is not None</div>
+<div class="dl add">+            assert spec_sequence_indices is not None</div>
+<div class="dl add">+            assert non_spec_sequence_indices is not None</div>
+<div class="dl add">+</div>
+<div class="dl add">+            non_spec_query_lens_cpu = query_lens_cpu[~spec_sequence_masks_cpu]</div>
+<div class="dl add">+            num_decodes = (non_spec_query_lens_cpu == 1).sum().item()</div>
+<div class="dl add">+            num_zero_len = (non_spec_query_lens_cpu == 0).sum().item()</div>
+<div class="dl add">+            num_prefills = non_spec_query_lens_cpu.size(0) - num_decodes - num_zero_len</div>
+<div class="dl add">+            num_decode_tokens = num_decodes</div>
+<div class="dl add">+            num_prefill_tokens = non_spec_query_lens_cpu.sum().item() - num_decode_tokens</div>
+<div class="dl add">+            num_spec_decode_tokens = query_lens_cpu.sum().item() - num_prefill_tokens - num_decode_tokens</div>
+<div class="dl add">+</div>
+<div class="dl add">+            if num_decodes &gt; 0 and num_spec_decodes &gt; 0:</div>
+<div class="dl add">+                num_prefills += num_decodes</div>
+<div class="dl add">+                num_prefill_tokens += num_decode_tokens</div>
+<div class="dl add">+                num_decodes = 0</div>
+<div class="dl add">+                num_decode_tokens = 0</div>
+<div class="dl add">+</div>
+<div class="dl add">+            if num_prefills == 0 and num_decodes == 0:</div>
+<div class="dl add">+                spec_token_size = min(</div>
+<div class="dl add">+                    num_spec_decodes * (self.num_spec + 1),</div>
+<div class="dl add">+                    query_start_loc_cpu[-1].item(),</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                spec_token_indx = torch.arange(</div>
+<div class="dl add">+                    spec_token_size,</div>
+<div class="dl add">+                    dtype=torch.int32,</div>
+<div class="dl add">+                    device=query_start_loc.device,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_token_indx = torch.empty(</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    dtype=torch.int32,</div>
+<div class="dl add">+                    device=query_start_loc.device,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                spec_state_indices_tensor = torch.index_select(</div>
+<div class="dl add">+                    block_table_tensor[:, : self.num_spec + 1],</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_state_indices_tensor = None</div>
+<div class="dl add">+                spec_query_start_loc = query_start_loc[: num_spec_decodes + 1]</div>
+<div class="dl add">+                non_spec_query_start_loc = None</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu = None</div>
+<div class="dl add">+            else:</div>
+<div class="dl add">+                spec_token_masks = torch.repeat_interleave(</div>
+<div class="dl add">+                    spec_sequence_masks,</div>
+<div class="dl add">+                    query_lens,</div>
+<div class="dl add">+                    output_size=query_start_loc_cpu[-1].item(),</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                index = _stable_argsort_for_npu(spec_token_masks)</div>
+<div class="dl add">+                num_non_spec_tokens = num_prefill_tokens + num_decode_tokens</div>
+<div class="dl add">+                non_spec_token_indx = index[:num_non_spec_tokens]</div>
+<div class="dl add">+                spec_token_indx = index[num_non_spec_tokens:]</div>
+<div class="dl add">+</div>
+<div class="dl add">+                spec_state_indices_tensor = torch.index_select(</div>
+<div class="dl add">+                    block_table_tensor[:, : self.num_spec + 1],</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_state_indices_tensor = torch.index_select(</div>
+<div class="dl add">+                    block_table_tensor[:, 0],</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    non_spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                spec_query_lens = torch.index_select(</div>
+<div class="dl add">+                    query_lens,</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_query_lens = torch.index_select(</div>
+<div class="dl add">+                    query_lens,</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    non_spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+</div>
+<div class="dl add">+                spec_query_start_loc = torch.zeros(</div>
+<div class="dl add">+                    num_spec_decodes + 1,</div>
+<div class="dl add">+                    dtype=torch.int32,</div>
+<div class="dl add">+                    device=query_start_loc.device,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                torch.cumsum(</div>
+<div class="dl add">+                    spec_query_lens,</div>
+<div class="dl add">+                    dim=0,</div>
+<div class="dl add">+                    out=spec_query_start_loc[1:],</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_query_start_loc = torch.zeros(</div>
+<div class="dl add">+                    query_lens.size(0) - num_spec_decodes + 1,</div>
+<div class="dl add">+                    dtype=torch.int32,</div>
+<div class="dl add">+                    device=query_start_loc.device,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                torch.cumsum(</div>
+<div class="dl add">+                    non_spec_query_lens,</div>
+<div class="dl add">+                    dim=0,</div>
+<div class="dl add">+                    out=non_spec_query_start_loc[1:],</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu = torch.zeros(</div>
+<div class="dl add">+                    query_lens_cpu.size(0) - num_spec_decodes + 1,</div>
+<div class="dl add">+                    dtype=torch.int32,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                torch.cumsum(</div>
+<div class="dl add">+                    query_lens_cpu[~spec_sequence_masks_cpu],</div>
+<div class="dl add">+                    dim=0,</div>
+<div class="dl add">+                    out=non_spec_query_start_loc_cpu[1:],</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+</div>
+<div class="dl add">+            assert num_accepted_tokens is not None</div>
+<div class="dl add">+            num_accepted_tokens = torch.index_select(</div>
+<div class="dl add">+                num_accepted_tokens,</div>
+<div class="dl add">+                0,</div>
+<div class="dl add">+                spec_sequence_indices,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+</div>
+<div class="dl add">+        chunk_indices: torch.Tensor | None = None</div>
+<div class="dl add">+        chunk_offsets: torch.Tensor | None = None</div>
+<div class="dl add">+        if num_prefills &gt; 0:</div>
+<div class="dl add">+            from vllm.model_executor.layers.fla.ops.index import (</div>
+<div class="dl add">+                prepare_chunk_indices,</div>
+<div class="dl add">+                prepare_chunk_offsets,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            from vllm.model_executor.layers.fla.ops.utils import FLA_CHUNK_SIZE</div>
+<div class="dl add">+</div>
+<div class="dl add">+            gpu_device = query_start_loc.device</div>
+<div class="dl add">+            chunk_indices = prepare_chunk_indices(</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+                FLA_CHUNK_SIZE,</div>
+<div class="dl add">+            ).to(device=gpu_device, non_blocking=True)</div>
+<div class="dl add">+            chunk_offsets = prepare_chunk_offsets(</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+                FLA_CHUNK_SIZE,</div>
+<div class="dl add">+            ).to(device=gpu_device, non_blocking=True)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        if num_prefills &gt; 0:</div>
+<div class="dl add">+            has_initial_state = context_lens_tensor &gt; 0</div>
+<div class="dl add">+            if spec_sequence_masks_cpu is not None:</div>
+<div class="dl add">+                assert non_spec_sequence_indices is not None</div>
+<div class="dl add">+                has_initial_state = torch.index_select(</div>
+<div class="dl add">+                    has_initial_state,</div>
+<div class="dl add">+                    0,</div>
+<div class="dl add">+                    non_spec_sequence_indices,</div>
+<div class="dl add">+                )</div>
+<div class="dl add">+                assert non_spec_query_start_loc_cpu is not None</div>
+<div class="dl add">+            nums_dict, batch_ptr, token_chunk_offset_ptr = compute_causal_conv1d_metadata(</div>
+<div class="dl add">+                non_spec_query_start_loc_cpu,</div>
+<div class="dl add">+                device=query_start_loc.device,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+        else:</div>
+<div class="dl add">+            has_initial_state = None</div>
+<div class="dl add">+</div>
+<div class="dl add">+        assert not (num_decodes &gt; 0 and num_spec_decodes &gt; 0), (</div>
+<div class="dl add">+            f&quot;num_decodes: {num_decodes}, num_spec_decodes: {num_spec_decodes}&quot;</div>
+<div class="dl add">+        )</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-def _patched_build_spec(</div>
+<div class="dl del">-    self,</div>
+<div class="dl del">-    attn_metadata: gdn_attn.GDNAttentionMetadata,</div>
+<div class="dl del">-    common_attn_metadata,</div>
+<div class="dl del">-    num_decode_draft_tokens_cpu: torch.Tensor | None = None,</div>
+<div class="dl del">-):</div>
+<div class="dl del">-    assert attn_metadata.spec_sequence_masks is not None</div>
+<div class="dl del">-    _ensure_spec_causal_conv1d_host_meta_state(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        common_attn_metadata.query_start_loc.device,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    spec_query_start_loc_cpu = _build_spec_query_start_loc_cpu(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        common_attn_metadata,</div>
+<div class="dl del">-        num_decode_draft_tokens_cpu,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    assert spec_query_start_loc_cpu is not None</div>
+<div class="dl del">-    if attn_metadata.spec_query_start_loc is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected attn_metadata.spec_query_start_loc for patched GDN speculative path.&quot;)</div>
+<div class="dl del">-    attn_metadata.spec_decode_fallback_meta = GDNSpecDecodeFallbackMeta(</div>
+<div class="dl del">-        spec_causal_conv1d=_build_spec_causal_conv1d_host_meta(</div>
+<div class="dl del">-            self,</div>
+<div class="dl del">-            attn_metadata,</div>
+<div class="dl del">-            spec_query_start_loc_cpu,</div>
+<div class="dl del">-        ),</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    return attn_metadata</div>
+<div class="dl add">+        batch_size = m.num_actual_tokens</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+        if (</div>
+<div class="dl add">+            self.use_full_cuda_graph</div>
+<div class="dl add">+            and num_prefills == 0</div>
+<div class="dl add">+            and num_decodes == 0</div>
+<div class="dl add">+            and num_spec_decodes &lt;= self.decode_cudagraph_max_bs</div>
+<div class="dl add">+            and num_spec_decode_tokens &lt;= self.decode_cudagraph_max_bs</div>
+<div class="dl add">+        ):</div>
+<div class="dl add">+            assert spec_sequence_masks is not None</div>
+<div class="dl add">+            self.spec_state_indices_tensor[:num_spec_decodes].copy_(</div>
+<div class="dl add">+                spec_state_indices_tensor,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            spec_state_indices_tensor = self.spec_state_indices_tensor[:batch_size]</div>
+<div class="dl add">+            spec_state_indices_tensor[num_spec_decodes:].fill_(NULL_BLOCK_ID)</div>
+<div class="dl add">+</div>
+<div class="dl add">+            self.spec_sequence_masks[:num_spec_decodes].copy_(</div>
+<div class="dl add">+                spec_sequence_masks[:num_spec_decodes],</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            spec_sequence_masks = self.spec_sequence_masks[:batch_size]</div>
+<div class="dl add">+            spec_sequence_masks[num_spec_decodes:].fill_(False)</div>
+<div class="dl add">+</div>
+<div class="dl add">+            assert non_spec_token_indx is not None and spec_token_indx is not None</div>
+<div class="dl add">+            self.non_spec_token_indx[: non_spec_token_indx.size(0)].copy_(</div>
+<div class="dl add">+                non_spec_token_indx,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            non_spec_token_indx = self.non_spec_token_indx[: non_spec_token_indx.size(0)]</div>
+<div class="dl add">+</div>
+<div class="dl add">+            self.spec_token_indx[: spec_token_indx.size(0)].copy_(</div>
+<div class="dl add">+                spec_token_indx,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            spec_token_indx = self.spec_token_indx[: spec_token_indx.size(0)]</div>
+<div class="dl add">+</div>
+<div class="dl add">+            self.spec_query_start_loc[: num_spec_decodes + 1].copy_(</div>
+<div class="dl add">+                spec_query_start_loc,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            spec_num_query_tokens = spec_query_start_loc[-1]  # type: ignore</div>
+<div class="dl add">+            spec_query_start_loc = self.spec_query_start_loc[: batch_size + 1]</div>
+<div class="dl add">+            spec_query_start_loc[num_spec_decodes + 1 :].fill_(spec_num_query_tokens)</div>
+<div class="dl add">+</div>
+<div class="dl add">+            self.num_accepted_tokens[:num_spec_decodes].copy_(</div>
+<div class="dl add">+                num_accepted_tokens,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            num_accepted_tokens = self.num_accepted_tokens[:batch_size]</div>
+<div class="dl add">+            num_accepted_tokens[num_spec_decodes:].fill_(1)</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-def _patched_build_decode(</div>
+<div class="dl del">-    self,</div>
+<div class="dl del">-    attn_metadata: gdn_attn.GDNAttentionMetadata,</div>
+<div class="dl del">-    common_attn_metadata,</div>
+<div class="dl del">-    num_decode_draft_tokens_cpu: torch.Tensor | None = None,</div>
+<div class="dl del">-):</div>
+<div class="dl del">-    assert attn_metadata.num_decodes &gt; 0</div>
+<div class="dl del">-    _ensure_causal_conv1d_host_meta_state(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        common_attn_metadata.query_start_loc.device,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    non_spec_query_start_loc_cpu = _build_non_spec_query_start_loc_cpu(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        common_attn_metadata,</div>
+<div class="dl del">-        num_decode_draft_tokens_cpu,</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    if non_spec_query_start_loc_cpu is None:</div>
+<div class="dl del">-        raise RuntimeError(&quot;Expected non-spec query_start_loc_cpu for patched GDN non-spec decode path.&quot;)</div>
+<div class="dl del">-    attn_metadata.non_spec_decode_fallback_meta = GDNDecodeFallbackMeta(</div>
+<div class="dl del">-        causal_conv1d=_build_non_spec_decode_causal_conv1d_host_meta(</div>
+<div class="dl del">-            self,</div>
+<div class="dl add">+        if (</div>
+<div class="dl add">+            self.use_full_cuda_graph</div>
+<div class="dl add">+            and num_prefills == 0</div>
+<div class="dl add">+            and num_spec_decodes == 0</div>
+<div class="dl add">+            and num_decodes &lt;= self.decode_cudagraph_max_bs</div>
+<div class="dl add">+        ):</div>
+<div class="dl add">+            self.non_spec_state_indices_tensor[:num_decodes].copy_(</div>
+<div class="dl add">+                non_spec_state_indices_tensor,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            non_spec_state_indices_tensor = self.non_spec_state_indices_tensor[:batch_size]</div>
+<div class="dl add">+            non_spec_state_indices_tensor[num_decodes:].fill_(NULL_BLOCK_ID)</div>
+<div class="dl add">+</div>
+<div class="dl add">+            self.non_spec_query_start_loc[: num_decodes + 1].copy_(</div>
+<div class="dl add">+                non_spec_query_start_loc,</div>
+<div class="dl add">+                non_blocking=True,</div>
+<div class="dl add">+            )</div>
+<div class="dl add">+            non_spec_num_query_tokens = non_spec_query_start_loc[-1]</div>
+<div class="dl add">+            non_spec_query_start_loc = self.non_spec_query_start_loc[: batch_size + 1]</div>
+<div class="dl add">+            non_spec_query_start_loc[num_decodes + 1 :].fill_(non_spec_num_query_tokens)</div>
+<div class="dl add">+</div>
+<div class="dl add">+        attn_metadata = GDNAttentionMetadata(</div>
+<div class="dl add">+            num_prefills=num_prefills,</div>
+<div class="dl add">+            num_prefill_tokens=num_prefill_tokens,</div>
+<div class="dl add">+            num_decodes=num_decodes,</div>
+<div class="dl add">+            num_decode_tokens=num_decode_tokens,</div>
+<div class="dl add">+            num_spec_decodes=num_spec_decodes,</div>
+<div class="dl add">+            num_spec_decode_tokens=num_spec_decode_tokens,</div>
+<div class="dl add">+            num_actual_tokens=m.num_actual_tokens,</div>
+<div class="dl add">+            has_initial_state=has_initial_state,</div>
+<div class="dl add">+            chunk_indices=chunk_indices,</div>
+<div class="dl add">+            chunk_offsets=chunk_offsets,</div>
+<div class="dl add">+            spec_query_start_loc=spec_query_start_loc,</div>
+<div class="dl add">+            non_spec_query_start_loc=non_spec_query_start_loc,</div>
+<div class="dl add">+            spec_state_indices_tensor=spec_state_indices_tensor,</div>
+<div class="dl add">+            non_spec_state_indices_tensor=non_spec_state_indices_tensor,</div>
+<div class="dl add">+            spec_sequence_masks=spec_sequence_masks,</div>
+<div class="dl add">+            spec_token_indx=spec_token_indx,</div>
+<div class="dl add">+            non_spec_token_indx=non_spec_token_indx,</div>
+<div class="dl add">+            num_accepted_tokens=num_accepted_tokens,</div>
+<div class="dl add">+            nums_dict=nums_dict,</div>
+<div class="dl add">+            batch_ptr=batch_ptr,</div>
+<div class="dl add">+            token_chunk_offset_ptr=token_chunk_offset_ptr,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        attn_metadata = self._attach_non_spec_prefill_fallback_meta(</div>
+<div class="dl ctx">             attn_metadata,</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl ctx">             non_spec_query_start_loc_cpu,</div>
+<div class="dl del">-        ),</div>
+<div class="dl del">-    )</div>
+<div class="dl del">-    return attn_metadata</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        attn_metadata = self._attach_spec_decode_fallback_meta(</div>
+<div class="dl add">+            attn_metadata,</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl add">+            num_decode_draft_tokens_cpu,</div>
+<div class="dl add">+        )</div>
+<div class="dl add">+        return self._attach_non_spec_decode_fallback_meta(</div>
+<div class="dl add">+            attn_metadata,</div>
+<div class="dl add">+            common_attn_metadata,</div>
+<div class="dl add">+            num_decode_draft_tokens_cpu,</div>
+<div class="dl add">+        )</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl del">-if not _IS_PATCHED and not is_310p():</div>
+<div class="dl del">-    gdn_attn.GDNChunkedPrefillMetadata = GDNChunkedPrefillMetadata</div>
+<div class="dl del">-    gdn_attn.GDNCausalConv1dHostMetadata = GDNCausalConv1dHostMetadata</div>
+<div class="dl del">-    gdn_attn.GDNPrefillFallbackMeta = GDNPrefillFallbackMeta</div>
+<div class="dl del">-    gdn_attn.GDNAttentionMetadataBuilder.build = _patched_build</div>
+<div class="dl del">-    gdn_attn.GDNAttentionMetadataBuilder._init_reorder_batch_threshold = _init_reorder_batch_threshold</div>
+<div class="dl del">-    _IS_PATCHED = True</div>
+<div class="dl add">+class AscendGDNAttentionBackend(GDNAttentionBackend):</div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def get_builder_cls() -&gt; type[AscendGDNAttentionMetadataBuilder]:</div>
+<div class="dl add">+        return AscendGDNAttentionMetadataBuilder</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/ops/triton/fla/chunk.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+11</span><span class="stat del">-5</span>
+    </div>
+  </div>
+  <div class="desc">chunk_gated_delta_rule_fwd / chunk_fwd_o：新增 cu_seqlens_host / chunk_indices_chunk64_host 通过 prebuilt meta 提前提取为 Python tuple，传入 AscendC 算子时避免每次 .tolist() 的同步开销</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index ea8b6ab4..8995d4e5 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/triton/fla/chunk.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/chunk.py</div>
+<div class="dl hunk">@@ -48,7 +48,9 @@ def chunk_gated_delta_rule_fwd(</div>
+<div class="dl ctx">         num_decodes = attn_metadata.num_decodes</div>
+<div class="dl ctx">     chunk_size = 64</div>
+<div class="dl ctx">     block_indices_cumsum = None if prebuilt_meta is None else prebuilt_meta.block_indices_cumsum</div>
+<div class="dl add">+    cu_seqlens_host = None if prebuilt_meta is None else prebuilt_meta.cu_seqlens_host</div>
+<div class="dl ctx">     chunk_indices_chunk64 = None if prebuilt_meta is None else prebuilt_meta.chunk_indices_chunk64</div>
+<div class="dl add">+    chunk_indices_chunk64_host = None if prebuilt_meta is None else prebuilt_meta.chunk_indices_chunk64_host</div>
+<div class="dl ctx">     chunk_offsets_chunk64 = None if prebuilt_meta is None else prebuilt_meta.chunk_offsets_chunk64</div>
+<div class="dl ctx">     update_chunk_offsets_chunk64 = None if prebuilt_meta is None else prebuilt_meta.update_chunk_offsets_chunk64</div>
+<div class="dl ctx">     final_chunk_indices_chunk64 = None if prebuilt_meta is None else prebuilt_meta.final_chunk_indices_chunk64</div>
+<div class="dl hunk">@@ -91,8 +93,12 @@ def chunk_gated_delta_rule_fwd(</div>
+<div class="dl ctx">     g_ascendc = g.transpose(1, 2).contiguous()</div>
+<div class="dl ctx">     q_ascendc = q.to(torch.bfloat16).transpose(1, 2).contiguous()</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    cu_seqlens = cu_seqlens.to(torch.int64)</div>
+<div class="dl add">+    cu_seqlens = None if cu_seqlens is None else cu_seqlens.to(torch.int64)</div>
+<div class="dl ctx">     chunk_indices = None if chunk_indices_chunk64 is None else chunk_indices_chunk64.to(torch.int64)</div>
+<div class="dl add">+    if cu_seqlens_host is None and cu_seqlens is not None:</div>
+<div class="dl add">+        cu_seqlens_host = tuple(cu_seqlens.tolist())</div>
+<div class="dl add">+    if chunk_indices_chunk64_host is None and chunk_indices is not None:</div>
+<div class="dl add">+        chunk_indices_chunk64_host = tuple(chunk_indices.flatten().tolist())</div>
+<div class="dl ctx">     h, v_new, final_state = torch.ops._C_ascend.chunk_gated_delta_rule_fwd_h(</div>
+<div class="dl ctx">         k_ascendc,</div>
+<div class="dl ctx">         w_ascendc,</div>
+<div class="dl hunk">@@ -103,8 +109,8 @@ def chunk_gated_delta_rule_fwd(</div>
+<div class="dl ctx">         output_final_state=True,</div>
+<div class="dl ctx">         chunk_size=64,</div>
+<div class="dl ctx">         save_new_value=True,</div>
+<div class="dl del">-        cu_seqlens=cu_seqlens.tolist() if cu_seqlens is not None else None,</div>
+<div class="dl del">-        chunk_indices=chunk_indices.flatten().tolist() if chunk_indices is not None else None,</div>
+<div class="dl add">+        cu_seqlens=cu_seqlens_host,</div>
+<div class="dl add">+        chunk_indices=chunk_indices_chunk64_host,</div>
+<div class="dl ctx">         use_exp2=False,</div>
+<div class="dl ctx">         transpose_state_layout=False,</div>
+<div class="dl ctx">     )</div>
+<div class="dl hunk">@@ -169,8 +175,8 @@ def chunk_gated_delta_rule_fwd(</div>
+<div class="dl ctx">         scale,</div>
+<div class="dl ctx">         g=g_ascendc,</div>
+<div class="dl ctx">         g_gamma=None,</div>
+<div class="dl del">-        cu_seqlens=cu_seqlens.tolist() if cu_seqlens is not None else None,</div>
+<div class="dl del">-        chunk_indices=chunk_indices.flatten().tolist() if chunk_indices is not None else None,</div>
+<div class="dl add">+        cu_seqlens=cu_seqlens_host,</div>
+<div class="dl add">+        chunk_indices=chunk_indices_chunk64_host,</div>
+<div class="dl ctx">         chunk_size=64,</div>
+<div class="dl ctx">         transpose_state_layout=False,</div>
+<div class="dl ctx">     )</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_patch_init_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/patch/__init__.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+14</span><span class="stat del">-13</span>
+    </div>
+  </div>
+  <div class="desc">更新补丁注释文档：patch_gdn_attn 说明替换为 patch_module（torch.argsort 补丁 + gdn_attn_builder 覆盖），标注相关 PR 与未来移除计划</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 480d9d9f..9fe2252d 100644</div>
+<div class="dl meta">--- a/vllm_ascend/patch/__init__.py</div>
+<div class="dl meta">+++ b/vllm_ascend/patch/__init__.py</div>
+<div class="dl hunk">@@ -380,27 +380,28 @@</div>
+<div class="dl ctx"> #           to override them, then delete the patch file `worker/patch_rejection_sampler.py`.</div>
+<div class="dl ctx"> #       2. make these functions as costom op, then remove AscendRejectionSampler</div>
+<div class="dl ctx"> #</div>
+<div class="dl del">-# ** 7. File: worker/patch_gdn_attn.py**</div>
+<div class="dl add">+## ** 6. File: worker/patch_module.py**</div>
+<div class="dl ctx"> # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~</div>
+<div class="dl del">-#   1. `vllm.v1.attention.backends.gdn_attn.GDNAttentionMetadataBuilder.build`</div>
+<div class="dl add">+#   1. `vllm.v1.attention.backends.gdn_attn.torch.argsort`</div>
+<div class="dl ctx"> #    Why:</div>
+<div class="dl del">-#       Qwen3.5/Qwen3Next GDN prefill on NPU needs prebuilt varlen chunk metadata</div>
+<div class="dl del">-#       to avoid forward-time host round-trips that break async scheduling.</div>
+<div class="dl add">+#       1. &#x27;torch.argsort&#x27; func of npu does not support bool.</div>
+<div class="dl add">+#       2. Without `stable=True`, the output will have a lot of redundant tokens.</div>
+<div class="dl ctx"> #    How：</div>
+<div class="dl del">-#       Monkey-patch the upstream builder in-place, keep upstream code untouched,</div>
+<div class="dl del">-#       and attach prebuilt device metadata bundle onto the returned attention</div>
+<div class="dl del">-#       metadata object for Ascend-specific consumers.</div>
+<div class="dl add">+#       Replace with a new torch.argsort that will cast the input to torch.int32</div>
+<div class="dl add">+#       and do stable sort.</div>
+<div class="dl add">+#    Related PR (if no, explain why):</div>
+<div class="dl add">+#       1. It depends on torch_npu.</div>
+<div class="dl add">+#       2. https://github.com/vllm-project/vllm/pull/30632</div>
+<div class="dl ctx"> #    Future Plan:</div>
+<div class="dl del">-#       Remove this patch when upstream exposes a backend hook for extending GDN</div>
+<div class="dl del">-#       metadata or when the optimization is accepted upstream directly.</div>
+<div class="dl del">-#   2. `vllm.v1.attention.backends.gdn_attn.GDNAttentionMetadataBuilde.build`</div>
+<div class="dl add">+#       Remove this patch when bool is supported in &#x27;torch.argsort&#x27; func of npu.</div>
+<div class="dl add">+#       Make &#x27;torch.argsort&#x27; in `vllm.v1.attention.backends.gdn_attn` be stable.</div>
+<div class="dl add">+#   2. `vllm_ascend.ops.gdn_attn_builder.AscendGDNAttentionMetadataBuilder.build`</div>
+<div class="dl ctx"> #    Why:</div>
+<div class="dl ctx"> #       Qwen3.5/Qwen3Next GDN Decode/Specific Decode on NPU needs prebuilt varlen chunk metadata</div>
+<div class="dl ctx"> #       to avoid forward-time host round-trips that break async scheduling.</div>
+<div class="dl ctx"> #    How：</div>
+<div class="dl del">-#       Monkey-patch the upstream builder in-place, keep upstream code untouched,</div>
+<div class="dl del">-#       and attach prebuilt device metadata bundle onto the returned attention</div>
+<div class="dl del">-#       metadata object for Ascend-specific consumers.</div>
+<div class="dl add">+#       Override the GDN attention metadata builder for Ascend backend and attach</div>
+<div class="dl add">+#       prebuilt device metadata bundle onto the returned attention metadata object.</div>
+<div class="dl ctx"> #    Future Plan:</div>
+<div class="dl ctx"> #       Remove this patch when upstream exposes a backend hook for extending GDN</div>
+<div class="dl ctx"> #       metadata or when the optimization is accepted upstream directly.</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_patch_worker_init_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/patch/worker/__init__.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+0</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">移除 `import vllm_ascend.patch.worker.patch_gdn_attn`：GDN attn builder 已正式化至 ops 模块</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 1e55a02a..e48fedb0 100644</div>
+<div class="dl meta">--- a/vllm_ascend/patch/worker/__init__.py</div>
+<div class="dl meta">+++ b/vllm_ascend/patch/worker/__init__.py</div>
+<div class="dl hunk">@@ -39,7 +39,6 @@ import vllm_ascend.patch.worker.patch_deepseek_compressor  # noqa</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> if not is_310p():</div>
+<div class="dl ctx">     import vllm_ascend.patch.worker.patch_qwen3_5  # noqa</div>
+<div class="dl del">-    import vllm_ascend.patch.worker.patch_gdn_attn  # noqa</div>
+<div class="dl ctx">     import vllm_ascend.patch.worker.patch_qwen3_dflash  # noqa</div>
+<div class="dl ctx">     import vllm_ascend.patch.worker.patch_qwen3vl  # noqa</div>
+<div class="dl ctx"> else:</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/spec_decode/eagle_proposer.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+2</span><span class="stat del">-9</span>
+    </div>
+  </div>
+  <div class="desc">简化 AscendEagleProposer.__init__：移除冗余命名参数传递，改为位置参数直接调用父类</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 96dc0684..b25d1003 100644</div>
+<div class="dl meta">--- a/vllm_ascend/spec_decode/eagle_proposer.py</div>
+<div class="dl meta">+++ b/vllm_ascend/spec_decode/eagle_proposer.py</div>
+<div class="dl hunk">@@ -8,12 +8,5 @@ from vllm_ascend.spec_decode.llm_base_proposer import AscendSpecDecodeBasePropos</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> class AscendEagleProposer(EagleProposer, AscendSpecDecodeBaseProposer):</div>
+<div class="dl del">-    def __init__(</div>
+<div class="dl del">-        self,</div>
+<div class="dl del">-        vllm_config: VllmConfig,</div>
+<div class="dl del">-        device: torch.device,</div>
+<div class="dl del">-        runner=None,</div>
+<div class="dl del">-    ):</div>
+<div class="dl del">-        AscendSpecDecodeBaseProposer.__init__(</div>
+<div class="dl del">-            self, vllm_config, device, pass_hidden_states_to_model=True, runner=runner</div>
+<div class="dl del">-        )</div>
+<div class="dl add">+    def __init__(self, vllm_config: VllmConfig, device: torch.device, runner=None):</div>
+<div class="dl add">+        AscendSpecDecodeBaseProposer.__init__(self, vllm_config, device, True, runner=runner)</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_worker_model_runner_v1_py__pr_9310" data-cats="pr_9310">
+  <div class="card-h" style="--c:#9333ea">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
+      <code class="path">vllm_ascend/worker/model_runner_v1.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+5</span><span class="stat del">-6</span>
+    </div>
+  </div>
+  <div class="desc">异步 spec decode 路径优化：将 num_computed_tokens_cpu_tensor→device 拷贝提前复用，避免重复 H2D 拷贝</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 6d0369cb..83c36b66 100644</div>
+<div class="dl meta">--- a/vllm_ascend/worker/model_runner_v1.py</div>
+<div class="dl meta">+++ b/vllm_ascend/worker/model_runner_v1.py</div>
+<div class="dl hunk">@@ -955,6 +955,10 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl ctx">         # CPU values are optimistic (all drafts accepted). The kernel</div>
+<div class="dl ctx">         # corrects on GPU using the previous step&#x27;s</div>
+<div class="dl ctx">         # valid_sampled_token_count_gpu. Otherwise, just copy from CPU.</div>
+<div class="dl add">+        if self.use_async_spec_decode:</div>
+<div class="dl add">+            cpu_values = self.input_batch.num_computed_tokens_cpu_tensor[:num_reqs].to(</div>
+<div class="dl add">+                device=self.device, non_blocking=True</div>
+<div class="dl add">+            )</div>
+<div class="dl ctx">         if (</div>
+<div class="dl ctx">             self.use_async_spec_decode</div>
+<div class="dl ctx">             and self.valid_sampled_token_count_gpu is not None</div>
+<div class="dl hunk">@@ -962,9 +966,6 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl ctx">         ):</div>
+<div class="dl ctx">             self.prev_positions.copy_to_gpu(num_reqs)</div>
+<div class="dl ctx">             self.prev_num_draft_tokens.copy_to_gpu()</div>
+<div class="dl del">-            cpu_values = self.input_batch.num_computed_tokens_cpu_tensor[:num_reqs].to(</div>
+<div class="dl del">-                device=self.device, non_blocking=True</div>
+<div class="dl del">-            )</div>
+<div class="dl ctx">             update_num_computed_tokens_for_batch_change(</div>
+<div class="dl ctx">                 self.num_computed_tokens,</div>
+<div class="dl ctx">                 self.num_accepted_tokens.gpu[:num_reqs],</div>
+<div class="dl hunk">@@ -1080,9 +1081,7 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl ctx">         if self.use_async_spec_decode and (self.uses_mrope or self.uses_xdrope_dim &gt; 0):</div>
+<div class="dl ctx">             drift = self.num_computed_tokens[req_indices_gpu].to(</div>
+<div class="dl ctx">                 torch.int64</div>
+<div class="dl del">-            ) - self.input_batch.num_computed_tokens_cpu_tensor[req_indices].to(</div>
+<div class="dl del">-                device=self.device, dtype=torch.int64, non_blocking=True</div>
+<div class="dl del">-            )</div>
+<div class="dl add">+            ) - cpu_values[req_indices_gpu]</div>
+<div class="dl ctx">             target = self.mrope_positions if self.uses_mrope else self.xdrope_positions</div>
+<div class="dl ctx">             target.gpu[:, :total_num_scheduled_tokens] += drift</div>
+<div class="dl ctx"> </div></div>
+  </details>
+</section>
+
+<section class="card" id="f_requirements_txt__deps" data-cats="deps">
+  <div class="card-h" style="--c:#7c3aed">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#7c3aed">私仓自有 · 依赖与构建</span>
+      
+      
+      <code class="path">requirements.txt</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+3</span><span class="stat del">-3</span>
+    </div>
+  </div>
+  <div class="desc">numpy 锁定 1.26.4；注释掉 torch-npu==2.10.0 与 triton-ascend==3.2.1，避免安装时覆盖已装环境</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 16dc8ea6..11306e41 100644</div>
+<div class="dl meta">--- a/requirements.txt</div>
+<div class="dl meta">+++ b/requirements.txt</div>
+<div class="dl hunk">@@ -2,7 +2,7 @@</div>
+<div class="dl ctx"> cmake&gt;=3.26</div>
+<div class="dl ctx"> decorator</div>
+<div class="dl ctx"> einops</div>
+<div class="dl del">-numpy</div>
+<div class="dl add">+numpy==1.26.4</div>
+<div class="dl ctx"> packaging</div>
+<div class="dl ctx"> pip</div>
+<div class="dl ctx"> pybind11</div>
+<div class="dl hunk">@@ -14,10 +14,10 @@ psutil</div>
+<div class="dl ctx"> setuptools&gt;=64</div>
+<div class="dl ctx"> setuptools-scm&gt;=8</div>
+<div class="dl ctx"> torch==2.10.0</div>
+<div class="dl del">-torch-npu==2.10.0</div>
+<div class="dl add">+# torch-npu==2.10.0</div>
+<div class="dl ctx"> torchvision==0.25.0</div>
+<div class="dl ctx"> torchaudio==2.10.0</div>
+<div class="dl del">-triton-ascend==3.2.1</div>
+<div class="dl add">+# triton-ascend==3.2.1</div>
+<div class="dl ctx"> wheel</div>
+<div class="dl ctx"> xgrammar&gt;=0.1.30</div>
+<div class="dl ctx"> pandas-stubs</div></div>
+  </details>
+</section>
+    <footer>本页由 <code>git diff upstream/main alpha</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
+  </main>
+</div>
+<script>
+const btns = document.querySelectorAll('.cat-btn');
+const hasCat = (el, cat) => cat === 'all' || (el.dataset.cats || '').split(' ').includes(cat);
+btns.forEach(b => b.addEventListener('click', () => {
+  btns.forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  const cat = b.dataset.cat;
+  document.querySelectorAll('.card').forEach(c => c.classList.toggle('hidden', !hasCat(c, cat)));
+  document.querySelectorAll('.tree li.file').forEach(li => li.classList.toggle('hidden', !hasCat(li, cat)));
+}));
+document.getElementById('expand').onclick = () =>
+  document.querySelectorAll('.card:not(.hidden) details').forEach(d => d.open = true);
+document.getElementById('collapse').onclick = () =>
+  document.querySelectorAll('details').forEach(d => d.open = false);
+</script>
+</body>
+</html>
