@@ -43,8 +43,8 @@ OUT = "index.html"
 # 约定：来自上游未合并 PR 的改动各自单独成类，与「私仓自有」严格区分。
 CATEGORIES = OrderedDict(
     [
-        ("a5op_pr", ("来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）", "#db61a2")),
         ("pr_9310", ("来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode", "#9333ea")),
+        ("pr_9715", ("来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）", "#db61a2")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
         ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
     ]
@@ -54,54 +54,6 @@ CATEGORIES = OrderedDict(
 # 注意：同一个 path 可以出现多次（被多个类目/层修改），每条对应一张卡片，
 # 卡片只展示该类目所属层的 diff。
 FILES_META = [
-    # ============================ 来自 PR #9382 ============================
-    # 注：GDN / conv1d / chunk 算子的主体已随上游 #9224 合入 upstream/main，
-    # rebase 后的 #9382 仅剩「在 #9224 之上把这些算子接到 A5（ascend950）并统一经
-    # DeviceOperator 分发」的增量改动。
-    (
-        "csrc/attention/recurrent_gated_delta_rule/op_host/arch35/recurrent_gated_delta_rule_tiling_arch35.cpp",
-        "a5op_pr", "新增：A5（arch35）专用 AscendC tiling 实现（recurrent_gated_delta_rule）", True,
-    ),
-    (
-        "csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h",
-        "a5op_pr", "去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）", False,
-    ),
-    (
-        "csrc/build_aclnn.sh",
-        "a5op_pr", "在 ascend950 自定义算子编译列表加入 chunk_fwd_o / chunk_gated_delta_rule_fwd_h（causal_conv1d / recurrent_gated_delta_rule 已随 #9224 在列）", False,
-    ),
-    (
-        "csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h",
-        "a5op_pr", "去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）", False,
-    ),
-    (
-        "csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h",
-        "a5op_pr", "kernel 收尾微调：补齐 namespace / #endif 注释与文件末尾换行", False,
-    ),
-    (
-        "csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp",
-        "a5op_pr", "启用 ascend950 AICore 配置（取消 ascend950 注释）", False,
-    ),
-    (
-        "csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp",
-        "a5op_pr", "启用 ascend950 AICore 配置（取消 ascend950 注释）", False,
-    ),
-    (
-        "vllm_ascend/device/device_op.py",
-        "a5op_pr", "BaseDeviceAdaptor / A5DeviceAdaptor 新增 chunk_scaled_dot_kkt_fwd / solve_tril_16x16 / npu_gemma_rms_norm 三个设备算子封装：A5 走自定义算子、其余走 triton kernel，统一经 DeviceOperator 分发", False,
-    ),
-    (
-        "vllm_ascend/ops/layernorm.py",
-        "a5op_pr", "AscendGemmaRMSNorm 改用 DeviceOperator.npu_gemma_rms_norm 分发（A5 自定义算子 / 通用实现）—— 此前私仓「规避自定义 gemma rms norm」已并入 PR #9382", False,
-    ),
-    (
-        "vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py",
-        "a5op_pr", "chunk_scaled_dot_kkt_fwd 改经 DeviceOperator.chunk_scaled_dot_kkt_fwd 分发（替代直接调用 triton kernel），A5 路由到自定义算子 —— 此前私仓「A5 精度修复」已并入 PR #9382", False,
-    ),
-    (
-        "vllm_ascend/ops/triton/fla/solve_tril.py",
-        "a5op_pr", "solve_tril 改经 DeviceOperator.solve_tril_16x16 分发；kernel 新增 EXTRACT_SLICE_STRIDE_1 constexpr 参数控制 extract_slice 的 stride —— 此前私仓「编译错误修复」已并入 PR #9382", False,
-    ),
     # ============================ 来自 PR #9310 ============================
     (
         "tests/ut/attention/test_attention_v1.py",
@@ -147,6 +99,11 @@ FILES_META = [
         "vllm_ascend/worker/model_runner_v1.py",
         "pr_9310", "异步 spec decode 路径优化：将 num_computed_tokens_cpu_tensor→device 拷贝提前复用，避免重复 H2D 拷贝", False,
     ),
+    # ============================ 来自 PR #9715 ============================
+    (
+        "vllm_ascend/patch/platform/patch_balance_schedule.py",
+        "pr_9715", "精简 balance scheduler 补丁：删去随上游已收敛的大段重复 Scheduler 实现，仅保留版本兼容性修复所需的最小改动，消除 scheduler 运行时错误（+44/-621）", False,
+    ),
     # ============================ 私仓自有 ============================
     (
         "requirements.txt",
@@ -160,14 +117,9 @@ FILES_META = [
 ]
 
 # 提前合入的上游 PR：下列文件的改动来自尚未合并进 upstream/main 的 PR，
-# 为在 A5 上跑通而提前合入本仓；待上游合并后即可随上游同步、移除本地副本。
-PR_9382 = {
-    "url": "https://github.com/vllm-project/vllm-ascend/pull/9382",
-    "title": "[Ascend950][Feature] Support custom op for GDN on Ascend 950",
-    "state": "OPEN",
-    "category": "a5op_pr",
-}
-
+# 为本仓需要而提前合入；待上游合并后即可随上游同步、移除本地副本。
+# 注：PR #9382（GDN A5 自定义算子）已于上游合并（upstream/main 含 #9382），
+# 本仓的提前合入副本已随本次同步 upstream/main 自动收敛，不再单独成类。
 PR_9310 = {
     "url": "https://github.com/vllm-project/vllm-ascend/pull/9310",
     "title": "[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model",
@@ -175,8 +127,15 @@ PR_9310 = {
     "category": "pr_9310",
 }
 
+PR_9715 = {
+    "url": "https://github.com/vllm-project/vllm-ascend/pull/9715",
+    "title": "[Feature]Fix the scheduler runtime error caused by version compatibility issues.",
+    "state": "OPEN",
+    "category": "pr_9715",
+}
+
 # 所有上游 PR 的汇总列表，用于渲染 PR 标签和概述
-PRS = [PR_9382, PR_9310]
+PRS = [PR_9310, PR_9715]
 
 # 类别 -> 该类别对应的上游 PR（用于卡片 PR 角标）。私仓自有类别返回 None。
 CAT_PR = {pr["category"]: pr for pr in PRS}
@@ -268,18 +227,20 @@ def main() -> int:
     base_sha = run(["git", "rev-parse", "--short", BASE]).strip()
 
     # ========== 分层 diff：每个类别只展示自己那一层的改动 ==========
-    # alpha 分支的分层边界（确定性 commit，确保每次生成一致）：
-    #   upstream/main → PR #9382 merge(M1) → 私仓自有(C1) → PR #9310 merge(M2) → 私仓开发(D1) → HEAD
+    # 分层边界（确定性 commit，确保每次生成一致）。各 (base, head) 为历史中固定的
+    # 两个提交，其树 diff 与当前 HEAD 无关，故同步 upstream 后依旧稳定：
+    #   私仓自有(C1) → PR #9310 merge(M2) → 私仓开发(D1) →
+    #   同步 upstream/main 合并(MU) → PR #9715 merge(M3) → HEAD
     LAYER_REFS: dict[str, tuple[str, str]] = {
-        "pr_9382": (BASE, "f29a437a"),         # PR #9382 层：upstream/main → M1
-        "fork":    ("f29a437a", "459d2e90"),   # 私仓自有层：M1 → C1
-        "pr_9310": ("459d2e90", "72404c47"),   # PR #9310 层：C1 → M2
-        "fork_dev": ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler等)
+        "fork":     ("f29a437a", "459d2e90"),  # 私仓自有层：requirements 锁定（C1 单提交）
+        "pr_9310":  ("459d2e90", "72404c47"),  # PR #9310 层：C1 → M2
+        "fork_dev": ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler 等)
+        "pr_9715":  ("2c176bbb", "c4827352"),  # PR #9715 层：MU → M3 (精简 balance scheduler)
     }
     # 类别 → 所属层
     CAT_LAYER: dict[str, str] = {
-        "a5op_pr": "pr_9382",
         "pr_9310": "pr_9310",
+        "pr_9715": "pr_9715",
         "deps":    "fork",
         "dev":     "fork_dev",
     }
@@ -388,7 +349,7 @@ def main() -> int:
         pr_notes.append(
             f'其中 <b>{n_files}</b> 条改动来自上游 '
             f'<a href="{pr["url"]}" target="_blank" rel="noopener">PR #{pr_num}</a>'
-            f'（{html.escape(pr["title"])}，当前 <b>{pr["state"]}</b>，为支持 A5 提前合入；'
+            f'（{html.escape(pr["title"])}，当前 <b>{pr["state"]}</b>，为本仓需要提前合入；'
             f'待上游合并后可随上游同步移除本地副本）。'
         )
     pr_note = "<br>".join(pr_notes)
@@ -472,7 +433,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → PR #9382 → 私仓自有 → PR #9310</b> 逐层叠加而成；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>

@@ -75,29 +75,29 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>38f02363</b>　·　本仓分支：<b>alpha</b><br>
+    上游基线：<b>upstream/main</b> @ <b>85b678c4</b>　·　本仓分支：<b>alpha</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → PR #9382 → 私仓自有 → PR #9310</b> 逐层叠加而成；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
-    其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener">PR #9382</a>（[Ascend950][Feature] Support custom op for GDN on Ascend 950，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>1</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener">PR #9715</a>（[Feature]Fix the scheduler runtime error caused by version compatibility issues.，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
   <div class="stats">
-    <div class="stat-card"><div class="n">24</div><div class="l">变更文件</div></div>
+    <div class="stat-card"><div class="n">14</div><div class="l">变更文件</div></div>
     <div class="stat-card"><div class="n">4</div><div class="l">分类</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+546</div><div class="l">新增行</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-61</div><div class="l">删除行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+240</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-663</div><div class="l">删除行</div></div>
   </div>
 </header>
 <div class="layout">
   <aside>
     <h2>文件结构</h2>
-    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">recurrent_gated_delta_rule/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" class="tname">recurrent_gated_delta_rule_tiling_arch35.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" class="tname">recurrent_gated_delta_rule.h</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">moe/</span><ul><li class="dir"><span class="tname">causal_conv1d/</span><ul><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" class="tname">causal_conv1d_regbase.h</a></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" class="tname">causal_conv1d.h</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_fwd_o/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" class="tname">chunk_fwd_o_def.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_gated_delta_rule_fwd_h/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" class="tname">chunk_gated_delta_rule_fwd_h_def.cpp</a></li></ul></li></ul></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_build_aclnn_sh__a5op_pr" class="tname">build_aclnn.sh</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_device_device_op_py__a5op_pr" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" class="tname">chunk_scaled_dot_kkt.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" class="tname">solve_tril.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_layernorm_py__a5op_pr" class="tname">layernorm.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+    <div class="tree"><ul><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
   </aside>
   <main>
     <div class="toolbar">
-      <button class="cat-btn active" data-cat="all">全部 (24)</button>
-<button class="cat-btn" data-cat="a5op_pr" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复） (11)</button>
+      <button class="cat-btn active" data-cat="all">全部 (14)</button>
 <button class="cat-btn" data-cat="pr_9310" style="--c:#9333ea"><span class="dot" style="background:#9333ea"></span>来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode (11)</button>
+<button class="cat-btn" data-cat="pr_9715" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁） (1)</button>
 <button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (1)</button>
 <button class="cat-btn" data-cat="dev" style="--c:#f59e0b"><span class="dot" style="background:#f59e0b"></span>私仓自有 · 开发调试 (1)</button>
       <span class="spacer"></span>
@@ -105,842 +105,6 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <button class="mini" id="collapse">折叠全部</button>
     </div>
     
-<section class="card" id="f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      <span class="newtag">新增</span>
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/attention/recurrent_gated_delta_rule/op_host/arch35/recurrent_gated_delta_rule_tiling_arch35.cpp</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+207</span><span class="stat del">-0</span>
-    </div>
-  </div>
-  <div class="desc">新增：A5（arch35）专用 AscendC tiling 实现（recurrent_gated_delta_rule）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">new file mode 100644</div>
-<div class="dl meta">index 00000000..05e3b7cc</div>
-<div class="dl meta">--- /dev/null</div>
-<div class="dl meta">+++ b/csrc/attention/recurrent_gated_delta_rule/op_host/arch35/recurrent_gated_delta_rule_tiling_arch35.cpp</div>
-<div class="dl hunk">@@ -0,0 +1,207 @@</div>
-<div class="dl add">+/**</div>
-<div class="dl add">+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.</div>
-<div class="dl add">+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of</div>
-<div class="dl add">+ * Please refer to the License for details. You may not use this file except in compliance with the License.</div>
-<div class="dl add">+ * THIS SOFTWARE IS PROVIDED ON AN &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,</div>
-<div class="dl add">+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.</div>
-<div class="dl add">+ * See LICENSE in the root of the software repository for the full text of the License.</div>
-<div class="dl add">+ */</div>
-<div class="dl add">+</div>
-<div class="dl add">+/*!</div>
-<div class="dl add">+ * \file recurrent_gated_delta_rule_tiling_arch35.cpp</div>
-<div class="dl add">+ * \brief</div>
-<div class="dl add">+ */</div>
-<div class="dl add">+#include &quot;recurrent_gated_delta_rule_tiling.h&quot;</div>
-<div class="dl add">+</div>
-<div class="dl add">+#include &lt;array&gt;</div>
-<div class="dl add">+</div>
-<div class="dl add">+#include &quot;platform/platform_ascendc.h&quot;</div>
-<div class="dl add">+#include &quot;tiling_base/tiling_templates_registry.h&quot;</div>
-<div class="dl add">+</div>
-<div class="dl add">+namespace optiling {</div>
-<div class="dl add">+namespace {</div>
-<div class="dl add">+</div>
-<div class="dl add">+constexpr uint64_t RGDR_ASCEND_950_TEMPLATE_PRIORITY = 1000;</div>
-<div class="dl add">+</div>
-<div class="dl add">+constexpr size_t QUERY_INDEX = 0;</div>
-<div class="dl add">+constexpr size_t KEY_INDEX = 1;</div>
-<div class="dl add">+constexpr size_t VALUE_INDEX = 2;</div>
-<div class="dl add">+constexpr size_t BETA_INDEX = 3;</div>
-<div class="dl add">+constexpr size_t STATE_INDEX = 4;</div>
-<div class="dl add">+constexpr size_t CUSEQLENS_INDEX = 5;</div>
-<div class="dl add">+constexpr size_t SSM_STATE_INDICES_INDEX = 6;</div>
-<div class="dl add">+</div>
-<div class="dl add">+constexpr size_t DIM_0 = 0;</div>
-<div class="dl add">+constexpr size_t DIM_1 = 1;</div>
-<div class="dl add">+constexpr size_t DIM_2 = 2;</div>
-<div class="dl add">+</div>
-<div class="dl add">+class RecurrentGatedDeltaRuleTilingArch35 final : public RecurrentGatedDeltaRuleTiling {</div>
-<div class="dl add">+public:</div>
-<div class="dl add">+    explicit RecurrentGatedDeltaRuleTilingArch35(gert::TilingContext *context)</div>
-<div class="dl add">+        : RecurrentGatedDeltaRuleTiling(context)</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+protected:</div>
-<div class="dl add">+    bool IsCapable() override</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        auto platformInfo = context_-&gt;GetPlatformInfo();</div>
-<div class="dl add">+        if (platformInfo == nullptr) {</div>
-<div class="dl add">+            return false;</div>
-<div class="dl add">+        }</div>
-<div class="dl add">+        auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);</div>
-<div class="dl add">+        return ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+    ge::graphStatus GetShapeAttrsInfo() override</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        OP_CHECK_IF(CheckContext() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid context.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(AnalyzeDtype() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid dtypes.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(AnalyzeShapesArch35() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid shapes.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(GetScale() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid GetScale.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(GetOptionalInput() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid GetOptionalInput.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(AnalyzeFormat() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;Invalid Format.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+    ge::graphStatus DoOpTiling() override</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        OP_CHECK_IF(CalUbSizeArch35() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, &quot;CalUbSize failed.&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        PrintTilingData();</div>
-<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+private:</div>
-<div class="dl add">+    ge::graphStatus AnalyzeShapesArch35()</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        const auto &amp;queryShape = context_-&gt;GetInputShape(QUERY_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;keyShape = context_-&gt;GetInputShape(KEY_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;valueShape = context_-&gt;GetInputShape(VALUE_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;betaShape = context_-&gt;GetInputShape(BETA_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;stateShape = context_-&gt;GetInputShape(STATE_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;cuSeqlensShape = context_-&gt;GetInputShape(CUSEQLENS_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+        const auto &amp;ssmStateShape = context_-&gt;GetInputShape(SSM_STATE_INDICES_INDEX)-&gt;GetOriginShape();</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(CheckShapeDimAndRelation(queryShape, keyShape, valueShape, betaShape, stateShape, cuSeqlensShape,</div>
-<div class="dl add">+                                             ssmStateShape) != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;AnalyzeShapes rule failed: CheckShapeDimAndRelation&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        tilingData_.t = queryShape.GetDim(DIM_0);</div>
-<div class="dl add">+        tilingData_.nk = queryShape.GetDim(DIM_1);</div>
-<div class="dl add">+        tilingData_.dk = queryShape.GetDim(DIM_2);</div>
-<div class="dl add">+        tilingData_.nv = valueShape.GetDim(DIM_1);</div>
-<div class="dl add">+        tilingData_.dv = valueShape.GetDim(DIM_2);</div>
-<div class="dl add">+        tilingData_.sBlockNum = stateShape.GetDim(DIM_0);</div>
-<div class="dl add">+        tilingData_.b = cuSeqlensShape.GetDim(DIM_0) - 1;</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(CheckShapeValueRangeAndRule() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;AnalyzeShapes rule failed: CheckShapeValueRangeAndRule&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        UpdateDynamicBlockDimByTaskUnits();</div>
-<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+    ge::graphStatus CalUbSizeArch35()</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        struct RuleItem {</div>
-<div class="dl add">+            const char *name;</div>
-<div class="dl add">+            HostRuleFn fn;</div>
-<div class="dl add">+        };</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(RuleInitUbCalcContext() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+            OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleInitUbCalcContext&quot;),</div>
-<div class="dl add">+            return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(RuleCalcFixedUbBytes() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcFixedUbBytes&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(RuleCalcWorkingUbBytes() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcWorkingUbBytes&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(RuleCalcVStepCoeff() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: RuleCalcVStepCoeff&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_CHECK_IF(FinalizeVStepFromUbArch35() != ge::GRAPH_SUCCESS,</div>
-<div class="dl add">+                    OP_LOGE(inputParams_.opName, &quot;CalUbSize rule failed: FinalizeVStepFromUbArch35&quot;),</div>
-<div class="dl add">+                    return ge::GRAPH_FAILED);</div>
-<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+</div>
-<div class="dl add">+    ge::graphStatus FinalizeVStepFromUbArch35()</div>
-<div class="dl add">+    {</div>
-<div class="dl add">+        BufferProfile selected;</div>
-<div class="dl add">+        const std::array&lt;BufferProfile, 3&gt; candidates = {{</div>
-<div class="dl add">+            BufferProfile(1u, 1u, 0u, 0u, false),</div>
-<div class="dl add">+            BufferProfile(1u, 2u, 0u, 0u, false),</div>
-<div class="dl add">+            BufferProfile(2u, 2u, 0u, 0u, false),</div>
-<div class="dl add">+        }};</div>
-<div class="dl add">+</div>
-<div class="dl add">+        for (const auto &amp;candidate : candidates) {</div>
-<div class="dl add">+            BufferProfile profile;</div>
-<div class="dl add">+            if (!EvaluateBufferProfile(ubCalcCtx_.ubSize, ubCalcCtx_.workingUbBytes, ubCalcCtx_.aDk,</div>
-<div class="dl add">+                                       candidate.stateOutBufferNum, candidate.attnOutBufferNum, profile)) {</div>
-<div class="dl add">+                continue;</div>
-<div class="dl add">+            }</div>
-<div class="dl add">+            if (IsBetterProfile(profile, selected)) {</div>
-<div class="dl add">+                selected = profile;</div>
-<div class="dl add">+            }</div>
-<div class="dl add">+        }</div>
-<div class="dl add">+</div>
-<div class="dl add">+        OP_LOGD(context_-&gt;GetNodeName(),</div>
-<div class="dl add">+                &quot;selected profile: stateOutBufferNum=[%u], attnOutBufferNum=[%u], vStep=[%u], repeatTime=[%u], &quot;</div>
-<div class="dl add">+                &quot;valid=[%d]&quot;,</div>
-<div class="dl add">+                selected.stateOutBufferNum, selected.attnOutBufferNum, selected.vStep, selected.repeatTime,</div>
-<div class="dl add">+                selected.valid);</div>
-<div class="dl add">+</div>
-<div class="dl add">+        if (!selected.valid) {</div>
-<div class="dl add">+            OP_LOGE(context_-&gt;GetNodeName(), &quot;vStep should be bigger than 8, shape is too big&quot;);</div>
-<div class="dl add">+            return ge::GRAPH_FAILED;</div>
-<div class="dl add">+        }</div>
-<div class="dl add">+</div>
-<div class="dl add">+        auto stateDtype = context_-&gt;GetInputDesc(STATE_INDEX)-&gt;GetDataType();</div>
-<div class="dl add">+        int64_t stateDtypeSize = (stateDtype == ge::DT_FLOAT) ? 4 : 2;</div>
-<div class="dl add">+        int64_t queueCoeff =</div>
-<div class="dl add">+            (stateDtypeSize + static_cast&lt;int64_t&gt;(stateDtypeSize * selected.stateOutBufferNum)) * ubCalcCtx_.aDk +</div>
-<div class="dl add">+            static_cast&lt;int64_t&gt;(4 * selected.attnOutBufferNum);</div>
-<div class="dl add">+        int64_t ubRestBytes =</div>
-<div class="dl add">+            ubCalcCtx_.ubSize - ubCalcCtx_.fixedUbBytes - queueCoeff * static_cast&lt;int64_t&gt;(selected.vStep);</div>
-<div class="dl add">+        if (ubRestBytes &lt; 0) {</div>
-<div class="dl add">+            OP_LOGE(context_-&gt;GetNodeName(), &quot;ubRestBytes should be non-negative, but got %ld&quot;, ubRestBytes);</div>
-<div class="dl add">+            return ge::GRAPH_FAILED;</div>
-<div class="dl add">+        }</div>
-<div class="dl add">+</div>
-<div class="dl add">+        tilingData_.ubCalSize = compileInfo_.ubSize;</div>
-<div class="dl add">+        tilingData_.vStep = selected.vStep;</div>
-<div class="dl add">+        tilingData_.stateOutBufferNum = selected.stateOutBufferNum;</div>
-<div class="dl add">+        tilingData_.attnOutBufferNum = selected.attnOutBufferNum;</div>
-<div class="dl add">+        tilingData_.ubRestBytes = static_cast&lt;uint32_t&gt;(ubRestBytes);</div>
-<div class="dl add">+        return ge::GRAPH_SUCCESS;</div>
-<div class="dl add">+    }</div>
-<div class="dl add">+};</div>
-<div class="dl add">+</div>
-<div class="dl add">+} // namespace</div>
-<div class="dl add">+</div>
-<div class="dl add">+REGISTER_OPS_TILING_TEMPLATE(RecurrentGatedDeltaRule,</div>
-<div class="dl add">+                             RecurrentGatedDeltaRuleTilingArch35,</div>
-<div class="dl add">+                             RGDR_ASCEND_950_TEMPLATE_PRIORITY);</div>
-<div class="dl add">+</div>
-<div class="dl add">+} // namespace optiling</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+1</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index f8f40885..c5b126d0 100644</div>
-<div class="dl meta">--- a/csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</div>
-<div class="dl meta">+++ b/csrc/attention/recurrent_gated_delta_rule/op_kernel/arch35/recurrent_gated_delta_rule.h</div>
-<div class="dl hunk">@@ -623,4 +623,4 @@ private:</div>
-<div class="dl ctx">     uint64_t blockIdx;</div>
-<div class="dl ctx"> };</div>
-<div class="dl ctx"> } // namespace RecurrentGatedDeltaRule</div>
-<div class="dl del">-#endif</div>
-<div class="dl add">+#endif</div>
-<div class="dl ctx">\ No newline at end of file</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_build_aclnn_sh__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/build_aclnn.sh</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+3</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">在 ascend950 自定义算子编译列表加入 chunk_fwd_o / chunk_gated_delta_rule_fwd_h（causal_conv1d / recurrent_gated_delta_rule 已随 #9224 在列）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 1af0e091..6d3bee88 100755</div>
-<div class="dl meta">--- a/csrc/build_aclnn.sh</div>
-<div class="dl meta">+++ b/csrc/build_aclnn.sh</div>
-<div class="dl hunk">@@ -244,8 +244,10 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
-<div class="dl ctx">         &quot;swiglu_group_quant&quot;</div>
-<div class="dl ctx">         &quot;load_index_kv_cache&quot;</div>
-<div class="dl ctx">         &quot;indexer_compress_epilog_v2&quot;</div>
-<div class="dl del">-        &quot;recurrent_gated_delta_rule&quot;</div>
-<div class="dl ctx">         &quot;causal_conv1d&quot;</div>
-<div class="dl add">+        &quot;recurrent_gated_delta_rule&quot;</div>
-<div class="dl add">+        &quot;chunk_fwd_o&quot;</div>
-<div class="dl add">+        &quot;chunk_gated_delta_rule_fwd_h&quot;</div>
-<div class="dl ctx">     )</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">     CUSTOM_OPS=$(IFS=&#x27;;&#x27;; echo &quot;${CUSTOM_OPS_ARRAY[*]}&quot;)</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+1</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">去除文件末尾换行，与 PR #9382 对齐（A5 kernel 主体已随 #9224 合入上游）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index d54b73be..cb12fb95 100644</div>
-<div class="dl meta">--- a/csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</div>
-<div class="dl meta">+++ b/csrc/moe/causal_conv1d/op_kernel/arch35/causal_conv1d_regbase.h</div>
-<div class="dl hunk">@@ -173,4 +173,4 @@ __aicore__ inline void AdvanceFnLocalPartialsRegbase(LocalTensor&lt;T&gt; ring, LocalT</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> } // namespace NsCausalConv1d</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-#endif // CAUSAL_CONV1D_REGBASE_H</div>
-<div class="dl add">+#endif // CAUSAL_CONV1D_REGBASE_H</div>
-<div class="dl ctx">\ No newline at end of file</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+3</span><span class="stat del">-4</span>
-    </div>
-  </div>
-  <div class="desc">kernel 收尾微调：补齐 namespace / #endif 注释与文件末尾换行</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 2a9b2165..f95cb572 100644</div>
-<div class="dl meta">--- a/csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</div>
-<div class="dl meta">+++ b/csrc/moe/causal_conv1d/op_kernel/causal_conv1d.h</div>
-<div class="dl hunk">@@ -1016,7 +1016,6 @@</div>
-<div class="dl ctx">  </div>
-<div class="dl ctx">  #undef CAUSAL_CONV1D_CLASS</div>
-<div class="dl ctx">  #undef CAUSAL_CONV1D_TEMPLATE_ARGS</div>
-<div class="dl del">- </div>
-<div class="dl del">- }</div>
-<div class="dl del">- #endif</div>
-<div class="dl del">- </div>
-<div class="dl ctx">\ No newline at end of file</div>
-<div class="dl add">+</div>
-<div class="dl add">+} // namespace NsCausalConv1d</div>
-<div class="dl add">+#endif // CAUSAL_CONV1D_H</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+2</span><span class="stat del">-2</span>
-    </div>
-  </div>
-  <div class="desc">启用 ascend950 AICore 配置（取消 ascend950 注释）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 1ac4af69..e71f19db 100644</div>
-<div class="dl meta">--- a/csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</div>
-<div class="dl meta">+++ b/csrc/moe/chunk_fwd_o/op_host/chunk_fwd_o_def.cpp</div>
-<div class="dl hunk">@@ -95,10 +95,10 @@ public:</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910b&quot;, aicore_config);</div>
-<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910_93&quot;, aicore_config);</div>
-<div class="dl del">-        // this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
-<div class="dl add">+        this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
-<div class="dl ctx">     }</div>
-<div class="dl ctx"> };</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> OP_ADD(ChunkFwdO);</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-} // namespace ops</div>
-<div class="dl ctx">\ No newline at end of file</div>
-<div class="dl add">+} // namespace ops</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+1</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">启用 ascend950 AICore 配置（取消 ascend950 注释）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 00b0dd31..2b7fc198 100644</div>
-<div class="dl meta">--- a/csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</div>
-<div class="dl meta">+++ b/csrc/moe/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_def.cpp</div>
-<div class="dl hunk">@@ -106,7 +106,7 @@ public:</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910b&quot;, aicore_config);</div>
-<div class="dl ctx">         this-&gt;AICore().AddConfig(&quot;ascend910_93&quot;, aicore_config);</div>
-<div class="dl del">-        // this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
-<div class="dl add">+        this-&gt;AICore().AddConfig(&quot;ascend950&quot;, aicore_config);</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">     }</div>
-<div class="dl ctx"> };</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_vllm_ascend_device_device_op_py__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">vllm_ascend/device/device_op.py</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+134</span><span class="stat del">-48</span>
-    </div>
-  </div>
-  <div class="desc">BaseDeviceAdaptor / A5DeviceAdaptor 新增 chunk_scaled_dot_kkt_fwd / solve_tril_16x16 / npu_gemma_rms_norm 三个设备算子封装：A5 走自定义算子、其余走 triton kernel，统一经 DeviceOperator 分发</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index ef54ceb6..b17f701e 100644</div>
-<div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
-<div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
-<div class="dl hunk">@@ -23,7 +23,8 @@ from vllm_ascend.device.mxfp_compat import (</div>
-<div class="dl ctx">     QUANT_DTYPES,</div>
-<div class="dl ctx">     SCALE_DTYPES,</div>
-<div class="dl ctx"> )</div>
-<div class="dl del">-from vllm_ascend.quantization.quant_type import QuantType</div>
-<div class="dl add">+from vllm_ascend.ops.triton.fla.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd_kernel</div>
-<div class="dl add">+from vllm_ascend.ops.triton.fla.solve_tril import solve_tril_16x16_kernel</div>
-<div class="dl ctx"> from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> </div>
-<div class="dl hunk">@@ -118,11 +119,10 @@ class BaseDeviceAdaptor:</div>
-<div class="dl ctx">         weight_scale: torch.Tensor,</div>
-<div class="dl ctx">         x_scale: torch.Tensor,</div>
-<div class="dl ctx">         bias=None,</div>
-<div class="dl add">+        swiglu_limit: int = 0,</div>
-<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
-<div class="dl ctx">         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
-<div class="dl ctx">         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
-<div class="dl del">-        swiglu_limit: int = 0,</div>
-<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
-<div class="dl ctx">     ):</div>
-<div class="dl ctx">         if use_mxfp_quant:</div>
-<div class="dl ctx">             raise RuntimeError(&quot;MXFP MoE quantization is only supported on Ascend A5.&quot;)</div>
-<div class="dl hunk">@@ -174,7 +174,6 @@ class BaseDeviceAdaptor:</div>
-<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
-<div class="dl ctx">         bias=None,</div>
-<div class="dl ctx">         fallback_output_dtype: torch.dtype | None = None,</div>
-<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
-<div class="dl ctx">     ) -&gt; torch.Tensor:</div>
-<div class="dl ctx">         if use_mxfp_quant:</div>
-<div class="dl ctx">             raise RuntimeError(&quot;MXFP MoE quantization is only supported on Ascend A5.&quot;)</div>
-<div class="dl hunk">@@ -311,6 +310,64 @@ class BaseDeviceAdaptor:</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">         return context_layer</div>
-<div class="dl ctx"> </div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def chunk_scaled_dot_kkt_fwd(NT, k, beta, g_cumsum, A, cu_seqlens, chunk_indices, T, B, H, Hg, K, BT, BK):</div>
-<div class="dl add">+        chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
-<div class="dl add">+            k=k,</div>
-<div class="dl add">+            beta=beta,</div>
-<div class="dl add">+            g_cumsum=g_cumsum,</div>
-<div class="dl add">+            A=A,</div>
-<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
-<div class="dl add">+            chunk_indices=chunk_indices,</div>
-<div class="dl add">+            T=T,</div>
-<div class="dl add">+            B=B,</div>
-<div class="dl add">+            H=H,</div>
-<div class="dl add">+            Hg=Hg,</div>
-<div class="dl add">+            K=K,</div>
-<div class="dl add">+            BT=BT,</div>
-<div class="dl add">+            BK=BK,</div>
-<div class="dl add">+            num_warps=8,</div>
-<div class="dl add">+            num_stages=3,</div>
-<div class="dl add">+            multibuffer=True,</div>
-<div class="dl add">+        )</div>
-<div class="dl add">+</div>
-<div class="dl add">+        return A</div>
-<div class="dl add">+</div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def solve_tril_16x16(</div>
-<div class="dl add">+        A,</div>
-<div class="dl add">+        Ad,</div>
-<div class="dl add">+        cu_seqlens,</div>
-<div class="dl add">+        chunk_indices,</div>
-<div class="dl add">+        T,</div>
-<div class="dl add">+        H,</div>
-<div class="dl add">+        BT,</div>
-<div class="dl add">+        LARGE_BLOCK_T,</div>
-<div class="dl add">+        NT,</div>
-<div class="dl add">+        B,</div>
-<div class="dl add">+    ):</div>
-<div class="dl add">+        extract_slice_stride_1 = LARGE_BLOCK_T // 32</div>
-<div class="dl add">+        solve_tril_16x16_kernel[NT, B * H](</div>
-<div class="dl add">+            A=A,</div>
-<div class="dl add">+            Ad=Ad,</div>
-<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
-<div class="dl add">+            chunk_indices=chunk_indices,</div>
-<div class="dl add">+            T=T,</div>
-<div class="dl add">+            H=H,</div>
-<div class="dl add">+            BT=BT,</div>
-<div class="dl add">+            LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
-<div class="dl add">+            EXTRACT_SLICE_STRIDE_1=extract_slice_stride_1,</div>
-<div class="dl add">+            num_warps=1,</div>
-<div class="dl add">+            num_stages=4,</div>
-<div class="dl add">+        )</div>
-<div class="dl add">+</div>
-<div class="dl add">+        return Ad</div>
-<div class="dl add">+</div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def npu_gemma_rms_norm(x, weight, variance_epsilon):</div>
-<div class="dl add">+        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, weight, variance_epsilon)</div>
-<div class="dl add">+        return x</div>
-<div class="dl add">+</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx">     @classmethod</div>
-<div class="dl hunk">@@ -419,11 +476,10 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx">         weight_scale: torch.Tensor,</div>
-<div class="dl ctx">         x_scale: torch.Tensor,</div>
-<div class="dl ctx">         bias=None,</div>
-<div class="dl add">+        swiglu_limit: int = 0,</div>
-<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
-<div class="dl ctx">         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
-<div class="dl ctx">         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
-<div class="dl del">-        swiglu_limit: int = 0,</div>
-<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
-<div class="dl ctx">     ):</div>
-<div class="dl ctx">         if not use_mxfp_quant:</div>
-<div class="dl ctx">             return torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
-<div class="dl hunk">@@ -437,43 +493,21 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx">                 use_mxfp_quant=False,</div>
-<div class="dl ctx">             )</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-        # W4A8 mxfp</div>
-<div class="dl del">-        if mxfp_quant_dtype == QuantType.W4A8MXFP:</div>
-<div class="dl del">-            hidden_states = torch_npu.npu_grouped_matmul(</div>
-<div class="dl del">-                x=[x],</div>
-<div class="dl del">-                weight=[weight],</div>
-<div class="dl del">-                scale=None,</div>
-<div class="dl del">-                antiquant_scale=[weight_scale],</div>
-<div class="dl del">-                scale_dtype=None,</div>
-<div class="dl del">-                per_token_scale=[x_scale],</div>
-<div class="dl del">-                per_token_scale_dtype=torch.float8_e8m0fnu,</div>
-<div class="dl del">-                split_item=2,</div>
-<div class="dl del">-                group_type=0,</div>
-<div class="dl del">-                group_list=group_list,</div>
-<div class="dl del">-                x_dtype=torch.float8_e4m3fn,</div>
-<div class="dl del">-                weight_dtype=torch_npu.float4_e2m1fn_x2,</div>
-<div class="dl del">-                output_dtype=torch.bfloat16,</div>
-<div class="dl del">-            )[0]</div>
-<div class="dl del">-            hidden_states = torch_npu.npu_swiglu(hidden_states)</div>
-<div class="dl del">-            out, out_scale = torch_npu.npu_dynamic_mx_quant(</div>
-<div class="dl del">-                hidden_states, dst_type=torch.float8_e4m3fn, round_mode=&quot;rint&quot;</div>
-<div class="dl del">-            )</div>
-<div class="dl del">-        else:</div>
-<div class="dl del">-            out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
-<div class="dl del">-                x=x,</div>
-<div class="dl del">-                weight=[weight],</div>
-<div class="dl del">-                group_list=group_list,</div>
-<div class="dl del">-                weight_scale=[weight_scale],</div>
-<div class="dl del">-                x_scale=x_scale,</div>
-<div class="dl del">-                dequant_mode=2,</div>
-<div class="dl del">-                quant_mode=2,</div>
-<div class="dl del">-                dequant_dtype=torch.float32,</div>
-<div class="dl del">-                quant_dtype=act_quant_type,</div>
-<div class="dl del">-                x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,</div>
-<div class="dl del">-                weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,</div>
-<div class="dl del">-                weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
-<div class="dl del">-                x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
-<div class="dl del">-            )</div>
-<div class="dl add">+        out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
-<div class="dl add">+            x=x,</div>
-<div class="dl add">+            weight=[weight],</div>
-<div class="dl add">+            group_list=group_list,</div>
-<div class="dl add">+            weight_scale=[weight_scale],</div>
-<div class="dl add">+            x_scale=x_scale,</div>
-<div class="dl add">+            dequant_mode=2,</div>
-<div class="dl add">+            quant_mode=2,</div>
-<div class="dl add">+            dequant_dtype=torch.float32,</div>
-<div class="dl add">+            quant_dtype=act_quant_type,</div>
-<div class="dl add">+            x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,</div>
-<div class="dl add">+            weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,</div>
-<div class="dl add">+            weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
-<div class="dl add">+            x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
-<div class="dl add">+        )</div>
-<div class="dl ctx">         return out, A5DeviceAdaptor.maybe_normalize_mxfp_scale_layout(out_scale), None</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">     @staticmethod</div>
-<div class="dl hunk">@@ -531,7 +565,6 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
-<div class="dl ctx">         bias=None,</div>
-<div class="dl ctx">         fallback_output_dtype: torch.dtype | None = None,</div>
-<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
-<div class="dl ctx">     ) -&gt; torch.Tensor:</div>
-<div class="dl ctx">         if not use_mxfp_quant:</div>
-<div class="dl ctx">             return BaseDeviceAdaptor.npu_grouped_matmul_gmm2(</div>
-<div class="dl hunk">@@ -570,10 +603,6 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx">         gmm2_weight = weight if isinstance(weight, list) else [weight]</div>
-<div class="dl ctx">         gmm2_scale = weight_scale if isinstance(weight_scale, list) else [weight_scale]</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-        if mxfp_quant_dtype == QuantType.W4A8MXFP:</div>
-<div class="dl del">-            gmm2_scale = None  # type: ignore[assignment]</div>
-<div class="dl del">-            gmm2_kwargs.update({&quot;antiquant_scale&quot;: [weight_scale]})</div>
-<div class="dl del">-</div>
-<div class="dl ctx">         return torch_npu.npu_grouped_matmul(</div>
-<div class="dl ctx">             x=[hidden_states],</div>
-<div class="dl ctx">             weight=gmm2_weight,</div>
-<div class="dl hunk">@@ -660,6 +689,63 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">         return context_layer</div>
-<div class="dl ctx"> </div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def chunk_scaled_dot_kkt_fwd(NT, k, beta, g_cumsum, A, cu_seqlens, chunk_indices, T, B, H, Hg, K, BT, BK):</div>
-<div class="dl add">+        chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
-<div class="dl add">+            k=k,</div>
-<div class="dl add">+            beta=beta,</div>
-<div class="dl add">+            g_cumsum=g_cumsum,</div>
-<div class="dl add">+            A=A,</div>
-<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
-<div class="dl add">+            chunk_indices=chunk_indices,</div>
-<div class="dl add">+            T=T,</div>
-<div class="dl add">+            B=B,</div>
-<div class="dl add">+            H=H,</div>
-<div class="dl add">+            Hg=Hg,</div>
-<div class="dl add">+            K=K,</div>
-<div class="dl add">+            BT=BT,</div>
-<div class="dl add">+            BK=BK,</div>
-<div class="dl add">+            num_warps=8,</div>
-<div class="dl add">+            num_stages=3,</div>
-<div class="dl add">+            multibuffer=True,</div>
-<div class="dl add">+            disable_tightly_coupled_buffer_reuse=True,</div>
-<div class="dl add">+        )</div>
-<div class="dl add">+        return A</div>
-<div class="dl add">+</div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def solve_tril_16x16(</div>
-<div class="dl add">+        A,</div>
-<div class="dl add">+        Ad,</div>
-<div class="dl add">+        cu_seqlens,</div>
-<div class="dl add">+        chunk_indices,</div>
-<div class="dl add">+        T,</div>
-<div class="dl add">+        H,</div>
-<div class="dl add">+        BT,</div>
-<div class="dl add">+        LARGE_BLOCK_T,</div>
-<div class="dl add">+        NT,</div>
-<div class="dl add">+        B,</div>
-<div class="dl add">+    ):</div>
-<div class="dl add">+        solve_tril_16x16_kernel[NT, B * H](</div>
-<div class="dl add">+            A=A,</div>
-<div class="dl add">+            Ad=Ad,</div>
-<div class="dl add">+            cu_seqlens=cu_seqlens,</div>
-<div class="dl add">+            chunk_indices=chunk_indices,</div>
-<div class="dl add">+            T=T,</div>
-<div class="dl add">+            H=H,</div>
-<div class="dl add">+            BT=BT,</div>
-<div class="dl add">+            LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
-<div class="dl add">+            EXTRACT_SLICE_STRIDE_1=1,</div>
-<div class="dl add">+            num_warps=1,</div>
-<div class="dl add">+            num_stages=4,</div>
-<div class="dl add">+        )</div>
-<div class="dl add">+</div>
-<div class="dl add">+        return Ad</div>
-<div class="dl add">+</div>
-<div class="dl add">+    @staticmethod</div>
-<div class="dl add">+    def npu_gemma_rms_norm(x, weight, variance_epsilon):</div>
-<div class="dl add">+        x, _ = torch_npu.npu_rms_norm(x, 1.0 + weight, variance_epsilon)</div>
-<div class="dl add">+        return x</div>
-<div class="dl add">+</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> def get_device_adaptor() -&gt; type[&quot;BaseDeviceAdaptor&quot;]:</div>
-<div class="dl ctx">     ascend_device_type = get_ascend_device_type()</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_vllm_ascend_ops_layernorm_py__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">vllm_ascend/ops/layernorm.py</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+3</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">AscendGemmaRMSNorm 改用 DeviceOperator.npu_gemma_rms_norm 分发（A5 自定义算子 / 通用实现）—— 此前私仓「规避自定义 gemma rms norm」已并入 PR #9382</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 2e057efa..ed4a6a02 100644</div>
-<div class="dl meta">--- a/vllm_ascend/ops/layernorm.py</div>
-<div class="dl meta">+++ b/vllm_ascend/ops/layernorm.py</div>
-<div class="dl hunk">@@ -20,6 +20,7 @@ from torch import nn</div>
-<div class="dl ctx"> from vllm.config import get_current_vllm_config</div>
-<div class="dl ctx"> from vllm.model_executor.layers.layernorm import GemmaRMSNorm, RMSNorm, RMSNormGated</div>
-<div class="dl ctx"> </div>
-<div class="dl add">+from vllm_ascend.device.device_op import DeviceOperator</div>
-<div class="dl ctx"> from vllm_ascend.ops.triton.layernorm_gated import layer_norm_fwd_npu</div>
-<div class="dl ctx"> from vllm_ascend.utils import enable_custom_op, get_weight_prefetch_method</div>
-<div class="dl ctx"> </div>
-<div class="dl hunk">@@ -105,7 +106,8 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):</div>
-<div class="dl ctx">                 x, _, residual = torch_npu.npu_add_rms_norm(x, residual, 1.0 + self.weight, self.variance_epsilon)</div>
-<div class="dl ctx">             return x, residual</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)</div>
-<div class="dl add">+        x = DeviceOperator.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)</div>
-<div class="dl add">+</div>
-<div class="dl ctx">         return x</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx"> </div></div>
-  </details>
-</section>
-
-<section class="card" id="f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+4</span><span class="stat del">-4</span>
-    </div>
-  </div>
-  <div class="desc">chunk_scaled_dot_kkt_fwd 改经 DeviceOperator.chunk_scaled_dot_kkt_fwd 分发（替代直接调用 triton kernel），A5 路由到自定义算子 —— 此前私仓「A5 精度修复」已并入 PR #9382</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 864a29e6..542a277d 100644</div>
-<div class="dl meta">--- a/vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</div>
-<div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/chunk_scaled_dot_kkt.py</div>
-<div class="dl hunk">@@ -121,7 +121,10 @@ def chunk_scaled_dot_kkt_fwd(</div>
-<div class="dl ctx">     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)</div>
-<div class="dl ctx">     A = torch.empty(B, T, H, BT, device=k.device, dtype=output_dtype)</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-    chunk_scaled_dot_kkt_fwd_kernel[(NT, 1)](</div>
-<div class="dl add">+    from vllm_ascend.device.device_op import DeviceOperator</div>
-<div class="dl add">+</div>
-<div class="dl add">+    A = DeviceOperator.chunk_scaled_dot_kkt_fwd(</div>
-<div class="dl add">+        NT=NT,</div>
-<div class="dl ctx">         k=k,</div>
-<div class="dl ctx">         beta=torch.permute(beta, (2, 0, 1)).contiguous(),</div>
-<div class="dl ctx">         g_cumsum=torch.permute(g_cumsum, (2, 0, 1)).contiguous(),</div>
-<div class="dl hunk">@@ -135,8 +138,5 @@ def chunk_scaled_dot_kkt_fwd(</div>
-<div class="dl ctx">         K=K,</div>
-<div class="dl ctx">         BT=BT,</div>
-<div class="dl ctx">         BK=128,</div>
-<div class="dl del">-        num_warps=8,</div>
-<div class="dl del">-        num_stages=3,</div>
-<div class="dl del">-        multibuffer=True,</div>
-<div class="dl ctx">     )</div>
-<div class="dl ctx">     return A</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" data-cats="a5op_pr">
-  <div class="card-h" style="--c:#db61a2">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#db61a2">来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）</span>
-      
-      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener" title="[Ascend950][Feature] Support custom op for GDN on Ascend 950（OPEN）">PR #9382 ↗</a>
-      <code class="path">vllm_ascend/ops/triton/fla/solve_tril.py</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+8</span><span class="stat del">-4</span>
-    </div>
-  </div>
-  <div class="desc">solve_tril 改经 DeviceOperator.solve_tril_16x16 分发；kernel 新增 EXTRACT_SLICE_STRIDE_1 constexpr 参数控制 extract_slice 的 stride —— 此前私仓「编译错误修复」已并入 PR #9382</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index fb46ccfa..d1151afd 100644</div>
-<div class="dl meta">--- a/vllm_ascend/ops/triton/fla/solve_tril.py</div>
-<div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/solve_tril.py</div>
-<div class="dl hunk">@@ -29,6 +29,7 @@ def solve_tril_16x16_kernel(</div>
-<div class="dl ctx">     BT: tl.constexpr,</div>
-<div class="dl ctx">     IS_VARLEN: tl.constexpr,</div>
-<div class="dl ctx">     LARGE_BLOCK_T: tl.constexpr,</div>
-<div class="dl add">+    EXTRACT_SLICE_STRIDE_1: tl.constexpr,</div>
-<div class="dl ctx"> ):</div>
-<div class="dl ctx">     i_t, i_bh = tl.program_id(0), tl.program_id(1)</div>
-<div class="dl ctx">     i_b, i_h = i_bh // H, i_bh % H</div>
-<div class="dl hunk">@@ -102,7 +103,7 @@ def solve_tril_16x16_kernel(</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">         # for loop to update N_BLOCKS row vector</div>
-<div class="dl ctx">         for i in range(1, 16):</div>
-<div class="dl del">-            nblks_vec16 = -extract_slice(local_ori_A, (i, 0), (1, 16 * N_BLOCKS), (16 * N_BLOCKS, 1))</div>
-<div class="dl add">+            nblks_vec16 = -extract_slice(local_ori_A, (i, 0), (1, 16 * N_BLOCKS), (EXTRACT_SLICE_STRIDE_1, 1))</div>
-<div class="dl ctx">             b_a = tl.reshape(nblks_vec16, (N_BLOCKS, 16))</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">             dot_tmp = tl.trans(b_a[:, :, None] * b_A, (1, 0, 2))</div>
-<div class="dl hunk">@@ -362,7 +363,9 @@ def solve_tril(</div>
-<div class="dl ctx">     chunk_indices = chunk_indices_large_block</div>
-<div class="dl ctx">     NT = len(chunk_indices) if cu_seqlens is not None else triton.cdiv(T, LARGE_BLOCK_T)</div>
-<div class="dl ctx"> </div>
-<div class="dl del">-    solve_tril_16x16_kernel[NT, B * H](</div>
-<div class="dl add">+    from vllm_ascend.device.device_op import DeviceOperator</div>
-<div class="dl add">+</div>
-<div class="dl add">+    DeviceOperator.solve_tril_16x16(</div>
-<div class="dl ctx">         A=A,</div>
-<div class="dl ctx">         Ad=Ad,</div>
-<div class="dl ctx">         cu_seqlens=cu_seqlens,</div>
-<div class="dl hunk">@@ -371,8 +374,8 @@ def solve_tril(</div>
-<div class="dl ctx">         H=H,</div>
-<div class="dl ctx">         BT=BT,</div>
-<div class="dl ctx">         LARGE_BLOCK_T=LARGE_BLOCK_T,</div>
-<div class="dl del">-        num_warps=1,</div>
-<div class="dl del">-        num_stages=4,</div>
-<div class="dl add">+        NT=NT,</div>
-<div class="dl add">+        B=B,</div>
-<div class="dl ctx">     )</div>
-<div class="dl ctx"> </div>
-<div class="dl ctx">     if BT == 16:</div>
-<div class="dl hunk">@@ -397,4 +400,5 @@ def solve_tril(</div>
-<div class="dl ctx">         num_warps=4,</div>
-<div class="dl ctx">         num_stages=3,</div>
-<div class="dl ctx">     )</div>
-<div class="dl add">+</div>
-<div class="dl ctx">     return Ai</div></div>
-  </details>
-</section>
-
 <section class="card" id="f_tests_ut_attention_test_attention_v1_py__pr_9310" data-cats="pr_9310">
   <div class="card-h" style="--c:#9333ea">
     <div class="card-h-left">
@@ -2542,6 +1706,735 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             target = self.mrope_positions if self.uses_mrope else self.xdrope_positions</div>
 <div class="dl ctx">             target.gpu[:, :total_num_scheduled_tokens] += drift</div>
 <div class="dl ctx"> </div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" data-cats="pr_9715">
+  <div class="card-h" style="--c:#db61a2">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#db61a2">来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）</span>
+      
+      <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener" title="[Feature]Fix the scheduler runtime error caused by version compatibility issues.（OPEN）">PR #9715 ↗</a>
+      <code class="path">vllm_ascend/patch/platform/patch_balance_schedule.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+44</span><span class="stat del">-621</span>
+    </div>
+  </div>
+  <div class="desc">精简 balance scheduler 补丁：删去随上游已收敛的大段重复 Scheduler 实现，仅保留版本兼容性修复所需的最小改动，消除 scheduler 运行时错误（+44/-621）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index 47d61940..8d63c90c 100644</div>
+<div class="dl meta">--- a/vllm_ascend/patch/platform/patch_balance_schedule.py</div>
+<div class="dl meta">+++ b/vllm_ascend/patch/platform/patch_balance_schedule.py</div>
+<div class="dl hunk">@@ -1,30 +1,18 @@</div>
+<div class="dl ctx"> # mypy: ignore-errors</div>
+<div class="dl del">-import signal</div>
+<div class="dl del">-import time</div>
+<div class="dl del">-</div>
+<div class="dl ctx"> import torch</div>
+<div class="dl ctx"> import torch.distributed as dist</div>
+<div class="dl del">-import vllm</div>
+<div class="dl del">-from vllm.config import ParallelConfig</div>
+<div class="dl del">-from vllm.distributed.ec_transfer.ec_connector.base import ECConnectorMetadata</div>
+<div class="dl del">-from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata</div>
+<div class="dl add">+import vllm.v1.core.sched.scheduler as scheduler_module</div>
+<div class="dl add">+import vllm.v1.engine.core as engine_core_module</div>
+<div class="dl ctx"> from vllm.logger import logger</div>
+<div class="dl ctx"> from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry</div>
+<div class="dl del">-from vllm.transformers_utils.config import maybe_register_config_serialize_by_value</div>
+<div class="dl del">-from vllm.utils.system_utils import decorate_logs, set_process_title</div>
+<div class="dl del">-from vllm.v1.core.kv_cache_manager import KVCacheBlocks</div>
+<div class="dl del">-from vllm.v1.core.sched.interface import PauseState</div>
+<div class="dl del">-from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput</div>
+<div class="dl del">-from vllm.v1.core.sched.request_queue import SchedulingPolicy, create_request_queue</div>
+<div class="dl add">+from vllm.v1.core.sched.output import SchedulerOutput</div>
+<div class="dl add">+from vllm.v1.core.sched.request_queue import create_request_queue</div>
+<div class="dl ctx"> from vllm.v1.core.sched.scheduler import Scheduler</div>
+<div class="dl del">-from vllm.v1.engine import EngineCoreEventType, EngineCoreOutputs</div>
+<div class="dl del">-from vllm.v1.engine.core import DPEngineCoreProc, EngineCoreProc</div>
+<div class="dl add">+from vllm.v1.engine import EngineCoreOutputs</div>
+<div class="dl add">+from vllm.v1.engine.core import DPEngineCoreProc</div>
+<div class="dl ctx"> from vllm.v1.kv_cache_interface import KVCacheConfig</div>
+<div class="dl del">-from vllm.v1.request import Request, RequestStatus</div>
+<div class="dl ctx"> from vllm.v1.structured_output import StructuredOutputManager</div>
+<div class="dl del">-from vllm.v1.utils import record_function_or_nullcontext</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-_ORIGINAL_RUN_ENGINE_CORE = EngineCoreProc.run_engine_core</div>
+<div class="dl ctx"> _ORIGINAL_SCHEDULER = Scheduler</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -71,551 +59,28 @@ class BalanceScheduler(Scheduler):</div>
+<div class="dl ctx">     def schedule(self) -&gt; SchedulerOutput:</div>
+<div class="dl ctx">         if not self._balance_enabled:</div>
+<div class="dl ctx">             return super().schedule()</div>
+<div class="dl del">-        # NOTE(woosuk) on the scheduling algorithm:</div>
+<div class="dl del">-        # There&#x27;s no &quot;decoding phase&quot; nor &quot;prefill phase&quot; in the scheduler.</div>
+<div class="dl del">-        # Each request just has the num_computed_tokens and</div>
+<div class="dl del">-        # num_tokens_with_spec. num_tokens_with_spec =</div>
+<div class="dl del">-        # len(prompt_token_ids) + len(output_token_ids) + len(spec_token_ids).</div>
+<div class="dl del">-        # At each step, the scheduler tries to assign tokens to the requests</div>
+<div class="dl del">-        # so that each request&#x27;s num_computed_tokens can catch up its</div>
+<div class="dl del">-        # num_tokens_with_spec. This is general enough to cover</div>
+<div class="dl del">-        # chunked prefills, prefix caching, speculative decoding,</div>
+<div class="dl del">-        # and the &quot;jump decoding&quot; optimization in the future.</div>
+<div class="dl del">-</div>
+<div class="dl del">-        scheduled_new_reqs: list[Request] = []</div>
+<div class="dl del">-        scheduled_resumed_reqs: list[Request] = []</div>
+<div class="dl del">-        scheduled_running_reqs: list[Request] = []</div>
+<div class="dl del">-        preempted_reqs: list[Request] = []</div>
+<div class="dl del">-</div>
+<div class="dl del">-        req_to_new_blocks: dict[str, KVCacheBlocks] = {}</div>
+<div class="dl del">-        num_scheduled_tokens: dict[str, int] = {}</div>
+<div class="dl del">-        token_budget = self.max_num_scheduled_tokens</div>
+<div class="dl del">-        if self._pause_state == PauseState.PAUSED_ALL:</div>
+<div class="dl del">-            # Do not schedule any requests when paused.</div>
+<div class="dl del">-            token_budget = 0</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Encoder-related.</div>
+<div class="dl del">-        scheduled_encoder_inputs: dict[str, list[int]] = {}</div>
+<div class="dl del">-        encoder_compute_budget = self.max_num_encoder_input_tokens</div>
+<div class="dl del">-        # Spec decode-related.</div>
+<div class="dl del">-        scheduled_spec_decode_tokens: dict[str, list[int]] = {}</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # For logging.</div>
+<div class="dl del">-        scheduled_timestamp = time.monotonic()</div>
+<div class="dl del">-</div>
+<div class="dl del">-        self.kv_cache_manager.new_step_starts()</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # First, schedule the RUNNING requests.</div>
+<div class="dl del">-        req_index = 0</div>
+<div class="dl del">-        while req_index &lt; len(self.running) and token_budget &gt; 0:</div>
+<div class="dl del">-            request = self.running[req_index]</div>
+<div class="dl del">-</div>
+<div class="dl del">-            if (</div>
+<div class="dl del">-                request.num_output_placeholders &gt; 0</div>
+<div class="dl del">-                # This is (num_computed_tokens + 1) - (num_output_placeholders - 1).</div>
+<div class="dl del">-                # Since output placeholders are also included in the computed tokens</div>
+<div class="dl del">-                # count, we subtract (num_output_placeholders - 1) to remove any draft</div>
+<div class="dl del">-                # tokens, so that we can be sure no further steps are needed even if</div>
+<div class="dl del">-                # they are all rejected.</div>
+<div class="dl del">-                and request.num_computed_tokens + 2 - request.num_output_placeholders</div>
+<div class="dl del">-                &gt;= request.num_prompt_tokens + request.max_tokens</div>
+<div class="dl del">-            ):</div>
+<div class="dl del">-                # Async scheduling: Avoid scheduling an extra step when we are sure that</div>
+<div class="dl del">-                # the previous step has reached request.max_tokens. We don&#x27;t schedule</div>
+<div class="dl del">-                # partial draft tokens since this prevents uniform decode optimizations.</div>
+<div class="dl del">-                req_index += 1</div>
+<div class="dl del">-                continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-            num_new_tokens = (</div>
+<div class="dl del">-                request.num_tokens_with_spec + request.num_output_placeholders - request.num_computed_tokens</div>
+<div class="dl del">-            )</div>
+<div class="dl del">-            if 0 &lt; self.scheduler_config.long_prefill_token_threshold &lt; num_new_tokens:</div>
+<div class="dl del">-                num_new_tokens = self.scheduler_config.long_prefill_token_threshold</div>
+<div class="dl del">-            num_new_tokens = min(num_new_tokens, token_budget)</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Make sure the input position does not exceed the max model len.</div>
+<div class="dl del">-            # This is necessary when using spec decoding.</div>
+<div class="dl del">-            num_new_tokens = min(num_new_tokens, self.max_model_len - 1 - request.num_computed_tokens)</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Schedule encoder inputs.</div>
+<div class="dl del">-            encoder_inputs_to_schedule = None</div>
+<div class="dl del">-            external_load_encoder_input: list[int] = []</div>
+<div class="dl del">-            new_encoder_compute_budget = encoder_compute_budget</div>
+<div class="dl del">-            if request.has_encoder_inputs:</div>
+<div class="dl del">-                (</div>
+<div class="dl del">-                    encoder_inputs_to_schedule,</div>
+<div class="dl del">-                    num_new_tokens,</div>
+<div class="dl del">-                    new_encoder_compute_budget,</div>
+<div class="dl del">-                    external_load_encoder_input,</div>
+<div class="dl del">-                ) = self._try_schedule_encoder_inputs(</div>
+<div class="dl del">-                    request,</div>
+<div class="dl del">-                    request.num_computed_tokens,</div>
+<div class="dl del">-                    num_new_tokens,</div>
+<div class="dl del">-                    encoder_compute_budget,</div>
+<div class="dl del">-                    shift_computed_tokens=1 if self.use_eagle else 0,</div>
+<div class="dl del">-                )</div>
+<div class="dl del">-</div>
+<div class="dl del">-            if self.need_mamba_block_aligned_split:</div>
+<div class="dl del">-                num_new_tokens = self._mamba_block_aligned_split(request, num_new_tokens)</div>
+<div class="dl del">-</div>
+<div class="dl del">-            if num_new_tokens == 0:</div>
+<div class="dl del">-                # The request cannot be scheduled because one of the following</div>
+<div class="dl del">-                # reasons:</div>
+<div class="dl del">-                # 1. No new tokens to schedule. This may happen when</div>
+<div class="dl del">-                #    (1) PP&gt;1 and we have already scheduled all prompt tokens</div>
+<div class="dl del">-                #    but they are not finished yet.</div>
+<div class="dl del">-                #    (2) Async scheduling and the request has reached to either</div>
+<div class="dl del">-                #    its max_total_tokens or max_model_len.</div>
+<div class="dl del">-                # 2. The encoder budget is exhausted.</div>
+<div class="dl del">-                # 3. The encoder cache is exhausted.</div>
+<div class="dl del">-                # 4. Insufficient budget for a block-aligned chunk in hybrid</div>
+<div class="dl del">-                #    models with mamba cache mode \&quot;align\&quot;.</div>
+<div class="dl del">-                # NOTE(woosuk): Here, by doing `continue` instead of `break`,</div>
+<div class="dl del">-                # we do not strictly follow the FCFS scheduling policy and</div>
+<div class="dl del">-                # allow the lower-priority requests to be scheduled.</div>
+<div class="dl del">-                req_index += 1</div>
+<div class="dl del">-                continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Schedule newly needed KV blocks for the request.</div>
+<div class="dl del">-            with record_function_or_nullcontext(&quot;schedule: allocate_slots&quot;):</div>
+<div class="dl del">-                while True:</div>
+<div class="dl del">-                    new_blocks = self.kv_cache_manager.allocate_slots(</div>
+<div class="dl del">-                        request,</div>
+<div class="dl del">-                        num_new_tokens,</div>
+<div class="dl del">-                        num_lookahead_tokens=self.num_lookahead_tokens,</div>
+<div class="dl del">-                    )</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    if new_blocks is not None:</div>
+<div class="dl del">-                        # The request can be scheduled.</div>
+<div class="dl del">-                        break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # The request cannot be scheduled.</div>
+<div class="dl del">-                    # Preempt the lowest-priority request.</div>
+<div class="dl del">-                    if self.policy == SchedulingPolicy.PRIORITY:</div>
+<div class="dl del">-                        preempted_req = max(</div>
+<div class="dl del">-                            self.running,</div>
+<div class="dl del">-                            key=lambda r: (r.priority, r.arrival_time),</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-                        self.running.remove(preempted_req)</div>
+<div class="dl del">-                        if preempted_req in scheduled_running_reqs:</div>
+<div class="dl del">-                            preempted_req_id = preempted_req.request_id</div>
+<div class="dl del">-                            scheduled_running_reqs.remove(preempted_req)</div>
+<div class="dl del">-                            token_budget += num_scheduled_tokens.pop(preempted_req_id)</div>
+<div class="dl del">-                            req_to_new_blocks.pop(preempted_req_id)</div>
+<div class="dl del">-                            scheduled_spec_decode_tokens.pop(preempted_req_id, None)</div>
+<div class="dl del">-                            preempted_encoder_inputs = scheduled_encoder_inputs.pop(preempted_req_id, None)</div>
+<div class="dl del">-                            if preempted_encoder_inputs:</div>
+<div class="dl del">-                                # Restore encoder compute budget if the preempted</div>
+<div class="dl del">-                                # request had encoder inputs scheduled in this step.</div>
+<div class="dl del">-                                num_embeds_to_restore = sum(</div>
+<div class="dl del">-                                    preempted_req.get_num_encoder_embeds(i) for i in preempted_encoder_inputs</div>
+<div class="dl del">-                                )</div>
+<div class="dl del">-                                encoder_compute_budget += num_embeds_to_restore</div>
+<div class="dl del">-                            req_index -= 1</div>
+<div class="dl del">-                    else:</div>
+<div class="dl del">-                        preempted_req = self.running.pop()</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    self._preempt_request(preempted_req, scheduled_timestamp)</div>
+<div class="dl del">-                    preempted_reqs.append(preempted_req)</div>
+<div class="dl del">-                    if preempted_req == request:</div>
+<div class="dl del">-                        # No more request to preempt. Cannot schedule this request.</div>
+<div class="dl del">-                        break</div>
+<div class="dl del">-</div>
+<div class="dl del">-            if new_blocks is None:</div>
+<div class="dl del">-                # Cannot schedule this request.</div>
+<div class="dl del">-                break</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Schedule the request.</div>
+<div class="dl del">-            scheduled_running_reqs.append(request)</div>
+<div class="dl del">-            request_id = request.request_id</div>
+<div class="dl del">-            req_to_new_blocks[request_id] = new_blocks</div>
+<div class="dl del">-            num_scheduled_tokens[request_id] = num_new_tokens</div>
+<div class="dl del">-            token_budget -= num_new_tokens</div>
+<div class="dl del">-            req_index += 1</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Speculative decode related.</div>
+<div class="dl del">-            if request.spec_token_ids:</div>
+<div class="dl del">-                num_scheduled_spec_tokens = (</div>
+<div class="dl del">-                    num_new_tokens + request.num_computed_tokens - request.num_tokens - request.num_output_placeholders</div>
+<div class="dl del">-                )</div>
+<div class="dl del">-                if num_scheduled_spec_tokens &gt; 0:</div>
+<div class="dl del">-                    spec_token_ids = request.spec_token_ids</div>
+<div class="dl del">-                    if len(spec_token_ids) &gt; num_scheduled_spec_tokens:</div>
+<div class="dl del">-                        spec_token_ids = spec_token_ids[:num_scheduled_spec_tokens]</div>
+<div class="dl del">-                    scheduled_spec_decode_tokens[request.request_id] = spec_token_ids</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # New spec tokens will be set in `update_draft_token_ids` before the</div>
+<div class="dl del">-                # next step when applicable.</div>
+<div class="dl del">-                request.spec_token_ids = []</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Encoder-related.</div>
+<div class="dl del">-            if encoder_inputs_to_schedule:</div>
+<div class="dl del">-                scheduled_encoder_inputs[request_id] = encoder_inputs_to_schedule</div>
+<div class="dl del">-                # Allocate the encoder cache.</div>
+<div class="dl del">-                for i in encoder_inputs_to_schedule:</div>
+<div class="dl del">-                    self.encoder_cache_manager.allocate(request, i)</div>
+<div class="dl del">-                encoder_compute_budget = new_encoder_compute_budget</div>
+<div class="dl del">-            if external_load_encoder_input:</div>
+<div class="dl del">-                for i in external_load_encoder_input:</div>
+<div class="dl del">-                    self.encoder_cache_manager.allocate(request, i)</div>
+<div class="dl del">-                    if self.ec_connector is not None:</div>
+<div class="dl del">-                        self.ec_connector.update_state_after_alloc(request, i)</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Record the LoRAs in scheduled_running_reqs</div>
+<div class="dl del">-        scheduled_loras: set[int] = set()</div>
+<div class="dl del">-        if self.lora_config:</div>
+<div class="dl del">-            scheduled_loras = set(</div>
+<div class="dl del">-                req.lora_request.lora_int_id</div>
+<div class="dl del">-                for req in scheduled_running_reqs</div>
+<div class="dl del">-                if req.lora_request and req.lora_request.lora_int_id &gt; 0</div>
+<div class="dl del">-            )</div>
+<div class="dl del">-            assert len(scheduled_loras) &lt;= self.lora_config.max_loras</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Next, schedule the WAITING requests.</div>
+<div class="dl del">-        if not preempted_reqs and self._pause_state == PauseState.UNPAUSED:</div>
+<div class="dl del">-            # Use a temporary RequestQueue to collect requests that need to be</div>
+<div class="dl del">-            # skipped and put back at the head of the waiting queue later</div>
+<div class="dl del">-            skipped_waiting_requests = create_request_queue(self.policy)</div>
+<div class="dl del">-</div>
+<div class="dl del">-            while self.waiting and token_budget &gt; 0:</div>
+<div class="dl del">-                if len(self.running) == self.max_num_running_reqs:</div>
+<div class="dl del">-                    break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                balance_flag = max(t.item() for t in self.balance_queue) == self.max_num_running_reqs</div>
+<div class="dl del">-                if balance_flag:</div>
+<div class="dl del">-                    break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                request = self.waiting.peek_request()</div>
+<div class="dl del">-                request_id = request.request_id</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # KVTransfer: skip request if still waiting for remote kvs.</div>
+<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:</div>
+<div class="dl del">-                    if request.request_id not in self.finished_recving_kv_req_ids:</div>
+<div class="dl del">-                        logger.debug(</div>
+<div class="dl del">-                            &quot;%s is still in WAITING_FOR_REMOTE_KVS state.&quot;,</div>
+<div class="dl del">-                            request_id,</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-                        self.waiting.pop_request()</div>
+<div class="dl del">-                        skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                        continue</div>
+<div class="dl del">-                    self._update_waiting_for_remote_kv(request)</div>
+<div class="dl del">-                    if request.num_preemptions:</div>
+<div class="dl del">-                        # We must be loading for a resumed preemption</div>
+<div class="dl del">-                        # rather than a new request.</div>
+<div class="dl del">-                        request.status = RequestStatus.PREEMPTED</div>
+<div class="dl del">-                    else:</div>
+<div class="dl del">-                        request.status = RequestStatus.WAITING</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Skip request if the structured output request is still waiting</div>
+<div class="dl del">-                # for FSM compilation.</div>
+<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:</div>
+<div class="dl del">-                    structured_output_req = request.structured_output_request</div>
+<div class="dl del">-                    if structured_output_req and structured_output_req.grammar:</div>
+<div class="dl del">-                        request.status = RequestStatus.WAITING</div>
+<div class="dl del">-                    else:</div>
+<div class="dl del">-                        self.waiting.pop_request()</div>
+<div class="dl del">-                        skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                        continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Streaming: skip request if still waiting for next streaming req.</div>
+<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_STREAMING_REQ:</div>
+<div class="dl del">-                    assert not request.streaming_queue</div>
+<div class="dl del">-                    self.waiting.pop_request()</div>
+<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                    continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Check that adding the request still respects the max_loras</div>
+<div class="dl del">-                # constraint.</div>
+<div class="dl del">-                if (</div>
+<div class="dl del">-                    self.lora_config</div>
+<div class="dl del">-                    and request.lora_request</div>
+<div class="dl del">-                    and (</div>
+<div class="dl del">-                        len(scheduled_loras) == self.lora_config.max_loras</div>
+<div class="dl del">-                        and request.lora_request.lora_int_id not in scheduled_loras</div>
+<div class="dl del">-                    )</div>
+<div class="dl del">-                ):</div>
+<div class="dl del">-                    # Scheduling would exceed max_loras, skip.</div>
+<div class="dl del">-                    self.waiting.pop_request()</div>
+<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                    continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-                num_external_computed_tokens = 0</div>
+<div class="dl del">-                load_kv_async = False</div>
+<div class="dl del">-                connector_prefix_cache_queries, connector_prefix_cache_hits = 0, 0</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Get already-cached tokens.</div>
+<div class="dl del">-                if request.num_computed_tokens == 0:</div>
+<div class="dl del">-                    # Get locally-cached tokens.</div>
+<div class="dl del">-                    new_computed_blocks, num_new_local_computed_tokens = self.kv_cache_manager.get_computed_blocks(</div>
+<div class="dl del">-                        request</div>
+<div class="dl del">-                    )</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # Get externally-cached tokens if using a KVConnector.</div>
+<div class="dl del">-                    if self.connector is not None:</div>
+<div class="dl del">-                        ext_tokens, load_kv_async = self.connector.get_num_new_matched_tokens(</div>
+<div class="dl del">-                            request, num_new_local_computed_tokens</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-</div>
+<div class="dl del">-                        if ext_tokens is None:</div>
+<div class="dl del">-                            # The request cannot be scheduled because</div>
+<div class="dl del">-                            # the KVConnector couldn&#x27;t determine</div>
+<div class="dl del">-                            # the number of matched tokens.</div>
+<div class="dl del">-                            self.waiting.pop_request()</div>
+<div class="dl del">-                            skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                            continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-                        num_external_computed_tokens = ext_tokens</div>
+<div class="dl del">-                        connector_prefix_cache_queries = request.num_tokens - num_new_local_computed_tokens</div>
+<div class="dl del">-                        connector_prefix_cache_hits = num_external_computed_tokens</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # Total computed tokens (local + external).</div>
+<div class="dl del">-                    num_computed_tokens = num_new_local_computed_tokens + num_external_computed_tokens</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    if request.prefill_stats is not None:</div>
+<div class="dl del">-                        request.prefill_stats.set(</div>
+<div class="dl del">-                            num_prompt_tokens=request.num_prompt_tokens,</div>
+<div class="dl del">-                            num_local_cached_tokens=num_new_local_computed_tokens,</div>
+<div class="dl del">-                            num_external_cached_tokens=num_external_computed_tokens,</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-                else:</div>
+<div class="dl del">-                    # KVTransfer: WAITING reqs have num_computed_tokens &gt; 0</div>
+<div class="dl del">-                    # after async KV recvs are completed.</div>
+<div class="dl del">-                    new_computed_blocks = self.kv_cache_manager.empty_kv_cache_blocks</div>
+<div class="dl del">-                    num_new_local_computed_tokens = 0</div>
+<div class="dl del">-                    num_computed_tokens = request.num_computed_tokens</div>
+<div class="dl del">-</div>
+<div class="dl del">-                encoder_inputs_to_schedule = None</div>
+<div class="dl del">-                external_load_encoder_input = []</div>
+<div class="dl del">-                new_encoder_compute_budget = encoder_compute_budget</div>
+<div class="dl del">-</div>
+<div class="dl del">-                if load_kv_async:</div>
+<div class="dl del">-                    # KVTransfer: loading remote KV, do not allocate for new work.</div>
+<div class="dl del">-                    assert num_external_computed_tokens &gt; 0</div>
+<div class="dl del">-                    num_new_tokens = 0</div>
+<div class="dl del">-                else:</div>
+<div class="dl del">-                    # Number of tokens to be scheduled.</div>
+<div class="dl del">-                    # We use `request.num_tokens` instead of</div>
+<div class="dl del">-                    # `request.num_prompt_tokens` to consider the resumed</div>
+<div class="dl del">-                    # requests, which have output tokens.</div>
+<div class="dl del">-                    num_new_tokens = request.num_tokens - num_computed_tokens</div>
+<div class="dl del">-                    threshold = self.scheduler_config.long_prefill_token_threshold</div>
+<div class="dl del">-                    if 0 &lt; threshold &lt; num_new_tokens:</div>
+<div class="dl del">-                        num_new_tokens = threshold</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # chunked prefill has to be enabled explicitly to allow</div>
+<div class="dl del">-                    # pooling requests to be chunked</div>
+<div class="dl del">-                    if not self.scheduler_config.enable_chunked_prefill and num_new_tokens &gt; token_budget:</div>
+<div class="dl del">-                        # If chunked_prefill is disabled,</div>
+<div class="dl del">-                        # we can stop the scheduling here.</div>
+<div class="dl del">-                        break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    num_new_tokens = min(num_new_tokens, token_budget)</div>
+<div class="dl del">-                    assert num_new_tokens &gt; 0</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # Schedule encoder inputs.</div>
+<div class="dl del">-                    if request.has_encoder_inputs:</div>
+<div class="dl del">-                        (</div>
+<div class="dl del">-                            encoder_inputs_to_schedule,</div>
+<div class="dl del">-                            num_new_tokens,</div>
+<div class="dl del">-                            new_encoder_compute_budget,</div>
+<div class="dl del">-                            external_load_encoder_input,</div>
+<div class="dl del">-                        ) = self._try_schedule_encoder_inputs(</div>
+<div class="dl del">-                            request,</div>
+<div class="dl del">-                            num_computed_tokens,</div>
+<div class="dl del">-                            num_new_tokens,</div>
+<div class="dl del">-                            encoder_compute_budget,</div>
+<div class="dl del">-                            shift_computed_tokens=1 if self.use_eagle else 0,</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-                        if num_new_tokens == 0:</div>
+<div class="dl del">-                            # The request cannot be scheduled.</div>
+<div class="dl del">-                            break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                if self.need_mamba_block_aligned_split:</div>
+<div class="dl del">-                    num_new_tokens = self._mamba_block_aligned_split(</div>
+<div class="dl del">-                        request,</div>
+<div class="dl del">-                        num_new_tokens,</div>
+<div class="dl del">-                        num_new_local_computed_tokens,</div>
+<div class="dl del">-                        num_external_computed_tokens,</div>
+<div class="dl del">-                    )</div>
+<div class="dl del">-                    if num_new_tokens == 0:</div>
+<div class="dl del">-                        break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Handles an edge case when P/D Disaggregation</div>
+<div class="dl del">-                # is used with Spec Decoding where an</div>
+<div class="dl del">-                # extra block gets allocated which</div>
+<div class="dl del">-                # creates a mismatch between the number</div>
+<div class="dl del">-                # of local and remote blocks.</div>
+<div class="dl del">-                effective_lookahead_tokens = 0 if request.num_computed_tokens == 0 else self.num_lookahead_tokens</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Determine if we need to allocate cross-attention blocks.</div>
+<div class="dl del">-                num_encoder_tokens = 0</div>
+<div class="dl del">-                if self.is_encoder_decoder and request.has_encoder_inputs and encoder_inputs_to_schedule:</div>
+<div class="dl del">-                    num_encoder_tokens = sum(request.get_num_encoder_embeds(i) for i in encoder_inputs_to_schedule)</div>
+<div class="dl del">-</div>
+<div class="dl del">-                new_blocks = self.kv_cache_manager.allocate_slots(</div>
+<div class="dl del">-                    request,</div>
+<div class="dl del">-                    num_new_tokens,</div>
+<div class="dl del">-                    num_new_computed_tokens=num_new_local_computed_tokens,</div>
+<div class="dl del">-                    new_computed_blocks=new_computed_blocks,</div>
+<div class="dl del">-                    num_lookahead_tokens=effective_lookahead_tokens,</div>
+<div class="dl del">-                    num_external_computed_tokens=num_external_computed_tokens,</div>
+<div class="dl del">-                    delay_cache_blocks=load_kv_async,</div>
+<div class="dl del">-                    num_encoder_tokens=num_encoder_tokens,</div>
+<div class="dl del">-                )</div>
+<div class="dl del">-</div>
+<div class="dl del">-                if new_blocks is None:</div>
+<div class="dl del">-                    # The request cannot be scheduled.</div>
+<div class="dl del">-</div>
+<div class="dl del">-                    # NOTE: we need to untouch the request from the encode cache</div>
+<div class="dl del">-                    # manager</div>
+<div class="dl del">-                    if request.has_encoder_inputs:</div>
+<div class="dl del">-                        self.encoder_cache_manager.free(request)</div>
+<div class="dl del">-                    break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # KVTransfer: the connector uses this info to determine</div>
+<div class="dl del">-                # if a load is needed. Note that</div>
+<div class="dl del">-                # This information is used to determine if a load is</div>
+<div class="dl del">-                # needed for this request.</div>
+<div class="dl del">-                if self.connector is not None:</div>
+<div class="dl del">-                    self.connector.update_state_after_alloc(</div>
+<div class="dl del">-                        request,</div>
+<div class="dl del">-                        self.kv_cache_manager.get_blocks(request_id),</div>
+<div class="dl del">-                        num_external_computed_tokens,</div>
+<div class="dl del">-                    )</div>
+<div class="dl del">-                    if self.connector_prefix_cache_stats is not None and connector_prefix_cache_queries != 0:</div>
+<div class="dl del">-                        self.connector_prefix_cache_stats.record(</div>
+<div class="dl del">-                            num_tokens=connector_prefix_cache_queries,</div>
+<div class="dl del">-                            num_hits=connector_prefix_cache_hits,</div>
+<div class="dl del">-                            preempted=request.num_preemptions &gt; 0,</div>
+<div class="dl del">-                        )</div>
+<div class="dl del">-</div>
+<div class="dl del">-                # Request was already popped from self.waiting</div>
+<div class="dl del">-                # unless it was re-added above due to new_blocks being None.</div>
+<div class="dl del">-                request = self.waiting.pop_request()</div>
+<div class="dl del">-                if load_kv_async:</div>
+<div class="dl del">-                    # If loading async, allocate memory and put request</div>
+<div class="dl del">-                    # into the WAITING_FOR_REMOTE_KV state.</div>
+<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                    request.status = RequestStatus.WAITING_FOR_REMOTE_KVS</div>
+<div class="dl del">-                    continue</div>
+<div class="dl del">-</div>
+<div class="dl del">-                self.running.append(request)</div>
+<div class="dl del">-                if self.log_stats:</div>
+<div class="dl del">-                    request.record_event(EngineCoreEventType.SCHEDULED, scheduled_timestamp)</div>
+<div class="dl del">-                if request.status == RequestStatus.WAITING:</div>
+<div class="dl del">-                    scheduled_new_reqs.append(request)</div>
+<div class="dl del">-                elif request.status == RequestStatus.PREEMPTED:</div>
+<div class="dl del">-                    scheduled_resumed_reqs.append(request)</div>
+<div class="dl del">-                else:</div>
+<div class="dl del">-                    raise RuntimeError(f&quot;Invalid request status: {request.status}&quot;)</div>
+<div class="dl del">-</div>
+<div class="dl del">-                if self.lora_config and request.lora_request:</div>
+<div class="dl del">-                    scheduled_loras.add(request.lora_request.lora_int_id)</div>
+<div class="dl del">-                req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(request_id)</div>
+<div class="dl del">-                num_scheduled_tokens[request_id] = num_new_tokens</div>
+<div class="dl del">-                token_budget -= num_new_tokens</div>
+<div class="dl del">-                request.status = RequestStatus.RUNNING</div>
+<div class="dl del">-                request.num_computed_tokens = num_computed_tokens</div>
+<div class="dl del">-                # Encoder-related.</div>
+<div class="dl del">-                if encoder_inputs_to_schedule:</div>
+<div class="dl del">-                    scheduled_encoder_inputs[request_id] = encoder_inputs_to_schedule</div>
+<div class="dl del">-                    # Allocate the encoder cache.</div>
+<div class="dl del">-                    for i in encoder_inputs_to_schedule:</div>
+<div class="dl del">-                        self.encoder_cache_manager.allocate(request, i)</div>
+<div class="dl del">-                    encoder_compute_budget = new_encoder_compute_budget</div>
+<div class="dl del">-                # Allocate for external load encoder cache</div>
+<div class="dl del">-                if external_load_encoder_input:</div>
+<div class="dl del">-                    for i in external_load_encoder_input:</div>
+<div class="dl del">-                        self.encoder_cache_manager.allocate(request, i)</div>
+<div class="dl del">-                        if self.ec_connector is not None:</div>
+<div class="dl del">-                            self.ec_connector.update_state_after_alloc(request, i)</div>
+<div class="dl del">-</div>
+<div class="dl del">-            # Put back any skipped requests at the head of the waiting queue</div>
+<div class="dl del">-            if skipped_waiting_requests:</div>
+<div class="dl del">-                self.waiting.prepend_requests(skipped_waiting_requests)</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Check if the scheduling constraints are satisfied.</div>
+<div class="dl del">-        total_num_scheduled_tokens = sum(num_scheduled_tokens.values())</div>
+<div class="dl del">-        assert total_num_scheduled_tokens &lt;= self.max_num_scheduled_tokens</div>
+<div class="dl del">-</div>
+<div class="dl del">-        assert token_budget &gt;= 0</div>
+<div class="dl del">-        assert len(self.running) &lt;= self.max_num_running_reqs</div>
+<div class="dl del">-        # Since some requests in the RUNNING queue may not be scheduled in</div>
+<div class="dl del">-        # this step, the total number of scheduled requests can be smaller than</div>
+<div class="dl del">-        # len(self.running).</div>
+<div class="dl del">-        assert len(scheduled_new_reqs) + len(scheduled_resumed_reqs) + len(scheduled_running_reqs) &lt;= len(self.running)</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Get the longest common prefix among all requests in the running queue.</div>
+<div class="dl del">-        # This can be potentially used for cascade attention.</div>
+<div class="dl del">-        num_common_prefix_blocks = [0] * len(self.kv_cache_config.kv_cache_groups)</div>
+<div class="dl del">-        with record_function_or_nullcontext(&quot;schedule: get_num_common_prefix_blocks&quot;):</div>
+<div class="dl del">-            if self.running:</div>
+<div class="dl del">-                any_request_id = self.running[0].request_id</div>
+<div class="dl del">-                num_common_prefix_blocks = self.kv_cache_manager.get_num_common_prefix_blocks(any_request_id)</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Construct the scheduler output.</div>
+<div class="dl del">-        if self.use_v2_model_runner:</div>
+<div class="dl del">-            scheduled_new_reqs = scheduled_new_reqs + scheduled_resumed_reqs</div>
+<div class="dl del">-            scheduled_resumed_reqs = []</div>
+<div class="dl del">-            new_reqs_data = [</div>
+<div class="dl del">-                NewRequestData.from_request(</div>
+<div class="dl del">-                    req,</div>
+<div class="dl del">-                    req_to_new_blocks[req.request_id].get_block_ids(),</div>
+<div class="dl del">-                    req._all_token_ids,</div>
+<div class="dl del">-                )</div>
+<div class="dl del">-                for req in scheduled_new_reqs</div>
+<div class="dl del">-            ]</div>
+<div class="dl del">-        else:</div>
+<div class="dl del">-            new_reqs_data = [</div>
+<div class="dl del">-                NewRequestData.from_request(req, req_to_new_blocks[req.request_id].get_block_ids())</div>
+<div class="dl del">-                for req in scheduled_new_reqs</div>
+<div class="dl del">-            ]</div>
+<div class="dl del">-</div>
+<div class="dl del">-        with record_function_or_nullcontext(&quot;schedule: make_cached_request_data&quot;):</div>
+<div class="dl del">-            cached_reqs_data = self._make_cached_request_data(</div>
+<div class="dl del">-                scheduled_running_reqs,</div>
+<div class="dl del">-                scheduled_resumed_reqs,</div>
+<div class="dl del">-                num_scheduled_tokens,</div>
+<div class="dl del">-                scheduled_spec_decode_tokens,</div>
+<div class="dl del">-                req_to_new_blocks,</div>
+<div class="dl del">-            )</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Record the request ids that were scheduled in this step.</div>
+<div class="dl del">-        self.prev_step_scheduled_req_ids.clear()</div>
+<div class="dl del">-        self.prev_step_scheduled_req_ids.update(num_scheduled_tokens.keys())</div>
+<div class="dl del">-</div>
+<div class="dl del">-        scheduler_output = SchedulerOutput(</div>
+<div class="dl del">-            scheduled_new_reqs=new_reqs_data,</div>
+<div class="dl del">-            scheduled_cached_reqs=cached_reqs_data,</div>
+<div class="dl del">-            num_scheduled_tokens=num_scheduled_tokens,</div>
+<div class="dl del">-            total_num_scheduled_tokens=total_num_scheduled_tokens,</div>
+<div class="dl del">-            scheduled_spec_decode_tokens=scheduled_spec_decode_tokens,</div>
+<div class="dl del">-            scheduled_encoder_inputs=scheduled_encoder_inputs,</div>
+<div class="dl del">-            num_common_prefix_blocks=num_common_prefix_blocks,</div>
+<div class="dl del">-            preempted_req_ids={req.request_id for req in preempted_reqs},</div>
+<div class="dl del">-            # finished_req_ids is an existing state in the scheduler,</div>
+<div class="dl del">-            # instead of being newly scheduled in this step.</div>
+<div class="dl del">-            # It contains the request IDs that are finished in between</div>
+<div class="dl del">-            # the previous and the current steps.</div>
+<div class="dl del">-            finished_req_ids=self.finished_req_ids,</div>
+<div class="dl del">-            free_encoder_mm_hashes=self.encoder_cache_manager.get_freed_mm_hashes(),</div>
+<div class="dl del">-        )</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # NOTE(Kuntai): this function is designed for multiple purposes:</div>
+<div class="dl del">-        # 1. Plan the KV cache store</div>
+<div class="dl del">-        # 2. Wrap up all the KV cache load / save ops into an opaque object</div>
+<div class="dl del">-        # 3. Clear the internal states of the connector</div>
+<div class="dl del">-        if self.connector is not None:</div>
+<div class="dl del">-            meta: KVConnectorMetadata = self.connector.build_connector_meta(scheduler_output)</div>
+<div class="dl del">-            scheduler_output.kv_connector_metadata = meta</div>
+<div class="dl del">-</div>
+<div class="dl del">-        # Build the connector meta for ECConnector</div>
+<div class="dl del">-        if self.ec_connector is not None:</div>
+<div class="dl del">-            ec_meta: ECConnectorMetadata = self.ec_connector.build_connector_meta(scheduler_output)</div>
+<div class="dl del">-            scheduler_output.ec_connector_metadata = ec_meta</div>
+<div class="dl add">+        balance_full = max(t.item() for t in self.balance_queue) == self.max_num_running_reqs</div>
+<div class="dl add">+        if not balance_full:</div>
+<div class="dl add">+            return super().schedule()</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-        with record_function_or_nullcontext(&quot;schedule: update_after_schedule&quot;):</div>
+<div class="dl del">-            self._update_after_schedule(scheduler_output)</div>
+<div class="dl add">+        # Reuse the paired vLLM scheduler implementation and only suppress</div>
+<div class="dl add">+        # WAITING admission for this step when another DP rank is already full.</div>
+<div class="dl add">+        # This avoids carrying a stale copy of Scheduler.schedule as vLLM evolves.</div>
+<div class="dl add">+        waiting = self.waiting</div>
+<div class="dl add">+        skipped_waiting = self.skipped_waiting</div>
+<div class="dl add">+        temp_waiting = create_request_queue(self.policy)</div>
+<div class="dl add">+        temp_skipped_waiting = create_request_queue(self.policy)</div>
+<div class="dl add">+        self.waiting = temp_waiting</div>
+<div class="dl add">+        self.skipped_waiting = temp_skipped_waiting</div>
+<div class="dl add">+        try:</div>
+<div class="dl add">+            scheduler_output = super().schedule()</div>
+<div class="dl add">+        finally:</div>
+<div class="dl add">+            self.waiting = waiting</div>
+<div class="dl add">+            self.skipped_waiting = skipped_waiting</div>
+<div class="dl add">+            if temp_skipped_waiting:</div>
+<div class="dl add">+                self.skipped_waiting.prepend_requests(temp_skipped_waiting)</div>
+<div class="dl add">+            if temp_waiting:</div>
+<div class="dl add">+                self.waiting.prepend_requests(temp_waiting)</div>
+<div class="dl ctx">         return scheduler_output</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -624,9 +89,19 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl ctx">         &quot;&quot;&quot;Core busy loop of the EngineCore for data parallel case.&quot;&quot;&quot;</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         # Loop until process is sent a SIGINT or SIGTERM</div>
+<div class="dl del">-        while True:</div>
+<div class="dl add">+        while self._handle_shutdown():</div>
+<div class="dl ctx">             # 1) Poll the input queue until there is work to do.</div>
+<div class="dl ctx">             self._process_input_queue()</div>
+<div class="dl add">+            # Publish request counts before and after GPU step to ensure freshness.</div>
+<div class="dl add">+            self._maybe_publish_request_counts()</div>
+<div class="dl add">+</div>
+<div class="dl add">+            if self.eep_scaling_state is not None:</div>
+<div class="dl add">+                _ = self.eep_scaling_state.progress()</div>
+<div class="dl add">+                if self.eep_scaling_state.is_complete():</div>
+<div class="dl add">+                    if self.eep_scaling_state.worker_type == &quot;removing&quot;:</div>
+<div class="dl add">+                        raise SystemExit</div>
+<div class="dl add">+                    self.process_input_queue_block = True</div>
+<div class="dl add">+                    self.eep_scaling_state = None</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">             # 2) Step the engine core.</div>
+<div class="dl ctx">             executed = self._process_engine_step()</div>
+<div class="dl hunk">@@ -644,7 +119,9 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">             # 3) All-reduce operation to determine global unfinished reqs.</div>
+<div class="dl ctx">             self.engines_running = self._has_global_unfinished_reqs(local_unfinished_reqs)</div>
+<div class="dl del">-            self.scheduler.balance_gather(self.dp_group)</div>
+<div class="dl add">+            balance_gather = getattr(self.scheduler, &quot;balance_gather&quot;, None)</div>
+<div class="dl add">+            if balance_gather is not None:</div>
+<div class="dl add">+                balance_gather(self.dp_group)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">             if not self.engines_running:</div>
+<div class="dl ctx">                 if self.dp_rank == 0 or not self.has_coordinator:</div>
+<div class="dl hunk">@@ -664,62 +141,8 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl ctx">                 self.current_wave += 1</div>
+<div class="dl ctx">                 self.step_counter = 0</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-</div>
+<div class="dl del">-def run_engine_core(*args, dp_rank: int = 0, local_dp_rank: int = 0, **kwargs):</div>
+<div class="dl del">-    &quot;&quot;&quot;Launch EngineCore busy loop in background process.&quot;&quot;&quot;</div>
+<div class="dl del">-    vllm_config = kwargs.get(&quot;vllm_config&quot;)</div>
+<div class="dl del">-    if not _balance_scheduling_enabled(vllm_config):</div>
+<div class="dl del">-        return _ORIGINAL_RUN_ENGINE_CORE(*args, dp_rank=dp_rank, local_dp_rank=local_dp_rank, **kwargs)</div>
+<div class="dl del">-</div>
+<div class="dl del">-    # Signal handler used for graceful termination.</div>
+<div class="dl del">-    # SystemExit exception is only raised once to allow this and worker</div>
+<div class="dl del">-    # processes to terminate without error</div>
+<div class="dl del">-    shutdown_requested = False</div>
+<div class="dl del">-</div>
+<div class="dl del">-    # Ensure we can serialize transformer config after spawning</div>
+<div class="dl del">-    maybe_register_config_serialize_by_value()</div>
+<div class="dl del">-</div>
+<div class="dl del">-    def signal_handler(signum, frame):</div>
+<div class="dl del">-        nonlocal shutdown_requested</div>
+<div class="dl del">-        if not shutdown_requested:</div>
+<div class="dl del">-            shutdown_requested = True</div>
+<div class="dl del">-            raise SystemExit()</div>
+<div class="dl del">-</div>
+<div class="dl del">-    # Either SIGTERM or SIGINT will terminate the engine_core</div>
+<div class="dl del">-    signal.signal(signal.SIGTERM, signal_handler)</div>
+<div class="dl del">-    signal.signal(signal.SIGINT, signal_handler)</div>
+<div class="dl del">-</div>
+<div class="dl del">-    engine_core: EngineCoreProc | None = None</div>
+<div class="dl del">-    try:</div>
+<div class="dl del">-        parallel_config: ParallelConfig = kwargs[&quot;vllm_config&quot;].parallel_config</div>
+<div class="dl del">-        if parallel_config.data_parallel_size &gt; 1 or dp_rank &gt; 0:</div>
+<div class="dl del">-            set_process_title(&quot;EngineCore&quot;, f&quot;DP{dp_rank}&quot;)</div>
+<div class="dl del">-            decorate_logs()</div>
+<div class="dl del">-            # Set data parallel rank for this engine process.</div>
+<div class="dl del">-            parallel_config.data_parallel_rank = dp_rank</div>
+<div class="dl del">-            parallel_config.data_parallel_rank_local = local_dp_rank</div>
+<div class="dl del">-            engine_core = BalanceDPEngineCoreProc(*args, **kwargs)</div>
+<div class="dl del">-        else:</div>
+<div class="dl del">-            set_process_title(&quot;EngineCore&quot;)</div>
+<div class="dl del">-            decorate_logs()</div>
+<div class="dl del">-            engine_core = EngineCoreProc(*args, **kwargs)</div>
+<div class="dl del">-</div>
+<div class="dl del">-        engine_core.run_busy_loop()</div>
+<div class="dl del">-</div>
+<div class="dl del">-    except SystemExit:</div>
+<div class="dl del">-        logger.debug(&quot;EngineCore exiting.&quot;)</div>
+<div class="dl del">-        raise</div>
+<div class="dl del">-    except Exception as e:</div>
+<div class="dl del">-        if engine_core is None:</div>
+<div class="dl del">-            logger.exception(&quot;EngineCore failed to start.&quot;)</div>
+<div class="dl del">-        else:</div>
+<div class="dl del">-            logger.exception(&quot;EngineCore encountered a fatal error.&quot;)</div>
+<div class="dl del">-            engine_core._send_engine_dead()</div>
+<div class="dl del">-        raise e</div>
+<div class="dl del">-    finally:</div>
+<div class="dl del">-        if engine_core is not None:</div>
+<div class="dl del">-            engine_core.shutdown()</div>
+<div class="dl add">+        raise SystemExit</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl del">-EngineCoreProc.run_engine_core = run_engine_core</div>
+<div class="dl del">-vllm.v1.core.sched.scheduler.Scheduler = BalanceScheduler</div>
+<div class="dl add">+engine_core_module.DPEngineCoreProc = BalanceDPEngineCoreProc</div>
+<div class="dl add">+scheduler_module.Scheduler = BalanceScheduler</div></div>
   </details>
 </section>
 
