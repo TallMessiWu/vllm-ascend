@@ -46,6 +46,7 @@ CATEGORIES = OrderedDict(
         ("a5op_pr", ("来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复）", "#db61a2")),
         ("pr_9310", ("来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode", "#9333ea")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
+        ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
     ]
 )
 
@@ -150,6 +151,11 @@ FILES_META = [
     (
         "requirements.txt",
         "deps", "numpy 锁定 1.26.4；注释掉 torch-npu==2.10.0 与 triton-ascend==3.2.1，避免安装时覆盖已装环境", False,
+    ),
+    # ============================ 私仓自有 · 开发调试 ============================
+    (
+        "vllm_ascend/profiler/torch_npu_profiler.py",
+        "dev", "NPU profiler 默认开启 PipeUtilization 指标，方便查看算子利用率（关闭无用的 AiCoreNone）", False,
     ),
 ]
 
@@ -263,17 +269,19 @@ def main() -> int:
 
     # ========== 分层 diff：每个类别只展示自己那一层的改动 ==========
     # alpha 分支的分层边界（确定性 commit，确保每次生成一致）：
-    #   upstream/main → PR #9382 merge(M1) → 私仓自有(C1) → PR #9310 merge(M2) → 本可视化提交(HEAD)
+    #   upstream/main → PR #9382 merge(M1) → 私仓自有(C1) → PR #9310 merge(M2) → 私仓开发(D1) → HEAD
     LAYER_REFS: dict[str, tuple[str, str]] = {
         "pr_9382": (BASE, "f29a437a"),         # PR #9382 层：upstream/main → M1
         "fork":    ("f29a437a", "459d2e90"),   # 私仓自有层：M1 → C1
         "pr_9310": ("459d2e90", "72404c47"),   # PR #9310 层：C1 → M2
+        "fork_dev": ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler等)
     }
     # 类别 → 所属层
     CAT_LAYER: dict[str, str] = {
         "a5op_pr": "pr_9382",
         "pr_9310": "pr_9310",
         "deps":    "fork",
+        "dev":     "fork_dev",
     }
 
     # 完整 diff（用于头部统计）

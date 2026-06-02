@@ -75,30 +75,31 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>28d7ed0a</b>　·　本仓分支：<b>alpha</b><br>
+    上游基线：<b>upstream/main</b> @ <b>38f02363</b>　·　本仓分支：<b>alpha</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
     分层说明：本仓由 <b>upstream/main → PR #9382 → 私仓自有 → PR #9310</b> 逐层叠加而成；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
     其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9382" target="_blank" rel="noopener">PR #9382</a>（[Ascend950][Feature] Support custom op for GDN on Ascend 950，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为支持 A5 提前合入；待上游合并后可随上游同步移除本地副本）。<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
   <div class="stats">
-    <div class="stat-card"><div class="n">23</div><div class="l">变更文件</div></div>
-    <div class="stat-card"><div class="n">3</div><div class="l">分类</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+543</div><div class="l">新增行</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-60</div><div class="l">删除行</div></div>
+    <div class="stat-card"><div class="n">24</div><div class="l">变更文件</div></div>
+    <div class="stat-card"><div class="n">4</div><div class="l">分类</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+546</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-61</div><div class="l">删除行</div></div>
   </div>
 </header>
 <div class="layout">
   <aside>
     <h2>文件结构</h2>
-    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">recurrent_gated_delta_rule/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" class="tname">recurrent_gated_delta_rule_tiling_arch35.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" class="tname">recurrent_gated_delta_rule.h</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">moe/</span><ul><li class="dir"><span class="tname">causal_conv1d/</span><ul><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" class="tname">causal_conv1d_regbase.h</a></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" class="tname">causal_conv1d.h</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_fwd_o/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" class="tname">chunk_fwd_o_def.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_gated_delta_rule_fwd_h/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" class="tname">chunk_gated_delta_rule_fwd_h_def.cpp</a></li></ul></li></ul></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_build_aclnn_sh__a5op_pr" class="tname">build_aclnn.sh</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_device_device_op_py__a5op_pr" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" class="tname">chunk_scaled_dot_kkt.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" class="tname">solve_tril.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_layernorm_py__a5op_pr" class="tname">layernorm.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">recurrent_gated_delta_rule/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_host_arch35_recurrent_gated_delta_rule_tiling_arch35_cpp__a5op_pr" class="tname">recurrent_gated_delta_rule_tiling_arch35.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_attention_recurrent_gated_delta_rule_op_kernel_arch35_recurrent_gated_delta_rule_h__a5op_pr" class="tname">recurrent_gated_delta_rule.h</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">moe/</span><ul><li class="dir"><span class="tname">causal_conv1d/</span><ul><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_arch35_causal_conv1d_regbase_h__a5op_pr" class="tname">causal_conv1d_regbase.h</a></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_causal_conv1d_op_kernel_causal_conv1d_h__a5op_pr" class="tname">causal_conv1d.h</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_fwd_o/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_fwd_o_op_host_chunk_fwd_o_def_cpp__a5op_pr" class="tname">chunk_fwd_o_def.cpp</a></li></ul></li></ul></li><li class="dir"><span class="tname">chunk_gated_delta_rule_fwd_h/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_moe_chunk_gated_delta_rule_fwd_h_op_host_chunk_gated_delta_rule_fwd_h_def_cpp__a5op_pr" class="tname">chunk_gated_delta_rule_fwd_h_def.cpp</a></li></ul></li></ul></li></ul></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_csrc_build_aclnn_sh__a5op_pr" class="tname">build_aclnn.sh</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_device_device_op_py__a5op_pr" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_scaled_dot_kkt_py__a5op_pr" class="tname">chunk_scaled_dot_kkt.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_triton_fla_solve_tril_py__a5op_pr" class="tname">solve_tril.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li><li class="file" data-cats="a5op_pr"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_ops_layernorm_py__a5op_pr" class="tname">layernorm.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
   </aside>
   <main>
     <div class="toolbar">
-      <button class="cat-btn active" data-cat="all">全部 (23)</button>
+      <button class="cat-btn active" data-cat="all">全部 (24)</button>
 <button class="cat-btn" data-cat="a5op_pr" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9382 · GDN / conv1d A5(ascend950) 自定义算子适配（含 A5 精度修复 + 编译修复） (11)</button>
 <button class="cat-btn" data-cat="pr_9310" style="--c:#9333ea"><span class="dot" style="background:#9333ea"></span>来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode (11)</button>
 <button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (1)</button>
+<button class="cat-btn" data-cat="dev" style="--c:#f59e0b"><span class="dot" style="background:#f59e0b"></span>私仓自有 · 开发调试 (1)</button>
       <span class="spacer"></span>
       <button class="mini" id="expand">展开全部</button>
       <button class="mini" id="collapse">折叠全部</button>
@@ -530,25 +531,47 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">vllm_ascend/device/device_op.py</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+117</span><span class="stat del">-0</span>
+      <span class="stat add">+134</span><span class="stat del">-48</span>
     </div>
   </div>
   <div class="desc">BaseDeviceAdaptor / A5DeviceAdaptor 新增 chunk_scaled_dot_kkt_fwd / solve_tril_16x16 / npu_gemma_rms_norm 三个设备算子封装：A5 走自定义算子、其余走 triton kernel，统一经 DeviceOperator 分发</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index e0ca9a79..b17f701e 100644</div>
+    <div class="diff"><div class="dl meta">index ef54ceb6..b17f701e 100644</div>
 <div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
 <div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
-<div class="dl hunk">@@ -23,6 +23,8 @@ from vllm_ascend.device.mxfp_compat import (</div>
+<div class="dl hunk">@@ -23,7 +23,8 @@ from vllm_ascend.device.mxfp_compat import (</div>
 <div class="dl ctx">     QUANT_DTYPES,</div>
 <div class="dl ctx">     SCALE_DTYPES,</div>
 <div class="dl ctx"> )</div>
+<div class="dl del">-from vllm_ascend.quantization.quant_type import QuantType</div>
 <div class="dl add">+from vllm_ascend.ops.triton.fla.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd_kernel</div>
 <div class="dl add">+from vllm_ascend.ops.triton.fla.solve_tril import solve_tril_16x16_kernel</div>
 <div class="dl ctx"> from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -308,6 +310,64 @@ class BaseDeviceAdaptor:</div>
+<div class="dl hunk">@@ -118,11 +119,10 @@ class BaseDeviceAdaptor:</div>
+<div class="dl ctx">         weight_scale: torch.Tensor,</div>
+<div class="dl ctx">         x_scale: torch.Tensor,</div>
+<div class="dl ctx">         bias=None,</div>
+<div class="dl add">+        swiglu_limit: int = 0,</div>
+<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
+<div class="dl ctx">         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
+<div class="dl ctx">         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
+<div class="dl del">-        swiglu_limit: int = 0,</div>
+<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
+<div class="dl ctx">     ):</div>
+<div class="dl ctx">         if use_mxfp_quant:</div>
+<div class="dl ctx">             raise RuntimeError(&quot;MXFP MoE quantization is only supported on Ascend A5.&quot;)</div>
+<div class="dl hunk">@@ -174,7 +174,6 @@ class BaseDeviceAdaptor:</div>
+<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
+<div class="dl ctx">         bias=None,</div>
+<div class="dl ctx">         fallback_output_dtype: torch.dtype | None = None,</div>
+<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
+<div class="dl ctx">     ) -&gt; torch.Tensor:</div>
+<div class="dl ctx">         if use_mxfp_quant:</div>
+<div class="dl ctx">             raise RuntimeError(&quot;MXFP MoE quantization is only supported on Ascend A5.&quot;)</div>
+<div class="dl hunk">@@ -311,6 +310,64 @@ class BaseDeviceAdaptor:</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">         return context_layer</div>
 <div class="dl ctx"> </div>
@@ -613,7 +636,98 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx"> class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
 <div class="dl ctx">     @classmethod</div>
-<div class="dl hunk">@@ -629,6 +689,63 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl hunk">@@ -419,11 +476,10 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">         weight_scale: torch.Tensor,</div>
+<div class="dl ctx">         x_scale: torch.Tensor,</div>
+<div class="dl ctx">         bias=None,</div>
+<div class="dl add">+        swiglu_limit: int = 0,</div>
+<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
+<div class="dl ctx">         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
+<div class="dl ctx">         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,</div>
+<div class="dl del">-        swiglu_limit: int = 0,</div>
+<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
+<div class="dl ctx">     ):</div>
+<div class="dl ctx">         if not use_mxfp_quant:</div>
+<div class="dl ctx">             return torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
+<div class="dl hunk">@@ -437,43 +493,21 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">                 use_mxfp_quant=False,</div>
+<div class="dl ctx">             )</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-        # W4A8 mxfp</div>
+<div class="dl del">-        if mxfp_quant_dtype == QuantType.W4A8MXFP:</div>
+<div class="dl del">-            hidden_states = torch_npu.npu_grouped_matmul(</div>
+<div class="dl del">-                x=[x],</div>
+<div class="dl del">-                weight=[weight],</div>
+<div class="dl del">-                scale=None,</div>
+<div class="dl del">-                antiquant_scale=[weight_scale],</div>
+<div class="dl del">-                scale_dtype=None,</div>
+<div class="dl del">-                per_token_scale=[x_scale],</div>
+<div class="dl del">-                per_token_scale_dtype=torch.float8_e8m0fnu,</div>
+<div class="dl del">-                split_item=2,</div>
+<div class="dl del">-                group_type=0,</div>
+<div class="dl del">-                group_list=group_list,</div>
+<div class="dl del">-                x_dtype=torch.float8_e4m3fn,</div>
+<div class="dl del">-                weight_dtype=torch_npu.float4_e2m1fn_x2,</div>
+<div class="dl del">-                output_dtype=torch.bfloat16,</div>
+<div class="dl del">-            )[0]</div>
+<div class="dl del">-            hidden_states = torch_npu.npu_swiglu(hidden_states)</div>
+<div class="dl del">-            out, out_scale = torch_npu.npu_dynamic_mx_quant(</div>
+<div class="dl del">-                hidden_states, dst_type=torch.float8_e4m3fn, round_mode=&quot;rint&quot;</div>
+<div class="dl del">-            )</div>
+<div class="dl del">-        else:</div>
+<div class="dl del">-            out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
+<div class="dl del">-                x=x,</div>
+<div class="dl del">-                weight=[weight],</div>
+<div class="dl del">-                group_list=group_list,</div>
+<div class="dl del">-                weight_scale=[weight_scale],</div>
+<div class="dl del">-                x_scale=x_scale,</div>
+<div class="dl del">-                dequant_mode=2,</div>
+<div class="dl del">-                quant_mode=2,</div>
+<div class="dl del">-                dequant_dtype=torch.float32,</div>
+<div class="dl del">-                quant_dtype=act_quant_type,</div>
+<div class="dl del">-                x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,</div>
+<div class="dl del">-                weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,</div>
+<div class="dl del">-                weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
+<div class="dl del">-                x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
+<div class="dl del">-            )</div>
+<div class="dl add">+        out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(</div>
+<div class="dl add">+            x=x,</div>
+<div class="dl add">+            weight=[weight],</div>
+<div class="dl add">+            group_list=group_list,</div>
+<div class="dl add">+            weight_scale=[weight_scale],</div>
+<div class="dl add">+            x_scale=x_scale,</div>
+<div class="dl add">+            dequant_mode=2,</div>
+<div class="dl add">+            quant_mode=2,</div>
+<div class="dl add">+            dequant_dtype=torch.float32,</div>
+<div class="dl add">+            quant_dtype=act_quant_type,</div>
+<div class="dl add">+            x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,</div>
+<div class="dl add">+            weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,</div>
+<div class="dl add">+            weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
+<div class="dl add">+            x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,</div>
+<div class="dl add">+        )</div>
+<div class="dl ctx">         return out, A5DeviceAdaptor.maybe_normalize_mxfp_scale_layout(out_scale), None</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     @staticmethod</div>
+<div class="dl hunk">@@ -531,7 +565,6 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">         use_mxfp_quant: bool = False,</div>
+<div class="dl ctx">         bias=None,</div>
+<div class="dl ctx">         fallback_output_dtype: torch.dtype | None = None,</div>
+<div class="dl del">-        mxfp_quant_dtype: QuantType | None = None,</div>
+<div class="dl ctx">     ) -&gt; torch.Tensor:</div>
+<div class="dl ctx">         if not use_mxfp_quant:</div>
+<div class="dl ctx">             return BaseDeviceAdaptor.npu_grouped_matmul_gmm2(</div>
+<div class="dl hunk">@@ -570,10 +603,6 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">         gmm2_weight = weight if isinstance(weight, list) else [weight]</div>
+<div class="dl ctx">         gmm2_scale = weight_scale if isinstance(weight_scale, list) else [weight_scale]</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-        if mxfp_quant_dtype == QuantType.W4A8MXFP:</div>
+<div class="dl del">-            gmm2_scale = None  # type: ignore[assignment]</div>
+<div class="dl del">-            gmm2_kwargs.update({&quot;antiquant_scale&quot;: [weight_scale]})</div>
+<div class="dl del">-</div>
+<div class="dl ctx">         return torch_npu.npu_grouped_matmul(</div>
+<div class="dl ctx">             x=[hidden_states],</div>
+<div class="dl ctx">             weight=gmm2_weight,</div>
+<div class="dl hunk">@@ -660,6 +689,63 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">         return context_layer</div>
 <div class="dl ctx"> </div>
@@ -2471,6 +2585,38 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> wheel</div>
 <div class="dl ctx"> xgrammar&gt;=0.1.30</div>
 <div class="dl ctx"> pandas-stubs</div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_profiler_torch_npu_profiler_py__dev" data-cats="dev">
+  <div class="card-h" style="--c:#f59e0b">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#f59e0b">私仓自有 · 开发调试</span>
+      
+      
+      <code class="path">vllm_ascend/profiler/torch_npu_profiler.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+3</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">NPU profiler 默认开启 PipeUtilization 指标，方便查看算子利用率（关闭无用的 AiCoreNone）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index bbd811a0..a1ce44a7 100644</div>
+<div class="dl meta">--- a/vllm_ascend/profiler/torch_npu_profiler.py</div>
+<div class="dl meta">+++ b/vllm_ascend/profiler/torch_npu_profiler.py</div>
+<div class="dl hunk">@@ -50,7 +50,9 @@ class TorchNPUProfilerWrapper(WorkerProfiler):</div>
+<div class="dl ctx">             export_type=torch_npu.profiler.ExportType.Text,</div>
+<div class="dl ctx">             profiler_level=torch_npu.profiler.ProfilerLevel.Level1,</div>
+<div class="dl ctx">             msprof_tx=False,</div>
+<div class="dl del">-            aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,</div>
+<div class="dl add">+            # aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,</div>
+<div class="dl add">+            # 查看算子利用率</div>
+<div class="dl add">+            aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,</div>
+<div class="dl ctx">             l2_cache=False,</div>
+<div class="dl ctx">             op_attr=False,</div>
+<div class="dl ctx">             data_simplification=True,</div></div>
   </details>
 </section>
     <footer>本页由 <code>git diff upstream/main alpha</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
