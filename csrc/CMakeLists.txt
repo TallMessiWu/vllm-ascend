@@ -126,6 +126,17 @@ if (BUILD_OPEN_PROJECT)
 
         include(cmake/third_party/makeself-fetch.cmake)
         include(cmake/opbuild.cmake)
+        # vllm-ascend: the shared mc2 common/3rd tiling subsystem (compiled by
+        # cmake/custom_build.cmake only when MC2_OPT is defined) is needed *only*
+        # by the mega_moe op. mega_moe is currently DEFERRED (not in the ascend950
+        # op list in csrc/build_aclnn.sh), so keep this hook disabled to avoid
+        # compiling csrc/mc2/{common,3rd}. Get scatter_pa_kv_cache building first,
+        # then re-enable this together with adding "mega_moe" back to build_aclnn.sh.
+        # if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/mega_moe/op_host/CMakeLists.txt)
+        #     set(MC2_OPT ON)
+        #     set(MC2_COMPILE TRUE)
+        #     set(SUB_MC2_COMPILE TRUE)
+        # endif()
         include(cmake/custom_build.cmake)
         message(STATUS "End building custom package.")
         if (ENABLE_OPS_HOST)

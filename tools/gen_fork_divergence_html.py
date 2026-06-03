@@ -47,6 +47,7 @@ CATEGORIES = OrderedDict(
         ("pr_9715", ("来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）", "#db61a2")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
         ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
+        ("ops", ("私仓自有 · 自定义算子（scatter_pa_kv_cache）", "#06b6d4")),
     ]
 )
 
@@ -113,6 +114,208 @@ FILES_META = [
     (
         "vllm_ascend/profiler/torch_npu_profiler.py",
         "dev", "NPU profiler 默认开启 PipeUtilization 指标，方便查看算子利用率（关闭无用的 AiCoreNone）", False,
+    ),
+    # ============================ 私仓自有 · 自定义算子（scatter_pa_kv_cache） ============================
+    # --- 共享构建接线 ---
+    (
+        "csrc/build_aclnn.sh",
+        "ops", "ascend950 分支 CUSTOM_OPS_ARRAY 加入 scatter_pa_kv_cache（mega_moe 以注释保留为 DEFERRED 占位）", False,
+    ),
+    (
+        "csrc/CMakeLists.txt",
+        "ops", "新增注释说明 MC2_OPT 钩子由 mega_moe 触发（当前以注释保留，待 mega_moe 单独接入时启用）", False,
+    ),
+    (
+        "csrc/torch_binding.cpp",
+        "ops", "新增 npu_scatter_pa_kv_cache wrapper + ops.def/impl（+33 行，scatter_pa 算子注册）", False,
+    ),
+    (
+        "csrc/torch_binding_meta.cpp",
+        "ops", "新增 npu_scatter_pa_kv_cache_meta + Meta ops.impl，并修复 Tensor(a!)/Tensor(b!) alias 约束（返回输入自身而非新建 tensor，适配 FULL_AND_PIECEWISE 图捕获）", False,
+    ),
+    # --- Python 侧算子桥接 ---
+    (
+        "vllm_ascend/device/device_op.py",
+        "ops", "A5 上通过 _ensure_custom_ops_loaded 在 get_device_adaptor 时一次性加载 vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）可用；reshape_and_cache 改为直调 torch.ops._C_ascend（+32 行）", False,
+    ),
+    # --- scatter_pa_kv_cache 子树：CMake 构建 ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/CMakeLists.txt",
+        "ops", "算子顶层 CMake：自动 glob op_host / op_kernel 子目录", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/CMakeLists.txt",
+        "ops", "op_host CMake：950 专用 COMPUTE_UNIT=Ascend950PR_9599，注册 aclnn_exclude", True,
+    ),
+    # --- scatter_pa_kv_cache 子树：平台配置 ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/config/ascend910_93/scatter_pa_kv_cache_binary.json",
+        "ops", "ascend910_93 平台 tiling 编译产物（binary config，1812 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/config/ascend910_93/scatter_pa_kv_cache_simplified_key.ini",
+        "ops", "ascend910_93 simplified key 配置", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/config/ascend910b/scatter_pa_kv_cache_binary.json",
+        "ops", "ascend910b 平台 tiling 编译产物（binary config，1812 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/config/ascend910b/scatter_pa_kv_cache_simplified_key.ini",
+        "ops", "ascend910b simplified key 配置", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/config/ascend950/scatter_pa_kv_cache_simplified_key.ini",
+        "ops", "ascend950 simplified key 配置", True,
+    ),
+    # --- scatter_pa_kv_cache 子树：op_host 算子定义 ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/op_api/aclnn_scatter_pa_kv_cache.cpp",
+        "ops", "aclnn 算子 API 实现（设备端调用入口，554 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/op_api/aclnn_scatter_pa_kv_cache.h",
+        "ops", "aclnn 算子 API 头文件", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/op_api/scatter_pa_kv_cache.cpp",
+        "ops", "算子封装（参数校验 → aclnn 调用）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/op_api/scatter_pa_kv_cache.h",
+        "ops", "算子封装头文件", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/scatter_pa_kv_cache_def.cpp",
+        "ops", "算子定义注册（op def，396 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/scatter_pa_kv_cache_infershape.cpp",
+        "ops", "输出 shape/type 推导（infershape，82 行）", True,
+    ),
+    # --- scatter_pa_kv_cache 子树：op_host tiling ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/scatter_pa_kv_cache_tiling.cpp",
+        "ops", "tiling 计算（确定各 core 的分块策略，739 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/scatter_pa_kv_cache_tiling.h",
+        "ops", "tiling 数据结构定义（288 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_host/scatter_pa_kv_cache_tiling_arch35.cpp",
+        "ops", "arch35（ascend950）专用 tiling 实现（1242 行）", True,
+    ),
+    # --- scatter_pa_kv_cache 子树：op_kernel arch35 内核 ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/common.h",
+        "ops", "arch35 kernel 公共宏/常量定义", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_alibi_fully_load.h",
+        "ops", "arch35 kernel：alibi 全加载路径（253 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_alibi_not_fully_load.h",
+        "ops", "arch35 kernel：alibi 非全加载路径（235 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_norm_non_contiguous.h",
+        "ops", "arch35 kernel：normal 非连续布局路径（349 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_normal_fully_load.h",
+        "ops", "arch35 kernel：normal 全加载路径（217 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_normal_not_fully_load.h",
+        "ops", "arch35 kernel：normal 非全加载路径（220 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_nz_fully_load.h",
+        "ops", "arch35 kernel：NZ 布局全加载路径（134 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_nz_non_contiguous.h",
+        "ops", "arch35 kernel：NZ 布局非连续路径（382 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_nz_not_fully_load.h",
+        "ops", "arch35 kernel：NZ 布局非全加载路径（194 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_omni_fully_load.h",
+        "ops", "arch35 kernel：omni 全加载路径（286 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_omni_not_fully_load.h",
+        "ops", "arch35 kernel：omni 非全加载路径（281 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_rope_fully_load.h",
+        "ops", "arch35 kernel：rope 全加载路径（513 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/arch35/scatter_pa_kv_cache_rope_not_fully_load.h",
+        "ops", "arch35 kernel：rope 非全加载路径（580 行）", True,
+    ),
+    # --- scatter_pa_kv_cache 子树：op_kernel 公共实现 ---
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache.cpp",
+        "ops", "kernel 主入口（dispatch 到各 arch35 变体，135 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_apt.cpp",
+        "ops", "kernel APT（Ascend Pipeline Template）实现（252 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_common.h",
+        "ops", "kernel 公共数据结构定义", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_compress_alibi.h",
+        "ops", "kernel：compress alibi 变体（119 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_compress_common.h",
+        "ops", "kernel：compress 公共逻辑（255 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_compress_omni.h",
+        "ops", "kernel：compress omni 变体（181 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_compress_rope.h",
+        "ops", "kernel：compress rope 变体（265 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_nhsd.h",
+        "ops", "kernel：NHSD（Non-Hierarchical Scatter Dispatch）实现（157 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_normal.h",
+        "ops", "kernel：normal 路径主实现（149 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_normal_common.h",
+        "ops", "kernel：normal 路径公共逻辑（67 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_normal_nz_fully_load.h",
+        "ops", "kernel：normal + NZ 布局全加载（121 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_normal_nz_not_fully_load.h",
+        "ops", "kernel：normal + NZ 布局非全加载（188 行）", True,
+    ),
+    (
+        "csrc/attention/scatter_pa_kv_cache/op_kernel/scatter_pa_kv_cache_normal_siso.h",
+        "ops", "kernel：normal 单输入单输出（SISO）路径（110 行）", True,
+    ),
+    # --- scatter_pa_kv_cache 测试 ---
+    (
+        "tests/e2e/nightly/single_node/ops/singlecard_ops/test_scatter_pa_kv_cache.py",
+        "ops", "单算子 e2e 测试（覆盖 normal/rope/alibi/omni/compress 等 KV cache 场景，132 行）", True,
     ),
 ]
 
@@ -232,10 +435,11 @@ def main() -> int:
     #   私仓自有(C1) → PR #9310 merge(M2) → 私仓开发(D1) →
     #   同步 upstream/main 合并(MU) → PR #9715 merge(M3) → HEAD
     LAYER_REFS: dict[str, tuple[str, str]] = {
-        "fork":     ("f29a437a", "459d2e90"),  # 私仓自有层：requirements 锁定（C1 单提交）
-        "pr_9310":  ("459d2e90", "72404c47"),  # PR #9310 层：C1 → M2
-        "fork_dev": ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler 等)
-        "pr_9715":  ("2c176bbb", "c4827352"),  # PR #9715 层：MU → M3 (精简 balance scheduler)
+        "fork":       ("f29a437a", "459d2e90"),  # 私仓自有层：requirements 锁定（C1 单提交）
+        "pr_9310":    ("459d2e90", "72404c47"),  # PR #9310 层：C1 → M2
+        "fork_dev":   ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler 等)
+        "pr_9715":    ("2c176bbb", "c4827352"),  # PR #9715 层：MU → M3 (精简 balance scheduler)
+        "scatter_pa": ("1ba24186", "d9d01c86"),  # scatter_pa_kv_cache 算子接入层（含 A5 custom op 加载修复）
     }
     # 类别 → 所属层
     CAT_LAYER: dict[str, str] = {
@@ -243,6 +447,7 @@ def main() -> int:
         "pr_9715": "pr_9715",
         "deps":    "fork",
         "dev":     "fork_dev",
+        "ops":     "scatter_pa",
     }
 
     # 完整 diff（用于头部统计）
@@ -433,7 +638,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>

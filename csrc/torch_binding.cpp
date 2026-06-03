@@ -800,6 +800,30 @@ at::Tensor npu_reshape_and_cache_bnsd(const at::Tensor& hashq,
     return hashkCacheOut;
 }
 
+// scatter_pa_kv_cache: writes key/value into paged KV caches in place.
+// keyCache / valueCache are updated in place and returned.
+std::tuple<at::Tensor, at::Tensor> npu_scatter_pa_kv_cache(
+    const at::Tensor& key,
+    at::Tensor& keyCache,
+    const at::Tensor& slotMapping,
+    const at::Tensor& value,
+    at::Tensor& valueCache,
+    const c10::optional<at::Tensor>& compressLens,
+    const c10::optional<at::Tensor>& compressSeqOffset,
+    const c10::optional<at::Tensor>& seqLens,
+    c10::optional<c10::string_view> cacheMode,
+    c10::optional<c10::string_view> scatterMode,
+    c10::optional<at::IntArrayRef> strides,
+    c10::optional<at::IntArrayRef> offsets) {
+    std::string cacheModeStr = cacheMode.has_value() ? std::string(cacheMode.value()) : std::string();
+    std::string scatterModeStr = scatterMode.has_value() ? std::string(scatterMode.value()) : std::string();
+    char* cacheModePtr = cacheMode.has_value() ? const_cast<char*>(cacheModeStr.c_str()) : nullptr;
+    char* scatterModePtr = scatterMode.has_value() ? const_cast<char*>(scatterModeStr.c_str()) : nullptr;
+    EXEC_NPU_CMD(aclnnScatterPaKvCache, key, keyCache, slotMapping, value, valueCache,
+        compressLens, compressSeqOffset, seqLens, cacheModePtr, scatterModePtr, strides, offsets);
+    return std::tuple<at::Tensor, at::Tensor>(keyCache, valueCache);
+}
+
 at::Tensor npu_sign_bits_pack(const at::Tensor& input,
                                    const int64_t size) {
     int64_t ySize = (input.size(0) + 7) / 8;
@@ -2556,6 +2580,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "npu_reshape_and_cache_bnsd(Tensor q, Tensor k_comp, Tensor slot_mapping, Tensor seq_len, Tensor k_out) -> Tensor"
     );
     ops.impl("npu_reshape_and_cache_bnsd", torch::kPrivateUse1, &vllm_ascend::npu_reshape_and_cache_bnsd);
+
+    ops.def(
+        "npu_scatter_pa_kv_cache(Tensor key, Tensor(a!) key_cache, Tensor slot_mapping, Tensor value,"
+        "                        Tensor(b!) value_cache, Tensor? compress_lens=None,"
+        "                        Tensor? compress_seq_offset=None, Tensor? seq_lens=None,"
+        "                        str? cache_mode=None, str? scatter_mode=None,"
+        "                        int[]? strides=None, int[]? offsets=None) -> (Tensor(a!), Tensor(b!))"
+    );
+    ops.impl("npu_scatter_pa_kv_cache", torch::kPrivateUse1, &vllm_ascend::npu_scatter_pa_kv_cache);
 
     ops.def("npu_sign_bits_pack(Tensor input, int size) -> Tensor");
     ops.impl("npu_sign_bits_pack", torch::kPrivateUse1, &vllm_ascend::npu_sign_bits_pack);

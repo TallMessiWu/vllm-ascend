@@ -476,6 +476,25 @@ at::Tensor npu_reshape_and_cache_bnsd_meta(const at::Tensor& hashq,
     return output;
 }
 
+std::tuple<at::Tensor, at::Tensor> npu_scatter_pa_kv_cache_meta(
+    const at::Tensor& key,
+    at::Tensor& keyCache,
+    const at::Tensor& slotMapping,
+    const at::Tensor& value,
+    at::Tensor& valueCache,
+    const c10::optional<at::Tensor>& compressLens,
+    const c10::optional<at::Tensor>& compressSeqOffset,
+    const c10::optional<at::Tensor>& seqLens,
+    c10::optional<c10::string_view> cacheMode,
+    c10::optional<c10::string_view> scatterMode,
+    c10::optional<at::IntArrayRef> strides,
+    c10::optional<at::IntArrayRef> offsets) {
+    // keyCache / valueCache are mutated in-place & returned as Tensor(a!)/Tensor(b!);
+    // the meta must return the inputs themselves, not freshly-allocated tensors,
+    // so that FakeTensor / aclgraph tracing preserves the alias chain.
+    return std::tuple<at::Tensor, at::Tensor>(keyCache, valueCache);
+}
+
 
 at::Tensor npu_hamming_dist_top_k_meta(const at::Tensor &hashq,
                                        const at::Tensor &hashkCache,
@@ -1607,6 +1626,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_hamming_dist_top_k", &vllm_ascend::meta::npu_hamming_dist_top_k_meta);
     // reshape_and_cache_bnsd
     ops.impl("npu_reshape_and_cache_bnsd", &vllm_ascend::meta::npu_reshape_and_cache_bnsd_meta);
+    // scatter_pa_kv_cache
+    ops.impl("npu_scatter_pa_kv_cache", &vllm_ascend::meta::npu_scatter_pa_kv_cache_meta);
     // npu_sign_bits_pack
     ops.impl("npu_sign_bits_pack", &vllm_ascend::meta::npu_sign_bits_pack_meta);
     // CopyAndExpandEagleInputs

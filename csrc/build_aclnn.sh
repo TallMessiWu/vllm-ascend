@@ -228,6 +228,12 @@ elif [[ "$SOC_VERSION" =~ ^ascend950 ]]; then
     log "catlass include=${ABSOLUTE_CATLASS_PATH}"
 
     CUSTOM_OPS_ARRAY=(
+        "scatter_pa_kv_cache"
+        # mega_moe DEFERRED: it pulls in the mc2/common + mc2/3rd tiling subsystem
+        # (enabled via the MC2_OPT hook in csrc/CMakeLists.txt, currently disabled).
+        # Get scatter_pa_kv_cache building cleanly first, then re-add "mega_moe"
+        # here and re-enable the MC2_OPT hook together.
+        # "mega_moe"
         "moe_gating_top_k_hash"
         "indexer_compress_epilog"
         "inplace_partial_rotary_mul"

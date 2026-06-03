@@ -372,15 +372,40 @@ class BaseDeviceAdaptor:
         return x
 
 
+_CUSTOM_OPS_LOADED = False
+
+
+def _ensure_custom_ops_loaded() -> None:
+    """Bootstrap and import vllm_ascend_C once so that all
+    ``torch.ops._C_ascend.*`` custom operators are registered on A5.
+
+    On A5, ``enable_custom_op()`` currently returns ``False``, which prevents
+    ``vllm_ascend_C`` from being loaded through the normal startup path.
+    This helper bypasses that gate and loads the entire custom op library
+    early (before any model forward), covering GDN ops (fused_gdn_gating,
+    recurrent_gated_delta_rule, causal_conv1d), scatter_pa_kv_cache, and
+    all other vllm-ascend custom operators.
+    """
+    global _CUSTOM_OPS_LOADED
+    if _CUSTOM_OPS_LOADED:
+        return
+    from vllm_ascend.utils import bootstrap_custom_op_env
+
+    bootstrap_custom_op_env(include_vendor_lib=True)
+    import vllm_ascend.vllm_ascend_C  # noqa: F401
+
+    _CUSTOM_OPS_LOADED = True
+
+
 class A5DeviceAdaptor(BaseDeviceAdaptor):
     @classmethod
     def reshape_and_cache(cls, key, value, key_cache, value_cache, slot_mapping):
-        torch_npu.npu_scatter_pa_kv_cache(
+        torch.ops._C_ascend.npu_scatter_pa_kv_cache(
             key=key.contiguous(),
-            value=value.contiguous(),
             key_cache=key_cache,
-            value_cache=value_cache,
             slot_mapping=slot_mapping.contiguous(),
+            value=value.contiguous(),
+            value_cache=value_cache,
             cache_mode="Norm",
         )
 
@@ -781,6 +806,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
 def get_device_adaptor() -> type["BaseDeviceAdaptor"]:
     ascend_device_type = get_ascend_device_type()
     if ascend_device_type == AscendDeviceType.A5:
+        _ensure_custom_ops_loaded()
         return A5DeviceAdaptor
     return BaseDeviceAdaptor
 
