@@ -390,19 +390,55 @@ class TokenDispatcherWithAllGather(MoETokenDispatcher[MoEAllGatherCombineMetadat
             first_expert_idx = 0
             last_expert_idx = self.num_experts_local
             global_num_experts = self.num_experts_local
-        sorted_hidden_states, expanded_row_idx, expert_tokens, dynamic_scale = DeviceOperator.npu_moe_init_routing(
-            hidden_states,
-            topk_ids,
-            scale=dynamic_scale,
-            active_num=num_tokens * self.top_k,
-            expert_num=global_num_experts,
-            expert_tokens_num_type=1,
-            expert_tokens_num_flag=True,
+        # NOTE(debug): custom/v2 init_routing 仅在 active_expert_range 覆盖全部专家
+        # ([0, expert_num]) 时命中 full-load 高效分支（perCoreTokens=n/aivNum）；
+        # 一旦 EP>1 使 active_expert_range 变成子区间，就退化为 ep_=1 的逐 token
+        # 路径（perCoreTokens=1），导致耗时严重劣化。full_load 字段即用于判断这一点。
+        from vllm_ascend.ops.fused_moe.moe_debug import MoeInitRoutingProbe
+
+        with MoeInitRoutingProbe(
+            "AllGather.init_routing",
+            device=get_ascend_device_type().name,
+            expert_map_is_none=expert_map is None,
+            full_load=(first_expert_idx == 0 and last_expert_idx == global_num_experts),
             active_expert_range=[first_expert_idx, last_expert_idx],
+            global_num_experts=global_num_experts,
+            num_local_experts=self.num_experts_local,
+            num_tokens=num_tokens,
+            top_k=self.top_k,
+            active_num=num_tokens * self.top_k,
             quant_mode=quant_mode,
-        )
+            hidden=tuple(hidden_states.shape),
+            hidden_dtype=hidden_states.dtype,
+            topk_ids=tuple(topk_ids.shape),
+            scale_is_none=dynamic_scale is None,
+        ):
+            sorted_hidden_states, expanded_row_idx, expert_tokens, dynamic_scale = DeviceOperator.npu_moe_init_routing(
+                hidden_states,
+                topk_ids,
+                scale=dynamic_scale,
+                active_num=num_tokens * self.top_k,
+                expert_num=global_num_experts,
+                expert_tokens_num_type=1,
+                expert_tokens_num_flag=True,
+                active_expert_range=[first_expert_idx, last_expert_idx],
+                quant_mode=quant_mode,
+            )
         expert_tokens = expert_tokens.to(torch.int64)
         group_list_type = 1  # `count` mode
+
+        # NOTE(debug): 精度定位 —— EP 子区间下重点看
+        #   expanded_row_idx.neg（被 droppad 丢弃的 token×topk 数，EP 下应约 (1-1/ep)*N*topk）、
+        #   expert_tokens 分布（落在本 rank 专家的 token 计数）、sorted_hidden 是否出现 nan/inf。
+        from vllm_ascend.ops.fused_moe.moe_debug import log_tensor_stats
+
+        log_tensor_stats(
+            "AllGather.dispatch_out",
+            expert_tokens=expert_tokens,
+            expanded_row_idx=expanded_row_idx,
+            sorted_hidden=sorted_hidden_states,
+            dynamic_scale=dynamic_scale,
+        )
 
         return MoETokenDispatchOutput(
             hidden_states=sorted_hidden_states,
@@ -417,6 +453,17 @@ class TokenDispatcherWithAllGather(MoETokenDispatcher[MoEAllGatherCombineMetadat
         )
 
     def token_combine(self, hidden_states, combine_metadata, bias=None):
+        # NOTE(debug): 精度定位 —— combine 用 torch.abs(expanded_row_idx) 还原顺序。
+        # 对比 combine_in（mlp 输出）与 combine_out（最终输出）的 nan/inf 与数值范围，
+        # 可判断精度是否在 unpermute/abs 这一步被破坏。
+        from vllm_ascend.ops.fused_moe.moe_debug import log_tensor_stats
+
+        log_tensor_stats(
+            "AllGather.combine_in",
+            mlp_out=hidden_states,
+            expanded_row_idx=combine_metadata.expanded_row_idx,
+            topk_weights=combine_metadata.topk_weights,
+        )
         final_hidden_states = torch_npu.npu_moe_token_unpermute(
             permuted_tokens=hidden_states,
             sorted_indices=torch.abs(combine_metadata.expanded_row_idx),
@@ -425,6 +472,7 @@ class TokenDispatcherWithAllGather(MoETokenDispatcher[MoEAllGatherCombineMetadat
         if len(combine_metadata.restore_shape) == 3:
             final_hidden_states = final_hidden_states.view(combine_metadata.restore_shape)
 
+        log_tensor_stats("AllGather.combine_out", final=final_hidden_states)
         # these values are no longer used, so they need to be set to None for memory release.
         return final_hidden_states
 

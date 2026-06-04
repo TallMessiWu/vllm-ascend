@@ -316,6 +316,23 @@ def select_moe_comm_method(num_tokens: int, vllm_config: VllmConfig, is_draft_mo
             moe_comm_type = MoECommType.ALLTOALL
     else:
         raise ValueError(f"Unsupported soc_version: {soc_version}")
+
+    # NOTE(debug): 打印一次 MoE 通信路径决策，用于核对 TP2 时是否开了 EP。
+    # 若 enable_ep=True 且 moe_comm_type=ALLGATHER，则 init_routing 的
+    # active_expert_range 会变成子区间，触发 custom 算子的逐 token 慢路径。
+    from vllm_ascend.ops.fused_moe.moe_debug import log_once
+
+    log_once(
+        "select_moe_comm",
+        soc=soc_version.name,
+        enable_ep=vllm_config.parallel_config.enable_expert_parallel,
+        ep_world_size=get_ep_group().world_size,
+        tp=vllm_config.parallel_config.tensor_parallel_size,
+        dp=getattr(vllm_config.parallel_config, "data_parallel_size", 1),
+        num_tokens=num_tokens,
+        mc2_capacity=mc2_tokens_capacity,
+        moe_comm_type=moe_comm_type,
+    )
     return moe_comm_type
 
 

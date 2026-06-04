@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3.5 TP2 — MoeInitRouting 劣化与精度问题分析</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --muted:#9da7b3;
+    --line:#2a3340; --accent:#4ea1ff; --green:#3fb950; --amber:#d29922; --red:#f85149;
+    --code-bg:#0b0f14; --chip:#22303f;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif;
+       line-height:1.65;font-size:15.5px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px 80px}
+  header{padding:46px 0 26px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  h1{font-size:27px;margin:0 0 10px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:15px}
+  .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:var(--chip);border:1px solid var(--line);color:#cdd6e0;
+        padding:3px 10px;border-radius:999px;font-size:12.5px}
+  h2{font-size:20px;margin:40px 0 14px;padding-top:10px;border-top:1px dashed var(--line)}
+  h2 .n{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:8px}
+  h3{font-size:16px;margin:24px 0 8px;color:#dbe3ec}
+  p{margin:10px 0}
+  code{font-family:"SF Mono",Consolas,"JetBrains Mono",Menlo,monospace;
+       background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px;color:#cfe3ff}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;
+      padding:14px 16px;overflow:auto;margin:12px 0}
+  pre code{background:none;border:none;padding:0;color:#c9d4e0;font-size:13px;line-height:1.6;display:block;white-space:pre}
+  .cm{color:#6a8a5a}        /* 注释 */
+  .kw{color:#ff7b72}        /* 关键字 */
+  .fn{color:#d2a8ff}        /* 函数/标识 */
+  .st{color:#a5d6ff}        /* 字符串/字面 */
+  .nu{color:#79c0ff}        /* 数字 */
+  .callout{border:1px solid var(--line);border-left-width:4px;border-radius:8px;
+           padding:12px 16px;margin:16px 0;background:var(--panel)}
+  .c-key{border-left-color:var(--accent)}
+  .c-good{border-left-color:var(--green)}
+  .c-warn{border-left-color:var(--amber)}
+  .c-bad{border-left-color:var(--red)}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  .c-key .t{color:var(--accent)} .c-good .t{color:var(--green)}
+  .c-warn .t{color:var(--amber)} .c-bad .t{color:var(--red)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#dbe3ec;font-weight:600}
+  td.center,th.center{text-align:center;white-space:nowrap}
+  .yes{color:var(--green);font-weight:700}
+  .no{color:var(--red);font-weight:700}
+  .tag{display:inline-block;background:var(--chip);border:1px solid var(--line);
+       border-radius:5px;padding:0 6px;font-size:12px;color:#cdd6e0;font-family:monospace}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .path{color:var(--muted);font-family:monospace;font-size:12.5px}
+  .toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:18px 0}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .toc ol{margin:6px 0}
+  footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  .flow{font-family:monospace;font-size:13px;background:var(--code-bg);border:1px solid var(--line);
+        border-radius:8px;padding:12px 14px;overflow:auto;color:#c9d4e0}
+  .hl{color:var(--amber);font-weight:700}
+  .disclaim{font-size:12.5px;color:var(--muted);font-style:italic}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Qwen3.5-35B-A3B：TP2 下 MoeInitRouting 耗时劣化 &amp; 精度问题 — 排查分析</h1>
+  <div class="sub">vllm-ascend fork · 一次"两个看似一起出现、实则根因不同"的问题定位</div>
+  <div class="meta">
+    <span class="chip">分支 debug/moe-init-routing-tp2</span>
+    <span class="chip">模型 Qwen3.5-35B-A3B</span>
+    <span class="chip">现象 TP1 正常 / TP2 异常</span>
+    <span class="chip">状态 待机器日志验证</span>
+  </div>
+</header>
+
+<div class="callout c-key">
+  <div class="t">TL;DR（一句话结论）</div>
+  <p style="margin:6px 0 0">
+    报告的两个症状<strong>根因不同、需拆开看</strong>：
+    <strong>① 性能劣化</strong>那条命令<u>没开 EP</u>，且单卡/双卡跑的是<u>两个不同模型（mxfp 量化 vs bf16 非量化）</u>——
+    属于<strong>不对等对照</strong>，劣化极可能来自"非量化 bf16 + 大 batch 触发 init_routing 退出 full-load 高效分支"，
+    <strong>与 TP 数量基本无关</strong>；
+    <strong>② 精度问题</strong>那条命令<u>开了 EP</u>，导致 <code>active_expert_range</code> 变子区间、走 <code>ep_=1</code> 分支 + mask/combine 逻辑，
+    才是真正与 TP/EP 相关的嫌疑点。
+  </p>
+</div>
+
+<div class="toc">
+  <strong>目录</strong>
+  <ol>
+    <li><a href="#bg">背景与两条复现命令</a></li>
+    <li><a href="#path">代码路径：TP/EP 如何改变 init_routing 的入参</a></li>
+    <li><a href="#perf">问题 A — MoeInitRouting 性能劣化（没开 EP）</a></li>
+    <li><a href="#acc">问题 B — 精度问题（开了 EP）</a></li>
+    <li><a href="#exp">验证方案：4 组对照实验 + 日志字段</a></li>
+    <li><a href="#log">已加入的调试埋点</a></li>
+    <li><a href="#fix">预测与修复方向</a></li>
+    <li><a href="#uncertain">不确定性 / 待证伪点</a></li>
+  </ol>
+</div>
+
+<h2 id="bg"><span class="n">1</span>背景与两条复现命令</h2>
+<p>用户反馈：<strong>Qwen3.5-35B-A3B 在 TP1 时精度与性能都正常；切到 TP2 后出现精度问题，且 <code>MoeInitRouting</code> 算子耗时劣化严重。</strong> 但两条实跑命令的关键参数并不一致：</p>
+
+<table>
+  <thead>
+    <tr><th>用途</th><th>权重</th><th class="center">TP</th><th class="center">DP</th><th class="center">enable-expert-parallel</th><th>量化</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>单卡基准（正常）</td><td><code>Qwen3.5-35B-A3B-w8a8-mxfp</code></td><td class="center">1</td><td class="center">1</td><td class="center"><span class="no">否</span></td><td><span class="tag">mxfp</span> 量化</td></tr>
+    <tr><td>双卡 profiling（看性能）</td><td><code>Qwen3.5-35B-A3B</code></td><td class="center">2</td><td class="center">1</td><td class="center"><span class="no">否</span></td><td>非量化 <span class="tag">bf16</span></td></tr>
+    <tr><td>双卡（看精度）</td><td><code>Qwen3.5-35B-A3B</code></td><td class="center">2</td><td class="center">1</td><td class="center"><span class="yes">是</span></td><td>非量化 <span class="tag">bf16</span></td></tr>
+  </tbody>
+</table>
+
+<div class="callout c-warn">
+  <div class="t">⚠ 对照里同时变了 3 个变量</div>
+  <p style="margin:6px 0 0">并行度（TP 1→2）、<strong>模型/量化（mxfp→bf16）</strong>、EP（性能不开 / 精度开）。
+  三个变量耦合在一起，不能把所有差异都记到"TP2"头上。下面把性能与精度两条线分开归因。</p>
+</div>
+
+<h2 id="path"><span class="n">2</span>代码路径：TP/EP 如何改变 init_routing 的入参</h2>
+<p>MoE 在 vllm-ascend 里的通信方式由 <code>select_moe_comm_method</code> 决定。关键判断（<span class="path">vllm_ascend/ascend_forward_context.py:270</span>）：</p>
+<pre><code><span class="kw">if</span> <span class="kw">not</span> vllm_config.parallel_config.enable_expert_parallel <span class="kw">or</span> get_ep_group().world_size == <span class="nu">1</span>:
+    moe_comm_type = MoECommType.ALLGATHER   <span class="cm"># 不开 EP → 一律走 AllGather</span></code></pre>
+
+<p>AllGather 路径下，<code>TokenDispatcherWithAllGather.token_dispatch</code> 给 init_routing 准备 <code>active_expert_range</code>（<span class="path">vllm_ascend/ops/fused_moe/token_dispatcher.py:383-403</span>）：</p>
+<pre><code><span class="kw">if</span> expert_map <span class="kw">is not</span> <span class="kw">None</span>:                 <span class="cm"># 开 EP（ep_size&gt;1）才有 expert_map</span>
+    mask = expert_map[topk_ids] != -<span class="nu">1</span>
+    topk_weights = topk_weights * mask        <span class="cm"># 非本地专家权重置 0</span>
+    first_expert_idx = ep_rank * num_experts_local
+    last_expert_idx  = first_expert_idx + num_experts_local
+<span class="kw">else</span>:                                         <span class="cm"># 不开 EP（含纯 TP）</span>
+    first_expert_idx = <span class="nu">0</span>
+    last_expert_idx  = num_experts_local      <span class="cm"># = 全部专家 E</span>
+
+DeviceOperator.npu_moe_init_routing(
+    ..., active_expert_range=[first_expert_idx, last_expert_idx], quant_mode=quant_mode)</code></pre>
+
+<div class="flow">
+不开 EP（TP1 或纯 TP2）：active_expert_range = <span class="hl">[0, E] 全集</span><br>
+开   EP（精度命令）   ：active_expert_range = <span class="hl">[0, E/2] 或 [E/2, E] 子区间</span> + topk_weights*mask
+</div>
+
+<p>而具体落到哪个底层算子，取决于设备（<span class="path">vllm_ascend/device/device_op.py</span>）：</p>
+<ul>
+  <li>非 A5：<code>torch.ops._C_ascend.npu_moe_init_routing_custom</code>（本 fork 的自定义算子）</li>
+  <li>A5：<code>torch_npu.npu_moe_init_routing_v2</code>（CANN 内置）</li>
+</ul>
+
+<h2 id="perf"><span class="n">3</span>问题 A — MoeInitRouting 性能劣化（profiling 命令<strong>没开 EP</strong>）</h2>
+
+<div class="callout c-good">
+  <div class="t">关键观察</div>
+  <p style="margin:6px 0 0">不开 EP 时，<code>expert_map = None</code>，TP=2 的 <code>active_expert_range</code> 仍是 <code>[0, E]</code>。
+  也就是说 <strong>TP 翻倍并不改变 full-load 判定</strong>。真正在两条命令间变化的是 <code>quant_mode</code>（量化模型 ≠ bf16）。</p>
+</div>
+
+<h3>3.1 full-load 高效分支 vs 逐 token 慢分支</h3>
+<p>自定义算子 host tiling 的 <code>IsFullLoad()</code>（<span class="path">csrc/moe/moe_init_routing_custom/op_host/moe_init_routing_custom_tiling.cpp:644</span>）：</p>
+<pre><code><span class="kw">bool</span> <span class="fn">IsFullLoad</span>() {
+  <span class="kw">if</span> (expertStart_ == <span class="nu">0</span> &amp;&amp; expertEnd_ == expertNum_) {   <span class="cm">// active_expert_range == 全集</span>
+      ep_ = <span class="nu">0</span>;
+      perCoreTokens = n_ / aivNum;          <span class="cm">// ✅ 每核一次批量处理 n/核数 个 token</span>
+  } <span class="kw">else</span> {                                  <span class="cm">// 子区间（EP 切分后）</span>
+      ep_ = <span class="nu">1</span>;
+      perCoreTokens = <span class="nu">1</span>;                    <span class="cm">// ❗每核每次只处理 1 个 token —— 严重退化</span>
+  }
+  <span class="kw">if</span> (totalLength_ &gt; sortLoopMaxElement || dropPadMode_ == <span class="nu">1</span>) <span class="kw">return</span> <span class="kw">false</span>;
+  ...
+  <span class="kw">return</span> remainUb &gt; <span class="nu">0</span>;                       <span class="cm">// UB 放不下也会退出 full-load</span>
+}</code></pre>
+<p class="disclaim">注：上面 <code>ep_=0/1</code> 的分叉只在"开 EP 让区间变子集"时才触发；性能 profiling 没开 EP，<u>不</u>走这一支。性能问题的关键在下面的 UB 判定。</p>
+
+<h3>3.2 量化 vs bf16：UB 占用差异巨大（性能劣化的真正嫌疑）</h3>
+<p>同一函数末尾的 UB 预算（第 675–687 行）。<code>quant_mode</code> 取值见 <span class="path">token_dispatcher.py:371-374</span>：量化模型 = 1（int8）或 3（mxfp），bf16 非量化 = −1。</p>
+<pre><code><span class="kw">if</span> (quantMode_ == -<span class="nu">1</span>) {                    <span class="cm">// bf16 非量化</span>
+    remainUb -= gatherSpace;             <span class="cm">// = cols * 2 * perCoreTokens ← 随 token 数线性增长</span>
+} <span class="kw">else if</span> (quantMode_ == <span class="nu">0</span>) {             <span class="cm">// 静态量化</span>
+    remainUb -= gatherSpace + cols*<span class="nu">11</span>;
+} <span class="kw">else</span> {                                 <span class="cm">// 动态量化 quant_mode &gt;= 1（含 mxfp=3 / int8=1）</span>
+    remainUb -= cols * <span class="nu">13</span>;               <span class="cm">// 固定，不乘 perCoreTokens</span>
+}
+<span class="kw">return</span> remainUb &gt; <span class="nu">0</span>;</code></pre>
+<p>其中 full-load 时 <code>perCoreTokens ≈ n_ / aivNum</code>（n_ = 本次 token 数）。常量：<code>DYNAMIC_QUANT_FULLLOAD_COLS_BUFFER = 13</code>、<code>STATIC = 11</code>。</p>
+
+<div class="callout c-bad">
+  <div class="t">推断：bf16 + 大 batch 撑爆 UB → 退出 full-load</div>
+  <ul style="margin:6px 0 0">
+    <li><strong>mxfp 量化模型</strong>（基准）：UB 只减一个<u>固定</u>的 <code>cols*13</code>，与 token 数无关 → prefill 大 batch 也能保持 full-load → 快。</li>
+    <li><strong>bf16 非量化模型</strong>（profiling）：UB 要减 <code>cols*2*perCoreTokens</code>，<code>--max-num-batched-tokens 65000</code> 这种大 batch 下 <code>perCoreTokens</code> 很大 → <code>remainUb &lt; 0</code> → <code>IsFullLoad() = false</code> → 退到慢路径 → <strong>MoeInitRouting 劣化</strong>。</li>
+  </ul>
+  <p style="margin:8px 0 0">→ 这个劣化由"<strong>换成非量化 bf16 模型 + 大 batch</strong>"解释，<strong>不需要 TP2</strong> 参与。单卡若也跑 bf16 非量化，预计一样劣化。</p>
+</div>
+
+<p>另外，<code>sortLoopMaxElement = (ubSize − aivNum*32)/32/SORT32*SORT32</code>（第 809 行，<u>与量化无关</u>）；当 <code>totalLength_ = n_*k_</code> 超过它时，无论量化都会退出 full-load。但基准 mxfp 同样是大 batch 却不劣化，说明决定性差异更可能在上面的 <code>gatherSpace</code> 这条 bf16 专属路径上。</p>
+
+<h2 id="acc"><span class="n">4</span>问题 B — 精度问题（命令<strong>开了 EP</strong>）</h2>
+<p>这条命令加了 <code>--enable-expert-parallel</code> → <code>ep_size = 2</code> → <code>expert_map</code> 非 None → <code>active_expert_range</code> 变子区间。此时同时发生：</p>
+<ul>
+  <li>init_routing 走 <code>ep_=1</code> 分支（与 full-load 是<strong>两套不同 kernel</strong>，本 fork 较新接入、仍在迭代）；</li>
+  <li>dispatch 端 <code>topk_weights *= (expert_map[topk_ids] != -1)</code> 把外部专家权重置 0；</li>
+  <li>combine 端用 <code>torch.abs(expanded_row_idx)</code> 还原顺序（<span class="path">token_dispatcher.py:419-424</span>）。</li>
+</ul>
+<div class="callout c-warn">
+  <div class="t">精度首要嫌疑</div>
+  <p style="margin:6px 0 0">子区间 / droppad 场景下 <code>expanded_row_idx</code> 的符号语义、<code>expert_tokens</code> 计数，或 custom/v2 的 <code>ep_=1</code> 分支本身。
+  这条线<strong>确实与 TP/EP 相关</strong>，是 TP2 专属问题，与问题 A 是两码事。</p>
+</div>
+
+<h2 id="exp"><span class="n">5</span>验证方案：4 组对照实验 + 日志字段</h2>
+<p>打开调试日志后，按下表各跑一次（重点是<strong>补第 ② 组</strong>——单卡也用 bf16 非量化模型，用来把"量化"这个变量从"TP"里剥离）：</p>
+<pre><code><span class="kw">export</span> VLLM_ASCEND_MOE_DEBUG=<span class="nu">1</span>
+<span class="kw">export</span> VLLM_ASCEND_MOE_DEBUG_STEPS=<span class="nu">12</span>   <span class="cm"># 每个埋点打印前 12 次，避免 decode 刷屏</span></code></pre>
+
+<table>
+  <thead>
+    <tr><th class="center">组</th><th>权重</th><th class="center">TP</th><th class="center">EP</th><th>预期 quant_mode</th><th>预期 full_load</th><th>目的</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="center">①</td><td>mxfp 量化</td><td class="center">1</td><td class="center">否</td><td class="center">3</td><td class="center"><span class="yes">True</span></td><td>正常基线</td></tr>
+    <tr><td class="center"><strong>②</strong></td><td><strong>bf16 非量化</strong></td><td class="center"><strong>1</strong></td><td class="center">否</td><td class="center">−1</td><td class="center">prefill 可能 <span class="no">False</span></td><td><strong>隔离"量化"变量</strong></td></tr>
+    <tr><td class="center">③</td><td>bf16 非量化</td><td class="center">2</td><td class="center">否</td><td class="center">−1</td><td class="center">prefill 可能 <span class="no">False</span></td><td>看 TP 是否真有额外影响</td></tr>
+    <tr><td class="center">④</td><td>bf16 非量化</td><td class="center">2</td><td class="center">是</td><td class="center">−1</td><td class="center"><span class="no">False</span>（子区间）</td><td>精度 + EP 子区间</td></tr>
+  </tbody>
+</table>
+
+<h3>关键对比逻辑</h3>
+<ul>
+  <li><strong>② vs ③</strong>：若单卡 bf16（②）的 <code>full_load</code>/<code>elapsed_ms</code> 已与双卡（③）一致劣化 → <span class="yes">MoeInitRouting 劣化与 TP 无关</span>，性能问题定性为"模型/量化 + batch"。</li>
+  <li><strong>① vs ②</strong>：隔离 mxfp 量化 vs bf16 对 <code>full_load</code> 的影响。</li>
+  <li><strong>④ 的 <code>active_expert_range</code></strong>：确认是否变子区间、<code>full_load=False</code>，对应精度问题。</li>
+  <li><strong><code>device</code> 字段</strong>：A5 → <code>v2</code> / 非 A5 → <code>custom</code>，决定上面 tiling 细节是否直接适用。</li>
+  <li><strong><code>num_tokens</code></strong>：区分 prefill（大）/ decode（小）；劣化大概率只在 prefill。</li>
+</ul>
+
+<h2 id="log"><span class="n">6</span>已加入的调试埋点（分支 debug/moe-init-routing-tp2）</h2>
+<p>纯 Python，默认关闭、零开销，<strong>无需重编算子</strong>：</p>
+<ul>
+  <li><span class="path">vllm_ascend/ops/fused_moe/moe_debug.py</span> — 新增轻量探针（环境变量开关 + NPU event 计时 + 限次打印）。</li>
+  <li><span class="path">token_dispatcher.py</span> — 给 <code>npu_moe_init_routing</code> 调用套 <code>MoeInitRoutingProbe</code>，打印
+    <code>device / quant_mode / full_load / active_expert_range / num_tokens / top_k / hidden / scale_is_none / elapsed_ms</code>。</li>
+  <li><span class="path">ascend_forward_context.py</span> — <code>select_moe_comm</code> 打印一次
+    <code>soc / enable_ep / ep_world_size / tp / dp / moe_comm_type</code>。</li>
+</ul>
+<p>日志统一前缀 <code>[MOE-DEBUG]</code>，跑完用 <code>grep MOE-DEBUG</code> 即可提取后对比。</p>
+
+<h2 id="fix"><span class="n">7</span>预测与修复方向</h2>
+<table>
+  <thead><tr><th>问题</th><th>预测根因</th><th>方向</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>A. 性能劣化</td>
+      <td>非量化 bf16 + 大 batch 使 init_routing 退出 full-load（UB 不足）；<u>非 TP 所致</u></td>
+      <td>① 先做对等对照确认；② 若线上就是要跑 bf16，可考虑大 batch 下的算子侧 full-load UB 优化，或直接用 mxfp 量化权重部署；③ 纯 TP 无需 EP，避免引入子区间路径</td>
+    </tr>
+    <tr>
+      <td>B. 精度问题</td>
+      <td>开 EP → 子区间 <code>ep_=1</code> 分支 / mask + <code>abs(expanded_row_idx)</code> combine 逻辑</td>
+      <td>① 加 combine 端张量级日志（expert_tokens 分布 / expanded_row_idx 负值占比）定位；② 临时改走 MC2 / All2All dispatch 规避 init_routing 子区间路径；③ 若锁定算子 ep 分支，算子侧修复</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="uncertain"><span class="n">8</span>不确定性 / 待证伪点</h2>
+<ul>
+  <li><strong>设备代次：</strong>模型名含 <code>mxfp</code> 强烈暗示 A5；A5 走 <code>npu_moe_init_routing_v2</code> 而非本 fork 的 custom 算子，因此第 3 节的 tiling 常量是<strong>同族算子的合理类比</strong>而非直接证据。<code>device</code> 字段会一锤定音。</li>
+  <li><strong>profiling 关注阶段：</strong>若 profiling 主要看 decode（token 少），bf16 也可能维持 full-load，则劣化另有来源（如通信/all-reduce），需结合 <code>num_tokens</code> 与 <code>elapsed_ms</code> 复核。</li>
+  <li><strong>精度 root cause：</strong>"mask 逻辑" vs "算子 ep 分支 bug" 尚未区分，需第 7 节 B 的张量级日志或 TP1/TP2 中间张量对拍。</li>
+</ul>
+
+<div class="callout c-key" style="margin-top:28px">
+  <div class="t">下一步</div>
+  <p style="margin:6px 0 0">跑完 ①②③④ 把 <code>[MOE-DEBUG]</code> 日志贴回来。最想看到的判别是 <strong>② vs ③</strong>（性能是否真与 TP 相关）和 <strong>④ 的 active_expert_range / full_load</strong>（精度路径确认）。</p>
+</div>
+
+<footer>
+  本页为本次排查的工作笔记，独立于仓库的 <code>index.html</code>（fork 差异可视化）。结论待机器实测日志验证后更新。<br>
+  分支：debug/moe-init-routing-tp2 · 关键文件：device_op.py / token_dispatcher.py / ascend_forward_context.py / moe_init_routing_custom_tiling.cpp
+</footer>
+
+</div>
+</body>
+</html>
