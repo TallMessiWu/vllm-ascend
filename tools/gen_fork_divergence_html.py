@@ -9,9 +9,10 @@
 脚本会运行 `git diff upstream/main <当前分支>`，解析每个文件的 diff，
 配合下方 FILES_META 的分类/说明，渲染为自包含单页 HTML（无外部依赖，离线可用）。
 
-分层 diff：alpha 分支由若干"层"叠加而成（见 LAYER_REFS）。同一个文件若被
-多个层（多个 PR / 私仓改动）同时修改，则在每个所属类目下**只展示该层的 diff**，
-而非全量 diff —— 这样每个类目只呈现"它自己改了什么"。
+分类叠加：本仓由 upstream/main → 私仓自有 → 提前合入 PR → 自定义算子 逐层叠加而成，
+FILES_META 为每个文件标注所属类目（来自某上游 PR / 私仓自有）。每张卡片直接展示该文件
+**相对 upstream/main 的当前差异**（git diff upstream/main <当前分支>），即"本仓相对上游
+改了什么"——天然适配上游重组（文件改名/挪目录），不依赖任何硬编码历史 commit。
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ CATEGORIES = OrderedDict(
 FILES_META = [
     # ============================ 来自 PR #9310 ============================
     (
-        "tests/ut/attention/test_attention_v1.py",
+        "tests/ut/attention/a2/test_attention_v1.py",
         "pr_9310", "在既有上游单测中新增用例 test_unpadded_preserves_internal_seq_lens_cpu：校验 unpadded 后内部 _seq_lens_cpu 正确截断、seq_lens_cpu 保持 None", False,
     ),
     (
@@ -65,11 +66,11 @@ FILES_META = [
         "pr_9310", "由 tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py 重命名迁移并扩展：覆盖 AscendGDNAttentionMetadataBuilder 的 chunk meta 预构建与 argsort stable 排序逻辑", False,
     ),
     (
-        "tests/ut/ops/test_gdn_chunk_meta.py",
+        "tests/ut/ops/a2/test_gdn_chunk_meta.py",
         "pr_9310", "新增 GDN chunk 元数据用例，覆盖 _build_seq_lens / _validate_cu_seqlens / build_chunk_meta_device", False,
     ),
     (
-        "tests/ut/spec_decode/test_eagle_proposer.py",
+        "tests/ut/spec_decode/a2/test_eagle_proposer.py",
         "pr_9310", "新增 Ascend Eagle Proposer 用例，覆盖异步 spec decode 下 proposer 初始化与行为", False,
     ),
     (
@@ -429,41 +430,20 @@ def anchor_for(path: str, cat: str = "") -> str:
 def main() -> int:
     base_sha = run(["git", "rev-parse", "--short", BASE]).strip()
 
-    # ========== 分层 diff：每个类别只展示自己那一层的改动 ==========
-    # 分层边界（确定性 commit，确保每次生成一致）。各 (base, head) 为历史中固定的
-    # 两个提交，其树 diff 与当前 HEAD 无关，故同步 upstream 后依旧稳定：
-    #   私仓自有(C1) → PR #9310 merge(M2) → 私仓开发(D1) →
-    #   同步 upstream/main 合并(MU) → PR #9715 merge(M3) → HEAD
-    LAYER_REFS: dict[str, tuple[str, str]] = {
-        "fork":       ("f29a437a", "459d2e90"),  # 私仓自有层：requirements 锁定（C1 单提交）
-        "pr_9310":    ("459d2e90", "72404c47"),  # PR #9310 层：C1 → M2
-        "fork_dev":   ("72404c47", "7d4f8896"),  # 私仓开发层：M2 → D1 (profiler 等)
-        "pr_9715":    ("2c176bbb", "c4827352"),  # PR #9715 层：MU → M3 (精简 balance scheduler)
-        "scatter_pa": ("1ba24186", "d9d01c86"),  # scatter_pa_kv_cache 算子接入层（含 A5 custom op 加载修复）
-    }
-    # 类别 → 所属层
-    CAT_LAYER: dict[str, str] = {
-        "pr_9310": "pr_9310",
-        "pr_9715": "pr_9715",
-        "deps":    "fork",
-        "dev":     "fork_dev",
-        "ops":     "scatter_pa",
-    }
-
-    # 完整 diff（用于头部统计）
+    # ========== 相对上游的当前差异（git diff upstream/main HEAD）==========
+    # 每张卡片直接展示该文件相对 upstream/main 的当前差异（按文件切分）。
+    # 此前用硬编码历史 commit 计算「分层 diff」，但每次同步 upstream 都可能因上游
+    # 重组（文件改名/挪目录）导致历史路径与当前路径对不上而失效；FILES_META 内
+    # 每个文件均只属于一个类目（无跨类目重复），故按文件取「当前完整差异」即可
+    # 准确表达「本仓相对上游改了什么」，且天然适配上游重组、不再依赖历史 commit。
+    full_diff_text = run(["git", "diff", BASE, HEAD])
+    full_diffs = parse_diffs(full_diff_text)
     full_numstat = run(["git", "diff", "--numstat", BASE, HEAD])
-
-    # 分层 diff 和 numstat
-    layer_diffs: dict[str, dict[str, str]] = {}
-    layer_numstats: dict[str, dict[str, tuple[str, str]]] = {}
-    for lname, (lbase, lhead) in LAYER_REFS.items():
-        layer_diffs[lname] = parse_diffs(run(["git", "diff", lbase, lhead]))
-        ns: dict[str, tuple[str, str]] = {}
-        for ln in run(["git", "diff", "--numstat", lbase, lhead]).splitlines():
-            cols = ln.split("\t")
-            if len(cols) == 3:
-                ns[cols[2]] = (cols[0], cols[1])
-        layer_numstats[lname] = ns
+    full_ns: dict[str, tuple[str, str]] = {}
+    for ln in full_numstat.splitlines():
+        cols = ln.split("\t")
+        if len(cols) == 3:
+            full_ns[cols[2]] = (cols[0], cols[1])
 
     # 唯一文件路径（去重，保持出现顺序）及其所属类别列表 / 首张卡片锚点
     unique_paths: list[str] = []
@@ -506,14 +486,13 @@ def main() -> int:
     # 文件卡片（按类别顺序，再按 FILES_META 内出现顺序）
     cards = []
     for cid in CATEGORIES:
-        layer = CAT_LAYER.get(cid, "fork")
         for path, cat, desc, is_new in FILES_META:
             if cat != cid:
                 continue
             title, color = CATEGORIES[cid]
-            # 用该类别所属层的 diff，而非全量 diff —— 同一文件在不同类别只展示各自那一层
-            a, d = layer_numstats[layer].get(path, ("-", "-"))
-            dtext = layer_diffs[layer].get(path, "（该文件在此层无变更）")
+            # 展示该文件相对 upstream/main 的当前差异
+            a, d = full_ns.get(path, ("-", "-"))
+            dtext = full_diffs.get(path, "（该文件相对上游无差异 / 已收敛）")
             new_badge = '<span class="newtag">新增</span>' if is_new else ""
             pr = CAT_PR.get(cid)
             pr_badge = ""
@@ -638,7 +617,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片直接展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>），即"本仓相对上游改了什么"。<br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>

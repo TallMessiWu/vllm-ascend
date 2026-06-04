@@ -75,23 +75,23 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>a44cf26d</b>　·　本仓分支：<b>alpha</b><br>
+    上游基线：<b>upstream/main</b> @ <b>b67d0b4e</b>　·　本仓分支：<b>nightly</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随本次同步收敛）；同一文件若被多个层修改，则在每个类目下<b>只展示该层的 diff</b>，每个类目只呈现"它自己改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片直接展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff upstream/main nightly</code>），即"本仓相对上游改了什么"。<br>
     其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>1</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener">PR #9715</a>（[Feature]Fix the scheduler runtime error caused by version compatibility issues.，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
   <div class="stats">
     <div class="stat-card"><div class="n">62</div><div class="l">变更文件</div></div>
     <div class="stat-card"><div class="n">5</div><div class="l">分类</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13193</div><div class="l">新增行</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-748</div><div class="l">删除行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13342</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-666</div><div class="l">删除行</div></div>
   </div>
 </header>
 <div class="layout">
   <aside>
     <h2>文件结构</h2>
-    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_a2_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_a2_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_a2_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
   </aside>
   <main>
     <div class="toolbar">
@@ -106,13 +106,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <button class="mini" id="collapse">折叠全部</button>
     </div>
     
-<section class="card" id="f_tests_ut_attention_test_attention_v1_py__pr_9310" data-cats="pr_9310">
+<section class="card" id="f_tests_ut_attention_a2_test_attention_v1_py__pr_9310" data-cats="pr_9310">
   <div class="card-h" style="--c:#9333ea">
     <div class="card-h-left">
       <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
       
       <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
-      <code class="path">tests/ut/attention/test_attention_v1.py</code>
+      <code class="path">tests/ut/attention/a2/test_attention_v1.py</code>
     </div>
     <div class="card-h-right">
       <span class="stat add">+26</span><span class="stat del">-0</span>
@@ -122,8 +122,8 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
     <div class="diff"><div class="dl meta">index 4ac75d5e..dfc169e5 100644</div>
-<div class="dl meta">--- a/tests/ut/attention/test_attention_v1.py</div>
-<div class="dl meta">+++ b/tests/ut/attention/test_attention_v1.py</div>
+<div class="dl meta">--- a/tests/ut/attention/a2/test_attention_v1.py</div>
+<div class="dl meta">+++ b/tests/ut/attention/a2/test_attention_v1.py</div>
 <div class="dl hunk">@@ -82,6 +82,32 @@ class TestAscendAttentionMetadataBuilder(TestBase):</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">         self.assertFalse(result)</div>
@@ -178,7 +178,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
     <div class="diff"><div class="dl meta">similarity index 86%</div>
 <div class="dl meta">rename from tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py</div>
 <div class="dl meta">rename to tests/ut/ops/test_gdn_attn_builder.py</div>
-<div class="dl meta">index 44fcf320..b94b90e4 100644</div>
+<div class="dl meta">index 28c912b9..f3152876 100644</div>
 <div class="dl meta">--- a/tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py</div>
 <div class="dl meta">+++ b/tests/ut/ops/test_gdn_attn_builder.py</div>
 <div class="dl hunk">@@ -9,15 +9,19 @@ import torch</div>
@@ -203,7 +203,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla import utils as fla_utils</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import (</div>
 <div class="dl ctx">     prepare_chunk_indices as runtime_prepare_chunk_indices,</div>
-<div class="dl hunk">@@ -150,7 +154,7 @@ def _make_builder(*, device: torch.device, num_heads: int, num_speculative_token</div>
+<div class="dl hunk">@@ -151,7 +155,7 @@ def _make_builder(*, device: torch.device, num_heads: int, num_speculative_token</div>
 <div class="dl ctx">         dtypes=(torch.float32,),</div>
 <div class="dl ctx">         mamba_cache_mode=&quot;none&quot;,</div>
 <div class="dl ctx">     )</div>
@@ -212,7 +212,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> def _build_attn_metadata(</div>
-<div class="dl hunk">@@ -190,31 +194,31 @@ def _build_attn_metadata(</div>
+<div class="dl hunk">@@ -191,31 +195,31 @@ def _build_attn_metadata(</div>
 <div class="dl ctx"> def _assert_chunk_meta_matches_runtime(builder, chunk_meta, cu_seqlens: torch.Tensor) -&gt; None:</div>
 <div class="dl ctx">     assert torch.equal(</div>
 <div class="dl ctx">         chunk_meta.chunk_indices_chunk64,</div>
@@ -249,7 +249,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">         ),</div>
 <div class="dl ctx">     )</div>
 <div class="dl ctx">     assert torch.equal(</div>
-<div class="dl hunk">@@ -237,6 +241,28 @@ def _patch_missing_runtime_cdiv(monkeypatch: pytest.MonkeyPatch) -&gt; None:</div>
+<div class="dl hunk">@@ -238,6 +242,28 @@ def _patch_missing_runtime_cdiv(monkeypatch: pytest.MonkeyPatch) -&gt; None:</div>
 <div class="dl ctx">     )</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
@@ -278,7 +278,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> def _expected_conv1d_host_args(attn_metadata) -&gt; tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:</div>
 <div class="dl ctx">     return (</div>
 <div class="dl ctx">         to_int64_tuple(attn_metadata.non_spec_query_start_loc),</div>
-<div class="dl hunk">@@ -317,7 +343,7 @@ def test_build_non_spec_causal_conv1d_host_meta_avoids_seq_lens_cpu_fallback():</div>
+<div class="dl hunk">@@ -318,7 +344,7 @@ def test_build_non_spec_causal_conv1d_host_meta_avoids_seq_lens_cpu_fallback():</div>
 <div class="dl ctx">         has_initial_state=torch.tensor([True, False]),</div>
 <div class="dl ctx">     )</div>
 <div class="dl ctx"> </div>
@@ -287,7 +287,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">         builder,</div>
 <div class="dl ctx">         attn_metadata,</div>
 <div class="dl ctx">         non_spec_query_start_loc_cpu=torch.tensor([0, 4, 12], dtype=torch.int32),</div>
-<div class="dl hunk">@@ -338,7 +364,7 @@ def test_build_non_spec_causal_conv1d_host_meta_requires_has_initial_state():</div>
+<div class="dl hunk">@@ -339,7 +365,7 @@ def test_build_non_spec_causal_conv1d_host_meta_requires_has_initial_state():</div>
 <div class="dl ctx">         has_initial_state=None,</div>
 <div class="dl ctx">     )</div>
 <div class="dl ctx">     with pytest.raises(RuntimeError, match=&quot;has_initial_state&quot;):</div>
@@ -296,7 +296,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             builder,</div>
 <div class="dl ctx">             attn_metadata,</div>
 <div class="dl ctx">             non_spec_query_start_loc_cpu=torch.tensor([0, 4, 12], dtype=torch.int32),</div>
-<div class="dl hunk">@@ -386,8 +412,8 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl hunk">@@ -387,8 +413,8 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">     builder._ascend_gdn_chunk_meta_initialized = True</div>
 <div class="dl ctx">     builder._ascend_gdn_chunk_meta_device = SimpleNamespace(type=&quot;npu&quot;)</div>
@@ -307,7 +307,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">     builder._ascend_gdn_cumsum_block_size = 256</div>
 <div class="dl ctx">     builder._ascend_gdn_chunked_prefill_pool_idx = -1</div>
 <div class="dl ctx">     builder._ascend_gdn_chunked_prefill_pool = [</div>
-<div class="dl hunk">@@ -410,16 +436,11 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl hunk">@@ -411,16 +437,11 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
 <div class="dl ctx">         helper_calls[kwargs[&quot;chunk_size&quot;]] = kwargs</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">     monkeypatch.setattr(</div>
@@ -325,7 +325,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx">     attn_metadata = builder.build(</div>
 <div class="dl ctx">         0,</div>
-<div class="dl hunk">@@ -430,22 +451,22 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl hunk">@@ -431,22 +452,22 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">     expected_chunk_indices = runtime_prepare_chunk_indices(</div>
 <div class="dl ctx">         attn_metadata.non_spec_query_start_loc,</div>
@@ -353,7 +353,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">     out_chunk_indices = cast(torch.Tensor, chunk64_call[&quot;out_chunk_indices&quot;])</div>
 <div class="dl ctx">     out_chunk_offsets = cast(torch.Tensor, chunk64_call[&quot;out_chunk_offsets&quot;])</div>
 <div class="dl ctx">     out_update_chunk_offsets = cast(</div>
-<div class="dl hunk">@@ -456,6 +477,7 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl hunk">@@ -457,6 +478,7 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
 <div class="dl ctx">         torch.Tensor,</div>
 <div class="dl ctx">         chunk64_call[&quot;out_final_chunk_indices&quot;],</div>
 <div class="dl ctx">     )</div>
@@ -361,7 +361,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">     assert chunk64_call[&quot;cu_seqlens&quot;] is attn_metadata.non_spec_query_start_loc</div>
 <div class="dl ctx">     assert out_chunk_indices.shape == expected_chunk_indices.shape</div>
 <div class="dl ctx">     assert out_chunk_indices.dtype == expected_chunk_indices.dtype</div>
-<div class="dl hunk">@@ -465,6 +487,10 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
+<div class="dl hunk">@@ -466,6 +488,10 @@ def test_builder_uses_device_chunk_builder_with_non_spec_query_start_loc(monkeyp</div>
 <div class="dl ctx">     assert out_update_chunk_offsets.dtype == torch.int32</div>
 <div class="dl ctx">     assert out_final_chunk_indices.shape == expected_final_chunk_indices.shape</div>
 <div class="dl ctx">     assert out_final_chunk_indices.dtype == torch.int32</div>
@@ -375,13 +375,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   </details>
 </section>
 
-<section class="card" id="f_tests_ut_ops_test_gdn_chunk_meta_py__pr_9310" data-cats="pr_9310">
+<section class="card" id="f_tests_ut_ops_a2_test_gdn_chunk_meta_py__pr_9310" data-cats="pr_9310">
   <div class="card-h" style="--c:#9333ea">
     <div class="card-h-left">
       <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
       
       <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
-      <code class="path">tests/ut/ops/test_gdn_chunk_meta.py</code>
+      <code class="path">tests/ut/ops/a2/test_gdn_chunk_meta.py</code>
     </div>
     <div class="card-h-right">
       <span class="stat add">+82</span><span class="stat del">-0</span>
@@ -390,10 +390,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 GDN chunk 元数据用例，覆盖 _build_seq_lens / _validate_cu_seqlens / build_chunk_meta_device</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 34ae1e6f..318eaeb1 100644</div>
-<div class="dl meta">--- a/tests/ut/ops/test_gdn_chunk_meta.py</div>
-<div class="dl meta">+++ b/tests/ut/ops/test_gdn_chunk_meta.py</div>
-<div class="dl hunk">@@ -159,6 +159,8 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
+    <div class="diff"><div class="dl meta">index 8b3bbc06..b82a96fa 100644</div>
+<div class="dl meta">--- a/tests/ut/ops/a2/test_gdn_chunk_meta.py</div>
+<div class="dl meta">+++ b/tests/ut/ops/a2/test_gdn_chunk_meta.py</div>
+<div class="dl hunk">@@ -157,6 +157,8 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
 <div class="dl ctx">         (),</div>
 <div class="dl ctx">         {</div>
 <div class="dl ctx">             &quot;block_indices_cumsum&quot;: None,</div>
@@ -402,7 +402,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             &quot;chunk_indices_chunk64&quot;: None,</div>
 <div class="dl ctx">             &quot;chunk_offsets_chunk64&quot;: chunk_offsets,</div>
 <div class="dl ctx">             &quot;update_chunk_offsets_chunk64&quot;: update_chunk_offsets,</div>
-<div class="dl hunk">@@ -259,6 +261,86 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
+<div class="dl hunk">@@ -257,6 +259,86 @@ def test_chunk_gated_delta_rule_fwd_threads_prebuilt_chunk_offsets(</div>
 <div class="dl ctx">     assert pcp_calls == [(&quot;o_update&quot;, chunk_offsets)]</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
@@ -492,13 +492,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   </details>
 </section>
 
-<section class="card" id="f_tests_ut_spec_decode_test_eagle_proposer_py__pr_9310" data-cats="pr_9310">
+<section class="card" id="f_tests_ut_spec_decode_a2_test_eagle_proposer_py__pr_9310" data-cats="pr_9310">
   <div class="card-h" style="--c:#9333ea">
     <div class="card-h-left">
       <span class="catbadge" style="background:#9333ea">来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode</span>
       
       <a class="prtag" href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener" title="[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model（OPEN）">PR #9310 ↗</a>
-      <code class="path">tests/ut/spec_decode/test_eagle_proposer.py</code>
+      <code class="path">tests/ut/spec_decode/a2/test_eagle_proposer.py</code>
     </div>
     <div class="card-h-right">
       <span class="stat add">+44</span><span class="stat del">-0</span>
@@ -507,10 +507,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 Ascend Eagle Proposer 用例，覆盖异步 spec decode 下 proposer 初始化与行为</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 42c3a382..90f571db 100644</div>
-<div class="dl meta">--- a/tests/ut/spec_decode/test_eagle_proposer.py</div>
-<div class="dl meta">+++ b/tests/ut/spec_decode/test_eagle_proposer.py</div>
-<div class="dl hunk">@@ -145,6 +145,50 @@ def assert_attr_equal(attr: str | tuple[str, Any, Any], expect: Any, actual: Any</div>
+    <div class="diff"><div class="dl meta">index e6f8242e..b44c08f9 100644</div>
+<div class="dl meta">--- a/tests/ut/spec_decode/a2/test_eagle_proposer.py</div>
+<div class="dl meta">+++ b/tests/ut/spec_decode/a2/test_eagle_proposer.py</div>
+<div class="dl hunk">@@ -144,6 +144,50 @@ def assert_attr_equal(attr: str | tuple[str, Any, Any], expect: Any, actual: Any</div>
 <div class="dl ctx">         assert expect_value == actual_value, f&quot;{attr_name} value mismatch&quot;</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
@@ -579,19 +579,19 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖，改用正式 ops 模块</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 22db95bf..defd5c30 100644</div>
+    <div class="diff"><div class="dl meta">index c2234176..ee686de2 100644</div>
 <div class="dl meta">--- a/vllm_ascend/ops/gdn.py</div>
 <div class="dl meta">+++ b/vllm_ascend/ops/gdn.py</div>
-<div class="dl hunk">@@ -23,7 +23,7 @@ from vllm.forward_context import get_forward_context</div>
-<div class="dl ctx"> from vllm.model_executor.layers.fla.ops.l2norm import l2norm_fwd</div>
-<div class="dl ctx"> from vllm.model_executor.layers.mamba.gdn_linear_attn import GatedDeltaNetAttention</div>
+<div class="dl hunk">@@ -33,7 +33,7 @@ else:</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> from vllm.model_executor.layers.mamba.mamba_utils import MambaStateShapeCalculator</div>
 <div class="dl ctx"> from vllm.triton_utils import triton</div>
 <div class="dl del">-from vllm.v1.attention.backend import AttentionMetadata  # type: ignore</div>
 <div class="dl add">+from vllm.v1.attention.backend import AttentionBackend, AttentionMetadata  # type: ignore</div>
 <div class="dl ctx"> from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata</div>
 <div class="dl ctx"> from vllm.v1.attention.backends.utils import PAD_SLOT_ID</div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -33,6 +33,7 @@ from vllm_ascend.compilation.acl_graph import (</div>
+<div class="dl hunk">@@ -43,6 +43,7 @@ from vllm_ascend.compilation.acl_graph import (</div>
 <div class="dl ctx">     get_draft_graph_params,</div>
 <div class="dl ctx">     get_graph_params,</div>
 <div class="dl ctx"> )</div>
@@ -599,7 +599,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import clear_ssm_states</div>
-<div class="dl hunk">@@ -50,9 +51,7 @@ def to_int64_tuple(tensor: torch.Tensor) -&gt; tuple[int, ...]:</div>
+<div class="dl hunk">@@ -59,9 +60,7 @@ def to_int64_tuple(tensor: torch.Tensor) -&gt; tuple[int, ...]:</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> def _check_and_get_host_args(attn_metadata, field_name: str, sub_field_name: str):</div>
 <div class="dl ctx">     if (fallback_meta := getattr(attn_metadata, field_name, None)) is None:</div>
@@ -610,16 +610,16 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">     return fallback_meta</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -241,6 +240,9 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):</div>
+<div class="dl hunk">@@ -250,6 +249,9 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):</div>
 <div class="dl add">+    def get_attn_backend(self) -&gt; type[AttentionBackend]:</div>
 <div class="dl add">+        return AscendGDNAttentionBackend</div>
 <div class="dl add">+</div>
-<div class="dl ctx">     def forward(</div>
-<div class="dl ctx">         self,</div>
-<div class="dl ctx">         hidden_states: torch.Tensor,</div></div>
+<div class="dl ctx">     def _split_ba_for_tp(self, ba: torch.Tensor) -&gt; tuple[torch.Tensor, torch.Tensor]:</div>
+<div class="dl ctx">         if hasattr(self, &quot;split_ba&quot;):</div>
+<div class="dl ctx">             return self.split_ba(ba)</div></div>
   </details>
 </section>
 
@@ -1477,7 +1477,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">chunk_gated_delta_rule_fwd / chunk_fwd_o：新增 cu_seqlens_host / chunk_indices_chunk64_host 通过 prebuilt meta 提前提取为 Python tuple，传入 AscendC 算子时避免每次 .tolist() 的同步开销</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index ea8b6ab4..8995d4e5 100644</div>
+    <div class="diff"><div class="dl meta">index 2178a80a..851db87e 100644</div>
 <div class="dl meta">--- a/vllm_ascend/ops/triton/fla/chunk.py</div>
 <div class="dl meta">+++ b/vllm_ascend/ops/triton/fla/chunk.py</div>
 <div class="dl hunk">@@ -48,7 +48,9 @@ def chunk_gated_delta_rule_fwd(</div>
@@ -1544,10 +1544,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">更新补丁注释文档：patch_gdn_attn 说明替换为 patch_module（torch.argsort 补丁 + gdn_attn_builder 覆盖），标注相关 PR 与未来移除计划</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 480d9d9f..9fe2252d 100644</div>
+    <div class="diff"><div class="dl meta">index 2408abd0..31412071 100644</div>
 <div class="dl meta">--- a/vllm_ascend/patch/__init__.py</div>
 <div class="dl meta">+++ b/vllm_ascend/patch/__init__.py</div>
-<div class="dl hunk">@@ -380,27 +380,28 @@</div>
+<div class="dl hunk">@@ -449,27 +449,28 @@</div>
 <div class="dl ctx"> #           to override them, then delete the patch file `worker/patch_rejection_sampler.py`.</div>
 <div class="dl ctx"> #       2. make these functions as costom op, then remove AscendRejectionSampler</div>
 <div class="dl ctx"> #</div>
@@ -1607,7 +1607,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">移除 `import vllm_ascend.patch.worker.patch_gdn_attn`：GDN attn builder 已正式化至 ops 模块</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 1e55a02a..e48fedb0 100644</div>
+    <div class="diff"><div class="dl meta">index 6966b8f8..2b122473 100644</div>
 <div class="dl meta">--- a/vllm_ascend/patch/worker/__init__.py</div>
 <div class="dl meta">+++ b/vllm_ascend/patch/worker/__init__.py</div>
 <div class="dl hunk">@@ -39,7 +39,6 @@ import vllm_ascend.patch.worker.patch_deepseek_compressor  # noqa</div>
@@ -1672,10 +1672,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">异步 spec decode 路径优化：将 num_computed_tokens_cpu_tensor→device 拷贝提前复用，避免重复 H2D 拷贝</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 6d0369cb..83c36b66 100644</div>
+    <div class="diff"><div class="dl meta">index 8a47dd90..2a83f480 100644</div>
 <div class="dl meta">--- a/vllm_ascend/worker/model_runner_v1.py</div>
 <div class="dl meta">+++ b/vllm_ascend/worker/model_runner_v1.py</div>
-<div class="dl hunk">@@ -955,6 +955,10 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl hunk">@@ -973,6 +973,10 @@ class NPUModelRunner(GPUModelRunner):</div>
 <div class="dl ctx">         # CPU values are optimistic (all drafts accepted). The kernel</div>
 <div class="dl ctx">         # corrects on GPU using the previous step&#x27;s</div>
 <div class="dl ctx">         # valid_sampled_token_count_gpu. Otherwise, just copy from CPU.</div>
@@ -1686,7 +1686,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">         if (</div>
 <div class="dl ctx">             self.use_async_spec_decode</div>
 <div class="dl ctx">             and self.valid_sampled_token_count_gpu is not None</div>
-<div class="dl hunk">@@ -962,9 +966,6 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl hunk">@@ -980,9 +984,6 @@ class NPUModelRunner(GPUModelRunner):</div>
 <div class="dl ctx">         ):</div>
 <div class="dl ctx">             self.prev_positions.copy_to_gpu(num_reqs)</div>
 <div class="dl ctx">             self.prev_num_draft_tokens.copy_to_gpu()</div>
@@ -1696,7 +1696,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             update_num_computed_tokens_for_batch_change(</div>
 <div class="dl ctx">                 self.num_computed_tokens,</div>
 <div class="dl ctx">                 self.num_accepted_tokens.gpu[:num_reqs],</div>
-<div class="dl hunk">@@ -1080,9 +1081,7 @@ class NPUModelRunner(GPUModelRunner):</div>
+<div class="dl hunk">@@ -1098,9 +1099,7 @@ class NPUModelRunner(GPUModelRunner):</div>
 <div class="dl ctx">         if self.use_async_spec_decode and (self.uses_mrope or self.uses_xdrope_dim &gt; 0):</div>
 <div class="dl ctx">             drift = self.num_computed_tokens[req_indices_gpu].to(</div>
 <div class="dl ctx">                 torch.int64</div>
@@ -2454,7 +2454,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">numpy 锁定 1.26.4；注释掉 torch-npu==2.10.0 与 triton-ascend==3.2.1，避免安装时覆盖已装环境</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 16dc8ea6..11306e41 100644</div>
+    <div class="diff"><div class="dl meta">index 3e67ac22..4676434d 100644</div>
 <div class="dl meta">--- a/requirements.txt</div>
 <div class="dl meta">+++ b/requirements.txt</div>
 <div class="dl hunk">@@ -2,7 +2,7 @@</div>
@@ -2529,10 +2529,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">ascend950 分支 CUSTOM_OPS_ARRAY 加入 scatter_pa_kv_cache（mega_moe 以注释保留为 DEFERRED 占位）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 6d3bee88..8e763056 100755</div>
+    <div class="diff"><div class="dl meta">index 20620472..475879de 100755</div>
 <div class="dl meta">--- a/csrc/build_aclnn.sh</div>
 <div class="dl meta">+++ b/csrc/build_aclnn.sh</div>
-<div class="dl hunk">@@ -228,6 +228,12 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
+<div class="dl hunk">@@ -209,6 +209,12 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
 <div class="dl ctx">     log &quot;catlass include=${ABSOLUTE_CATLASS_PATH}&quot;</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">     CUSTOM_OPS_ARRAY=(</div>
@@ -2563,7 +2563,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增注释说明 MC2_OPT 钩子由 mega_moe 触发（当前以注释保留，待 mega_moe 单独接入时启用）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 7aa3d765..52d266e9 100644</div>
+    <div class="diff"><div class="dl meta">index b8e0cc2a..408a4961 100644</div>
 <div class="dl meta">--- a/csrc/CMakeLists.txt</div>
 <div class="dl meta">+++ b/csrc/CMakeLists.txt</div>
 <div class="dl hunk">@@ -126,6 +126,17 @@ if (BUILD_OPEN_PROJECT)</div>
@@ -2602,10 +2602,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 npu_scatter_pa_kv_cache wrapper + ops.def/impl（+33 行，scatter_pa 算子注册）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 5f6b4db2..907f009e 100644</div>
+    <div class="diff"><div class="dl meta">index 27f2451b..a9d4906c 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding.cpp</div>
-<div class="dl hunk">@@ -800,6 +800,30 @@ at::Tensor npu_reshape_and_cache_bnsd(const at::Tensor&amp; hashq,</div>
+<div class="dl hunk">@@ -638,6 +638,30 @@ at::Tensor npu_reshape_and_cache_bnsd(const at::Tensor&amp; hashq,</div>
 <div class="dl ctx">     return hashkCacheOut;</div>
 <div class="dl ctx"> }</div>
 <div class="dl ctx"> </div>
@@ -2636,7 +2636,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> at::Tensor npu_sign_bits_pack(const at::Tensor&amp; input,</div>
 <div class="dl ctx">                                    const int64_t size) {</div>
 <div class="dl ctx">     int64_t ySize = (input.size(0) + 7) / 8;</div>
-<div class="dl hunk">@@ -2557,6 +2581,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl hunk">@@ -2385,6 +2409,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
 <div class="dl ctx">     );</div>
 <div class="dl ctx">     ops.impl(&quot;npu_reshape_and_cache_bnsd&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_reshape_and_cache_bnsd);</div>
 <div class="dl ctx"> </div>
@@ -2670,10 +2670,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 npu_scatter_pa_kv_cache_meta + Meta ops.impl，并修复 Tensor(a!)/Tensor(b!) alias 约束（返回输入自身而非新建 tensor，适配 FULL_AND_PIECEWISE 图捕获）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 2399b3d3..40439726 100644</div>
+    <div class="diff"><div class="dl meta">index 18f033c5..eacfcefb 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding_meta.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding_meta.cpp</div>
-<div class="dl hunk">@@ -476,6 +476,25 @@ at::Tensor npu_reshape_and_cache_bnsd_meta(const at::Tensor&amp; hashq,</div>
+<div class="dl hunk">@@ -521,6 +521,25 @@ at::Tensor npu_reshape_and_cache_bnsd_meta(const at::Tensor&amp; hashq,</div>
 <div class="dl ctx">     return output;</div>
 <div class="dl ctx"> }</div>
 <div class="dl ctx"> </div>
@@ -2699,7 +2699,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx"> at::Tensor npu_hamming_dist_top_k_meta(const at::Tensor &amp;hashq,</div>
 <div class="dl ctx">                                        const at::Tensor &amp;hashkCache,</div>
-<div class="dl hunk">@@ -1607,6 +1626,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
+<div class="dl hunk">@@ -1670,6 +1689,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
 <div class="dl ctx">     ops.impl(&quot;npu_hamming_dist_top_k&quot;, &amp;vllm_ascend::meta::npu_hamming_dist_top_k_meta);</div>
 <div class="dl ctx">     // reshape_and_cache_bnsd</div>
 <div class="dl ctx">     ops.impl(&quot;npu_reshape_and_cache_bnsd&quot;, &amp;vllm_ascend::meta::npu_reshape_and_cache_bnsd_meta);</div>
@@ -2726,10 +2726,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">A5 上通过 _ensure_custom_ops_loaded 在 get_device_adaptor 时一次性加载 vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）可用；reshape_and_cache 改为直调 torch.ops._C_ascend（+32 行）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 3fc021a8..b5feeba4 100644</div>
+    <div class="diff"><div class="dl meta">index b96762aa..a0b8f1a2 100644</div>
 <div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
 <div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
-<div class="dl hunk">@@ -372,15 +372,40 @@ class BaseDeviceAdaptor:</div>
+<div class="dl hunk">@@ -559,15 +559,40 @@ class BaseDeviceAdaptor:</div>
 <div class="dl ctx">         return x</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
@@ -2773,7 +2773,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             cache_mode=&quot;Norm&quot;,</div>
 <div class="dl ctx">         )</div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -781,6 +806,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl hunk">@@ -1180,6 +1205,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
 <div class="dl ctx"> def get_device_adaptor() -&gt; type[&quot;BaseDeviceAdaptor&quot;]:</div>
 <div class="dl ctx">     ascend_device_type = get_ascend_device_type()</div>
 <div class="dl ctx">     if ascend_device_type == AscendDeviceType.A5:</div>
@@ -16805,7 +16805,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+    unittest.main()</div></div>
   </details>
 </section>
-    <footer>本页由 <code>git diff upstream/main alpha</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
+    <footer>本页由 <code>git diff upstream/main nightly</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
   </main>
 </div>
 <script>
