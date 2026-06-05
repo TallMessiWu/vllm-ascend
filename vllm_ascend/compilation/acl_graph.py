@@ -244,19 +244,6 @@ def update_full_graph_params(
         draft_attn_metadatas,
     )
 
-    from vllm_ascend.ops.gdn import update_conv1d_graph_params
-
-    # For GDN Attention: AscendC operate(conv1d update) update graph params
-    # No patch can be loaded, update method call is temporarily placed here
-    update_conv1d_graph_params(
-        update_stream,
-        forward_context,
-        num_tokens,
-        vllm_config,
-        _EXTRA_CTX.is_draft_model,
-        draft_attn_metadatas,
-    )
-
 
 @dataclass
 class GraphParams:
