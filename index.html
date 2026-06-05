@@ -66,6 +66,7 @@ main { padding:18px 22px 80px; min-width:0; }
 .dl.hunk { color:var(--hunk); background:rgba(56,139,253,.1); }
 .dl.meta { color:var(--muted); }
 .dl.ctx { color:var(--ctx); }
+.dl.fold { color:var(--muted); background:rgba(139,148,158,.08); font-style:italic; opacity:.85; }
 .hidden { display:none !important; }
 footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px solid var(--border); }
 @media (max-width:900px) { .layout { grid-template-columns:1fr; } aside { position:static; height:auto; } }
@@ -75,32 +76,33 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>b67d0b4e</b>　·　本仓分支：<b>nightly</b><br>
+    上游基线：<b>upstream/main</b> @ <b>bf9fd6da</b>　·　本仓分支：<b>alpha</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片直接展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff upstream/main nightly</code>），即"本仓相对上游改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子 → GDN A5 适配</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff upstream/main alpha</code>）。<b>当同一文件被多个类目改动时（如 device_op.py / gdn.py），每张卡片只展示属于本类目的增删行，其余以「⋯ 省略 N 行 ⋯」折叠并指向对应卡片。</b><br>
     其中 <b>11</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9310" target="_blank" rel="noopener">PR #9310</a>（[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>其中 <b>1</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener">PR #9715</a>（[Feature]Fix the scheduler runtime error caused by version compatibility issues.，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
   <div class="stats">
-    <div class="stat-card"><div class="n">62</div><div class="l">变更文件</div></div>
-    <div class="stat-card"><div class="n">5</div><div class="l">分类</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13342</div><div class="l">新增行</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-666</div><div class="l">删除行</div></div>
+    <div class="stat-card"><div class="n">63</div><div class="l">变更文件</div></div>
+    <div class="stat-card"><div class="n">6</div><div class="l">分类</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13362</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-668</div><div class="l">删除行</div></div>
   </div>
 </header>
 <div class="layout">
   <aside>
     <h2>文件结构</h2>
-    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_a2_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_a2_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_a2_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">ut/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_attention_a2_test_attention_v1_py__pr_9310" class="tname">test_attention_v1.py</a></li></ul></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_a2_test_gdn_chunk_meta_py__pr_9310" class="tname">test_gdn_chunk_meta.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_ops_test_gdn_attn_builder_py__pr_9310" class="tname">test_gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="dir"><span class="tname">a2/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_tests_ut_spec_decode_a2_test_eagle_proposer_py__pr_9310" class="tname">test_eagle_proposer.py</a></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops gdn_a5"><span class="dot" style="background:#06b6d4"></span><span class="dot" style="background:#10b981"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">triton/</span><ul><li class="dir"><span class="tname">fla/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_triton_fla_chunk_py__pr_9310" class="tname">chunk.py</a></li></ul></li></ul></li><li class="file" data-cats="pr_9310 gdn_a5"><span class="dot" style="background:#9333ea"></span><span class="dot" style="background:#10b981"></span><a href="#f_vllm_ascend_ops_gdn_py__pr_9310" class="tname">gdn.py</a></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_ops_gdn_attn_builder_py__pr_9310" class="tname">gdn_attn_builder.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_worker_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_patch_init_py__pr_9310" class="tname">__init__.py</a></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li><li class="dir"><span class="tname">spec_decode/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_spec_decode_eagle_proposer_py__pr_9310" class="tname">eagle_proposer.py</a></li></ul></li><li class="dir"><span class="tname">worker/</span><ul><li class="file" data-cats="pr_9310"><span class="dot" style="background:#9333ea"></span><a href="#f_vllm_ascend_worker_model_runner_v1_py__pr_9310" class="tname">model_runner_v1.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_gitignore__deps" class="tname">.gitignore</a></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
   </aside>
   <main>
     <div class="toolbar">
-      <button class="cat-btn active" data-cat="all">全部 (62)</button>
+      <button class="cat-btn active" data-cat="all">全部 (63)</button>
 <button class="cat-btn" data-cat="pr_9310" style="--c:#9333ea"><span class="dot" style="background:#9333ea"></span>来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode (11)</button>
 <button class="cat-btn" data-cat="pr_9715" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁） (1)</button>
-<button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (1)</button>
+<button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (2)</button>
 <button class="cat-btn" data-cat="dev" style="--c:#f59e0b"><span class="dot" style="background:#f59e0b"></span>私仓自有 · 开发调试 (1)</button>
 <button class="cat-btn" data-cat="ops" style="--c:#06b6d4"><span class="dot" style="background:#06b6d4"></span>私仓自有 · 自定义算子（scatter_pa_kv_cache） (48)</button>
+<button class="cat-btn" data-cat="gdn_a5" style="--c:#10b981"><span class="dot" style="background:#10b981"></span>私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton） (2)</button>
       <span class="spacer"></span>
       <button class="mini" id="expand">展开全部</button>
       <button class="mini" id="collapse">折叠全部</button>
@@ -576,10 +578,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <span class="stat add">+6</span><span class="stat del">-4</span>
     </div>
   </div>
-  <div class="desc">新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖，改用正式 ops 模块</div>
+  <div class="desc">新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖、改用正式 ops 模块（import AttentionBackend / AscendGDNAttentionBackend，统一 fallback 错误信息）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index c2234176..ee686de2 100644</div>
+    <div class="diff"><div class="dl meta">index c2234176..67eb4ff4 100644</div>
 <div class="dl meta">--- a/vllm_ascend/ops/gdn.py</div>
 <div class="dl meta">+++ b/vllm_ascend/ops/gdn.py</div>
 <div class="dl hunk">@@ -33,7 +33,7 @@ else:</div>
@@ -591,15 +593,16 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata</div>
 <div class="dl ctx"> from vllm.v1.attention.backends.utils import PAD_SLOT_ID</div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -43,6 +43,7 @@ from vllm_ascend.compilation.acl_graph import (</div>
+<div class="dl hunk">@@ -43,6 +43,8 @@ from vllm_ascend.compilation.acl_graph import (</div>
 <div class="dl ctx">     get_draft_graph_params,</div>
 <div class="dl ctx">     get_graph_params,</div>
 <div class="dl ctx"> )</div>
+<div class="dl fold">⋯ 省略 1 行（属于：私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton），见对应卡片）⋯</div>
 <div class="dl add">+from vllm_ascend.ops.gdn_attn_builder import AscendGDNAttentionBackend</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat</div>
 <div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import clear_ssm_states</div>
-<div class="dl hunk">@@ -59,9 +60,7 @@ def to_int64_tuple(tensor: torch.Tensor) -&gt; tuple[int, ...]:</div>
+<div class="dl hunk">@@ -59,9 +61,7 @@ def to_int64_tuple(tensor: torch.Tensor) -&gt; tuple[int, ...]:</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> def _check_and_get_host_args(attn_metadata, field_name: str, sub_field_name: str):</div>
 <div class="dl ctx">     if (fallback_meta := getattr(attn_metadata, field_name, None)) is None:</div>
@@ -610,7 +613,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">     return fallback_meta</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -250,6 +249,9 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):</div>
+<div class="dl hunk">@@ -250,6 +250,9 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):</div>
@@ -1544,7 +1547,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">更新补丁注释文档：patch_gdn_attn 说明替换为 patch_module（torch.argsort 补丁 + gdn_attn_builder 覆盖），标注相关 PR 与未来移除计划</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 2408abd0..31412071 100644</div>
+    <div class="diff"><div class="dl meta">index 2d29f21b..244767b8 100644</div>
 <div class="dl meta">--- a/vllm_ascend/patch/__init__.py</div>
 <div class="dl meta">+++ b/vllm_ascend/patch/__init__.py</div>
 <div class="dl hunk">@@ -449,27 +449,28 @@</div>
@@ -2482,6 +2485,39 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   </details>
 </section>
 
+<section class="card" id="f_gitignore__deps" data-cats="deps">
+  <div class="card-h" style="--c:#7c3aed">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#7c3aed">私仓自有 · 依赖与构建</span>
+      
+      
+      <code class="path">.gitignore</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+6</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">新增忽略项：私仓本地配置（CLAUDE.local.md、.claude/settings.local.json）与构建产物目录（csrc/build_out/），避免本地专属文件被提交</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index c121b388..f736b118 100644</div>
+<div class="dl meta">--- a/.gitignore</div>
+<div class="dl meta">+++ b/.gitignore</div>
+<div class="dl hunk">@@ -219,4 +219,9 @@ csrc/third_party/</div>
+<div class="dl ctx"> # claude code skills</div>
+<div class="dl ctx"> .claude/skills/*</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-.codegraph/</div>
+<div class="dl ctx">\ No newline at end of file</div>
+<div class="dl add">+.codegraph/</div>
+<div class="dl add">+</div>
+<div class="dl add">+# 本地配置 / 私仓专属（不纳入版本控制）</div>
+<div class="dl add">+.claude/settings.local.json</div>
+<div class="dl add">+CLAUDE.local.md</div>
+<div class="dl add">+csrc/build_out/</div></div>
+  </details>
+</section>
+
 <section class="card" id="f_vllm_ascend_profiler_torch_npu_profiler_py__dev" data-cats="dev">
   <div class="card-h" style="--c:#f59e0b">
     <div class="card-h-left">
@@ -2720,19 +2756,20 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">vllm_ascend/device/device_op.py</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+29</span><span class="stat del">-3</span>
+      <span class="stat add">+28</span><span class="stat del">-3</span>
     </div>
   </div>
-  <div class="desc">A5 上通过 _ensure_custom_ops_loaded 在 get_device_adaptor 时一次性加载 vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）可用；reshape_and_cache 改为直调 torch.ops._C_ascend（+32 行）</div>
+  <div class="desc">scatter_pa 算子接入枢纽（私仓自有）：① 新增 _ensure_custom_ops_loaded，在 get_device_adaptor 取 A5 适配器时一次性 bootstrap 并 import vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）注册可用；② reshape_and_cache 改走 torch.ops._C_ascend.npu_scatter_pa_kv_cache 并按 alias 约束调整入参顺序</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index b96762aa..a0b8f1a2 100644</div>
+    <div class="diff"><div class="dl meta">index b96762aa..aeac4018 100644</div>
 <div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
 <div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
-<div class="dl hunk">@@ -559,15 +559,40 @@ class BaseDeviceAdaptor:</div>
+<div class="dl hunk">@@ -558,16 +559,45 @@ class BaseDeviceAdaptor:</div>
+<div class="dl ctx">         x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, weight, variance_epsilon)</div>
 <div class="dl ctx">         return x</div>
 <div class="dl ctx"> </div>
-<div class="dl ctx"> </div>
+<div class="dl fold">⋯ 省略 5 行（属于：私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton），见对应卡片）⋯</div>
 <div class="dl add">+_CUSTOM_OPS_LOADED = False</div>
 <div class="dl add">+</div>
 <div class="dl add">+</div>
@@ -2757,7 +2794,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+</div>
 <div class="dl add">+    _CUSTOM_OPS_LOADED = True</div>
 <div class="dl add">+</div>
-<div class="dl add">+</div>
+<div class="dl ctx"> </div>
 <div class="dl ctx"> class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
 <div class="dl ctx">     @classmethod</div>
 <div class="dl ctx">     def reshape_and_cache(cls, key, value, key_cache, value_cache, slot_mapping):</div>
@@ -2773,7 +2810,12 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">             cache_mode=&quot;Norm&quot;,</div>
 <div class="dl ctx">         )</div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -1180,6 +1205,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl hunk">@@ -1176,10 +1206,18 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">         x, _ = torch_npu.npu_rms_norm(x, 1.0 + weight, variance_epsilon)</div>
+<div class="dl ctx">         return x</div>
+<div class="dl ctx"> </div>
+<div class="dl fold">⋯ 省略 7 行（属于：私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton），见对应卡片）⋯</div>
+<div class="dl ctx"> </div>
 <div class="dl ctx"> def get_device_adaptor() -&gt; type[&quot;BaseDeviceAdaptor&quot;]:</div>
 <div class="dl ctx">     ascend_device_type = get_ascend_device_type()</div>
 <div class="dl ctx">     if ascend_device_type == AscendDeviceType.A5:</div>
@@ -16805,7 +16847,118 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+    unittest.main()</div></div>
   </details>
 </section>
-    <footer>本页由 <code>git diff upstream/main nightly</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
+
+<section class="card" id="f_vllm_ascend_device_device_op_py__gdn_a5" data-cats="gdn_a5">
+  <div class="card-h" style="--c:#10b981">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#10b981">私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton）</span>
+      
+      
+      <code class="path">vllm_ascend/device/device_op.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+13</span><span class="stat del">-0</span>
+    </div>
+  </div>
+  <div class="desc">fused_gdn_gating 适配方法（对应提交 0971c471）：新增 BaseDeviceAdaptor.fused_gdn_gating（A2/A3 调 npu_fused_gdn_gating 算子）与 A5DeviceAdaptor.fused_gdn_gating（A5 因 PR #9601 未给 soc 260 注册该算子而回退 Triton fused_gdn_gating_patch）</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index b96762aa..aeac4018 100644</div>
+<div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
+<div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
+<div class="dl hunk">@@ -26,6 +26,7 @@ from vllm_ascend.device.mxfp_compat import (</div>
+<div class="dl ctx"> )</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd_kernel</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.solve_tril import solve_tril_16x16_kernel</div>
+<div class="dl add">+from vllm_ascend.ops.triton.fused_gdn_gating import fused_gdn_gating_patch</div>
+<div class="dl ctx"> from vllm_ascend.quantization.quant_type import QuantType</div>
+<div class="dl ctx"> from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type</div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -558,16 +559,45 @@ class BaseDeviceAdaptor:</div>
+<div class="dl ctx">         x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, weight, variance_epsilon)</div>
+<div class="dl ctx">         return x</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def fused_gdn_gating(A_log, a, b, dt_bias):</div>
+<div class="dl add">+        return torch.ops._C_ascend.npu_fused_gdn_gating(A_log, a, b, dt_bias.to(torch.float32))</div>
+<div class="dl add">+</div>
+<div class="dl add">+</div>
+<div class="dl fold">⋯ 省略 24 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">     @classmethod</div>
+<div class="dl ctx">     def reshape_and_cache(cls, key, value, key_cache, value_cache, slot_mapping):</div>
+<div class="dl fold">⋯ 省略 2 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx">             key=key.contiguous(),</div>
+<div class="dl fold">⋯ 省略 1 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx">             key_cache=key_cache,</div>
+<div class="dl fold">⋯ 省略 1 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx">             slot_mapping=slot_mapping.contiguous(),</div>
+<div class="dl fold">⋯ 省略 2 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx">             cache_mode=&quot;Norm&quot;,</div>
+<div class="dl ctx">         )</div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -1176,10 +1206,18 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):</div>
+<div class="dl ctx">         x, _ = torch_npu.npu_rms_norm(x, 1.0 + weight, variance_epsilon)</div>
+<div class="dl ctx">         return x</div>
+<div class="dl ctx"> </div>
+<div class="dl add">+    @staticmethod</div>
+<div class="dl add">+    def fused_gdn_gating(A_log, a, b, dt_bias):</div>
+<div class="dl add">+        # A5 lacks the npu_fused_gdn_gating custom op (registered only for</div>
+<div class="dl add">+        # ascend910b/ascend910_93 in PR #9601), so fall back to the Triton</div>
+<div class="dl add">+        # kernel, which casts dt_bias to fp32 internally.</div>
+<div class="dl add">+        return fused_gdn_gating_patch(A_log, a, b, dt_bias)</div>
+<div class="dl add">+</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> def get_device_adaptor() -&gt; type[&quot;BaseDeviceAdaptor&quot;]:</div>
+<div class="dl ctx">     ascend_device_type = get_ascend_device_type()</div>
+<div class="dl ctx">     if ascend_device_type == AscendDeviceType.A5:</div>
+<div class="dl fold">⋯ 省略 1 行（属于：私仓自有 · 自定义算子（scatter_pa_kv_cache），见对应卡片）⋯</div>
+<div class="dl ctx">         return A5DeviceAdaptor</div>
+<div class="dl ctx">     return BaseDeviceAdaptor</div>
+<div class="dl ctx"> </div></div>
+  </details>
+</section>
+
+<section class="card" id="f_vllm_ascend_ops_gdn_py__gdn_a5" data-cats="gdn_a5">
+  <div class="card-h" style="--c:#10b981">
+    <div class="card-h-left">
+      <span class="catbadge" style="background:#10b981">私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton）</span>
+      
+      
+      <code class="path">vllm_ascend/ops/gdn.py</code>
+    </div>
+    <div class="card-h-right">
+      <span class="stat add">+2</span><span class="stat del">-1</span>
+    </div>
+  </div>
+  <div class="desc">fused_gdn_gating 回退调用点（对应提交 0971c471）：recurrent attention 的 gating 由 torch.ops._C_ascend.npu_fused_gdn_gating(...) 改为 DeviceOperator.fused_gdn_gating(...)，使 A5 经 device_op 走 Triton 回退</div>
+  <details class="diff-wrap" open>
+    <summary>查看 diff</summary>
+    <div class="diff"><div class="dl meta">index c2234176..67eb4ff4 100644</div>
+<div class="dl meta">--- a/vllm_ascend/ops/gdn.py</div>
+<div class="dl meta">+++ b/vllm_ascend/ops/gdn.py</div>
+<div class="dl hunk">@@ -43,6 +43,8 @@ from vllm_ascend.compilation.acl_graph import (</div>
+<div class="dl ctx">     get_draft_graph_params,</div>
+<div class="dl ctx">     get_graph_params,</div>
+<div class="dl ctx"> )</div>
+<div class="dl add">+from vllm_ascend.device.device_op import DeviceOperator</div>
+<div class="dl fold">⋯ 省略 1 行（属于：来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode，见对应卡片）⋯</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat</div>
+<div class="dl ctx"> from vllm_ascend.ops.triton.fla.utils import clear_ssm_states</div>
+<div class="dl hunk">@@ -617,7 +620,7 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):</div>
+<div class="dl ctx">         query_non_spec, key_non_spec, value_non_spec = self.rearrange_mixed_qkv(mixed_qkv_non_spec)</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">         # 2. Recurrent attention</div>
+<div class="dl del">-        g, beta = torch.ops._C_ascend.npu_fused_gdn_gating(self.A_log, a, b, self.dt_bias.to(torch.float32))</div>
+<div class="dl add">+        g, beta = DeviceOperator.fused_gdn_gating(self.A_log, a, b, self.dt_bias)</div>
+<div class="dl ctx">         if spec_sequence_masks is not None:</div>
+<div class="dl ctx">             if attn_metadata.num_prefills == 0 and attn_metadata.num_decodes == 0:</div>
+<div class="dl ctx">                 g_spec = g</div></div>
+  </details>
+</section>
+    <footer>本页由 <code>git diff upstream/main alpha</code> 自动生成；分类与说明见 tools/gen_fork_divergence_html.py。</footer>
   </main>
 </div>
 <script>

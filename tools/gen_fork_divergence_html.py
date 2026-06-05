@@ -49,12 +49,18 @@ CATEGORIES = OrderedDict(
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
         ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
         ("ops", ("私仓自有 · 自定义算子（scatter_pa_kv_cache）", "#06b6d4")),
+        ("gdn_a5", ("私仓自有 · GDN A5 适配（fused_gdn_gating 回退 Triton）", "#10b981")),
     ]
 )
 
-# 每个变更条目的元数据：(path, category_id, 说明, 是否为新增文件)
-# 注意：同一个 path 可以出现多次（被多个类目/层修改），每条对应一张卡片，
-# 卡片只展示该类目所属层的 diff。
+# 每个变更条目的元数据：(path, category_id, 说明, 是否为新增文件[, match 正则列表])
+# 注意：同一个 path 可以出现多次（被多个类目/层修改），每条对应一张卡片。
+#   - 默认（4 元素）：该文件整份 diff 归此类目，卡片展示完整文件 diff。
+#   - 当一个文件被多个类目改动时（如 device_op.py 同时含 scatter_pa 接线与 fused_gdn_gating
+#     回退），给同一 path 写多条，每条带第 5 元素 `match`（正则字符串列表）。脚本会把该文件
+#     每个改动行（+/-）按正则归到对应类目，未被任何正则命中的行用「双向就近继承」补齐；
+#     渲染时每张卡片只展示属于本类目的增删行，其余行折叠为「⋯ 省略 N 行 ⋯」并指向对应卡片。
+#     （维护约定见 CLAUDE.local.md「维护 index.html 差异分类时的注意事项」。）
 FILES_META = [
     # ============================ 来自 PR #9310 ============================
     (
@@ -75,7 +81,9 @@ FILES_META = [
     ),
     (
         "vllm_ascend/ops/gdn.py",
-        "pr_9310", "新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖，改用正式 ops 模块", False,
+        "pr_9310", "新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖、改用正式 ops 模块（import AttentionBackend / AscendGDNAttentionBackend，统一 fallback 错误信息）", False,
+        [r"AttentionBackend", r"AttentionMetadata", r"AscendGDNAttentionBackend",
+         r"get_attn_backend", r"patched GDN non-spec", r"Ascend GDN fallback path", r"RuntimeError"],
     ),
     (
         "vllm_ascend/ops/gdn_attn_builder.py",
@@ -111,6 +119,10 @@ FILES_META = [
         "requirements.txt",
         "deps", "numpy 锁定 1.26.4；注释掉 torch-npu==2.10.0 与 triton-ascend==3.2.1，避免安装时覆盖已装环境", False,
     ),
+    (
+        ".gitignore",
+        "deps", "新增忽略项：私仓本地配置（CLAUDE.local.md、.claude/settings.local.json）与构建产物目录（csrc/build_out/），避免本地专属文件被提交", False,
+    ),
     # ============================ 私仓自有 · 开发调试 ============================
     (
         "vllm_ascend/profiler/torch_npu_profiler.py",
@@ -137,7 +149,9 @@ FILES_META = [
     # --- Python 侧算子桥接 ---
     (
         "vllm_ascend/device/device_op.py",
-        "ops", "A5 上通过 _ensure_custom_ops_loaded 在 get_device_adaptor 时一次性加载 vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）可用；reshape_and_cache 改为直调 torch.ops._C_ascend（+32 行）", False,
+        "ops", "scatter_pa 算子接入枢纽（私仓自有）：① 新增 _ensure_custom_ops_loaded，在 get_device_adaptor 取 A5 适配器时一次性 bootstrap 并 import vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）注册可用；② reshape_and_cache 改走 torch.ops._C_ascend.npu_scatter_pa_kv_cache 并按 alias 约束调整入参顺序", False,
+        [r"_CUSTOM_OPS_LOADED", r"_ensure_custom_ops_loaded", r"bootstrap_custom_op_env",
+         r"vllm_ascend_C", r"npu_scatter_pa_kv_cache"],
     ),
     # --- scatter_pa_kv_cache 子树：CMake 构建 ---
     (
@@ -318,6 +332,20 @@ FILES_META = [
         "tests/e2e/nightly/single_node/ops/singlecard_ops/test_scatter_pa_kv_cache.py",
         "ops", "单算子 e2e 测试（覆盖 normal/rope/alibi/omni/compress 等 KV cache 场景，132 行）", True,
     ),
+    # ============================ 私仓自有 · GDN A5 适配 ============================
+    # fused_gdn_gating 回退（提交 0971c471）横跨 device_op.py / gdn.py 两个文件，
+    # 但这两个文件主体分别属于 ops（scatter_pa 接线）与 pr_9310，因此这里以 match 正则
+    # 只挑出 fused_gdn_gating 相关的改动行单独成卡（其余行折叠，见对应卡片）。
+    (
+        "vllm_ascend/device/device_op.py",
+        "gdn_a5", "fused_gdn_gating 适配方法（对应提交 0971c471）：新增 BaseDeviceAdaptor.fused_gdn_gating（A2/A3 调 npu_fused_gdn_gating 算子）与 A5DeviceAdaptor.fused_gdn_gating（A5 因 PR #9601 未给 soc 260 注册该算子而回退 Triton fused_gdn_gating_patch）", False,
+        [r"fused_gdn_gating_patch", r"def fused_gdn_gating", r"npu_fused_gdn_gating"],
+    ),
+    (
+        "vllm_ascend/ops/gdn.py",
+        "gdn_a5", "fused_gdn_gating 回退调用点（对应提交 0971c471）：recurrent attention 的 gating 由 torch.ops._C_ascend.npu_fused_gdn_gating(...) 改为 DeviceOperator.fused_gdn_gating(...)，使 A5 经 device_op 走 Triton 回退", False,
+        [r"DeviceOperator", r"npu_fused_gdn_gating"],
+    ),
 ]
 
 # 提前合入的上游 PR：下列文件的改动来自尚未合并进 upstream/main 的 PR，
@@ -368,24 +396,131 @@ def parse_diffs(diff_text: str) -> dict[str, str]:
     return out
 
 
+def _render_diff_line(line: str) -> str:
+    """把单行 diff 渲染为带着色的 HTML。"""
+    esc = html.escape(line)
+    if line.startswith("@@"):
+        cls = "hunk"
+    elif line.startswith("+++") or line.startswith("---"):
+        cls = "meta"
+    elif line.startswith(("index ", "new file", "deleted file", "similarity", "rename ", "old mode", "new mode")):
+        cls = "meta"
+    elif line.startswith("+"):
+        cls = "add"
+    elif line.startswith("-"):
+        cls = "del"
+    else:
+        cls = "ctx"
+    return f'<div class="dl {cls}">{esc or "&nbsp;"}</div>'
+
+
 def render_diff(diff_text: str) -> str:
-    """把单个文件的 diff 渲染为带着色的 HTML 行。"""
-    rows = []
-    for line in diff_text.splitlines():
-        esc = html.escape(line)
-        if line.startswith("@@"):
-            cls = "hunk"
-        elif line.startswith("+++") or line.startswith("---"):
-            cls = "meta"
-        elif line.startswith(("index ", "new file", "deleted file", "similarity", "rename ", "old mode", "new mode")):
-            cls = "meta"
-        elif line.startswith("+"):
-            cls = "add"
-        elif line.startswith("-"):
-            cls = "del"
+    """把单个文件的完整 diff 渲染为带着色的 HTML 行。"""
+    return "\n".join(_render_diff_line(line) for line in diff_text.splitlines())
+
+
+def _is_change_line(ln: str) -> bool:
+    """是否为实际增删行（排除 +++/--- 文件头）。"""
+    return ln[:1] in ("+", "-") and not ln.startswith(("+++", "---"))
+
+
+def parse_hunks(file_diff: str):
+    """切分单文件 diff 为 (header_lines, hunks)；hunk = [hunk_header, [body_lines]]。"""
+    header: list[str] = []
+    hunks: list[list] = []
+    cur = None
+    for ln in file_diff.splitlines():
+        if ln.startswith("@@"):
+            if cur is not None:
+                hunks.append(cur)
+            cur = [ln, []]
+        elif cur is None:
+            header.append(ln)
         else:
-            cls = "ctx"
-        rows.append(f'<div class="dl {cls}">{esc or "&nbsp;"}</div>')
+            cur[1].append(ln)
+    if cur is not None:
+        hunks.append(cur)
+    return header, hunks
+
+
+def assign_owners(hunks, entries):
+    """为每个 hunk 的每个改动行（+/-）判定归属类目。
+
+    entries: [(cat, [compiled_regex, ...]), ...]，按 FILES_META 出现顺序。
+    判定规则：先按正则匹配「行内容（去掉首列 +/-）」，命中第一个 entry 即归之；
+    未命中的改动行用「双向就近继承」——先取本 hunk 内上方最近、再取下方最近的
+    已判定改动行的类目（空行、括号、装饰器等通用行借此跟随相邻代码块）。
+    返回 (owners, unassigned)：owners 与 hunks 平行；unassigned 为始终无法判定的行。
+    """
+    owners = []
+    unassigned: list[str] = []
+    for _hh, body in hunks:
+        row_owner: list = [None] * len(body)
+        for i, ln in enumerate(body):
+            if _is_change_line(ln):
+                content = ln[1:]
+                for cat, regexes in entries:
+                    if any(rx.search(content) for rx in regexes):
+                        row_owner[i] = cat
+                        break
+        for i, ln in enumerate(body):
+            if _is_change_line(ln) and row_owner[i] is None:
+                owner = None
+                for j in range(i - 1, -1, -1):
+                    if _is_change_line(body[j]) and row_owner[j] is not None:
+                        owner = row_owner[j]
+                        break
+                if owner is None:
+                    for j in range(i + 1, len(body)):
+                        if _is_change_line(body[j]) and row_owner[j] is not None:
+                            owner = row_owner[j]
+                            break
+                row_owner[i] = owner
+                if owner is None:
+                    unassigned.append(ln)
+        owners.append(row_owner)
+    return owners, unassigned
+
+
+def owner_counts(hunks, owners, this_cat) -> tuple[int, int]:
+    """统计归属 this_cat 的增删行数。"""
+    a = d = 0
+    for (_hh, body), row_owner in zip(hunks, owners):
+        for i, ln in enumerate(body):
+            if row_owner[i] == this_cat:
+                if ln.startswith("+"):
+                    a += 1
+                elif ln.startswith("-"):
+                    d += 1
+    return a, d
+
+
+def render_split_diff(header, hunks, owners, this_cat, cat_titles) -> str:
+    """渲染某类目专属的 diff：只展示属于 this_cat 的增删行；不属于本类目的连续改动行
+    折叠为一行「⋯ 省略 N 行 ⋯」并标注其所属类目。仅含本类目改动行的 hunk 才输出。"""
+    rows = [_render_diff_line(ln) for ln in header]
+    for (hh, body), row_owner in zip(hunks, owners):
+        if not any(row_owner[i] == this_cat for i in range(len(body)) if _is_change_line(body[i])):
+            continue
+        rows.append(_render_diff_line(hh))
+        i = 0
+        while i < len(body):
+            ln = body[i]
+            if _is_change_line(ln) and row_owner[i] != this_cat:
+                j = i
+                others = set()
+                while j < len(body) and _is_change_line(body[j]) and row_owner[j] != this_cat:
+                    if row_owner[j]:
+                        others.add(row_owner[j])
+                    j += 1
+                names = "、".join(cat_titles.get(c, c) for c in sorted(others)) or "其它类目"
+                rows.append(
+                    f'<div class="dl fold">⋯ 省略 {j - i} 行（属于：{html.escape(names)}，见对应卡片）⋯</div>'
+                )
+                i = j
+            else:
+                rows.append(_render_diff_line(ln))
+                i += 1
     return "\n".join(rows)
 
 
@@ -431,11 +566,10 @@ def main() -> int:
     base_sha = run(["git", "rev-parse", "--short", BASE]).strip()
 
     # ========== 相对上游的当前差异（git diff upstream/main HEAD）==========
-    # 每张卡片直接展示该文件相对 upstream/main 的当前差异（按文件切分）。
-    # 此前用硬编码历史 commit 计算「分层 diff」，但每次同步 upstream 都可能因上游
-    # 重组（文件改名/挪目录）导致历史路径与当前路径对不上而失效；FILES_META 内
-    # 每个文件均只属于一个类目（无跨类目重复），故按文件取「当前完整差异」即可
-    # 准确表达「本仓相对上游改了什么」，且天然适配上游重组、不再依赖历史 commit。
+    # 每张卡片展示该文件相对 upstream/main 的当前差异（按文件切分）。按文件取「当前完整
+    # 差异」即可准确表达「本仓相对上游改了什么」，天然适配上游重组（改名/挪目录），不依赖
+    # 历史 commit。一个文件若被多个类目改动（FILES_META 中同一 path 多条且带 match 正则），
+    # 则按行归类、每张卡片只展示属于本类目的增删行（见下方 split_cache）。
     full_diff_text = run(["git", "diff", BASE, HEAD])
     full_diffs = parse_diffs(full_diff_text)
     full_numstat = run(["git", "diff", "--numstat", BASE, HEAD])
@@ -445,11 +579,33 @@ def main() -> int:
         if len(cols) == 3:
             full_ns[cols[2]] = (cols[0], cols[1])
 
+    # 需要「按行拆分到多个类目」的文件：path -> [(cat, [compiled regex]), ...]
+    path_match_entries: dict[str, list] = {}
+    for item in FILES_META:
+        if len(item) > 4 and item[4]:
+            path_match_entries.setdefault(item[0], []).append(
+                (item[1], [re.compile(p) for p in item[4]])
+            )
+    # 预解析这些文件的 hunks 与每个改动行的类目归属（含未归类告警）
+    split_cache: dict[str, tuple] = {}
+    for path, entries in path_match_entries.items():
+        header, hunks = parse_hunks(full_diffs.get(path, ""))
+        owners, unassigned = assign_owners(hunks, entries)
+        if unassigned:
+            print(
+                f"⚠ {path}: {len(unassigned)} 个改动行未能归类，请补充 FILES_META 的 match 正则：",
+                file=sys.stderr,
+            )
+            for u in unassigned:
+                print(f"    {u}", file=sys.stderr)
+        split_cache[path] = (header, hunks, owners)
+
     # 唯一文件路径（去重，保持出现顺序）及其所属类别列表 / 首张卡片锚点
     unique_paths: list[str] = []
     path_cats: dict[str, list[str]] = {}
     path_anchor: dict[str, str] = {}
-    for path, cat, _desc, _new in FILES_META:
+    for item in FILES_META:
+        path, cat = item[0], item[1]
         if path not in path_cats:
             path_cats[path] = []
             unique_paths.append(path)
@@ -472,8 +628,11 @@ def main() -> int:
 
     # 分类计数（按条目数，同一文件在多个类别各计一次）
     cat_counts = {cid: 0 for cid in CATEGORIES}
-    for _path, cat, _desc, _new in FILES_META:
-        cat_counts[cat] += 1
+    for item in FILES_META:
+        cat_counts[item[1]] += 1
+
+    # 类目短标题映射（用于折叠行标注「省略 N 行属于：xxx」）
+    cat_title_map = {cid: CATEGORIES[cid][0] for cid in CATEGORIES}
 
     # 工具栏分类按钮
     cat_buttons = ['<button class="cat-btn active" data-cat="all">全部 ({})</button>'.format(len(unique_paths))]
@@ -486,13 +645,21 @@ def main() -> int:
     # 文件卡片（按类别顺序，再按 FILES_META 内出现顺序）
     cards = []
     for cid in CATEGORIES:
-        for path, cat, desc, is_new in FILES_META:
+        for item in FILES_META:
+            path, cat, desc, is_new = item[0], item[1], item[2], item[3]
             if cat != cid:
                 continue
+            match = item[4] if len(item) > 4 else None
             title, color = CATEGORIES[cid]
-            # 展示该文件相对 upstream/main 的当前差异
-            a, d = full_ns.get(path, ("-", "-"))
-            dtext = full_diffs.get(path, "（该文件相对上游无差异 / 已收敛）")
+            # 展示该文件相对 upstream/main 的当前差异；多类目文件只展示本类目的增删行
+            if match and path in split_cache:
+                header, hunks, owners = split_cache[path]
+                ai, di = owner_counts(hunks, owners, cid)
+                a, d = str(ai), str(di)
+                diff_html = render_split_diff(header, hunks, owners, cid, cat_title_map)
+            else:
+                a, d = full_ns.get(path, ("-", "-"))
+                diff_html = render_diff(full_diffs.get(path, "（该文件相对上游无差异 / 已收敛）"))
             new_badge = '<span class="newtag">新增</span>' if is_new else ""
             pr = CAT_PR.get(cid)
             pr_badge = ""
@@ -519,7 +686,7 @@ def main() -> int:
   <div class="desc">{html.escape(desc)}</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff">{render_diff(dtext)}</div>
+    <div class="diff">{diff_html}</div>
   </details>
 </section>'''
             )
@@ -529,7 +696,7 @@ def main() -> int:
     pr_notes = []
     for pr in PRS:
         pr_num = pr["url"].rsplit("/", 1)[-1]
-        n_files = sum(1 for _p, c, _d, _n in FILES_META if c == pr["category"])
+        n_files = sum(1 for it in FILES_META if it[1] == pr["category"])
         pr_notes.append(
             f'其中 <b>{n_files}</b> 条改动来自上游 '
             f'<a href="{pr["url"]}" target="_blank" rel="noopener">PR #{pr_num}</a>'
@@ -606,6 +773,7 @@ main {{ padding:18px 22px 80px; min-width:0; }}
 .dl.hunk {{ color:var(--hunk); background:rgba(56,139,253,.1); }}
 .dl.meta {{ color:var(--muted); }}
 .dl.ctx {{ color:var(--ctx); }}
+.dl.fold {{ color:var(--muted); background:rgba(139,148,158,.08); font-style:italic; opacity:.85; }}
 .hidden {{ display:none !important; }}
 footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px solid var(--border); }}
 @media (max-width:900px) {{ .layout {{ grid-template-columns:1fr; }} aside {{ position:static; height:auto; }} }}
@@ -617,7 +785,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片直接展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>），即"本仓相对上游改了什么"。<br>
+    分层说明：本仓由 <b>upstream/main → 私仓自有 → PR #9310 → PR #9715 → scatter_pa_kv_cache 算子 → GDN A5 适配</b> 逐层叠加而成（PR #9382 已合入上游，提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>）。<b>当同一文件被多个类目改动时（如 device_op.py / gdn.py），每张卡片只展示属于本类目的增删行，其余以「⋯ 省略 N 行 ⋯」折叠并指向对应卡片。</b><br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
