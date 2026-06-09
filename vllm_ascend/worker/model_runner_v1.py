@@ -2243,6 +2243,36 @@ class NPUModelRunner(GPUModelRunner):
             )
             self._copy_draft_token_ids_to_cpu(scheduler_output)
 
+        # NOTE: For the padded drafter batch path (EAGLE/MTP/draft-model),
+        # the draft model consumes ``sampler_output.sampled_token_ids`` directly
+        # from the device and does NOT depend on ``_bookkeeping_sync`` output
+        # (the valid-sampled-token-count copy now lives inside
+        # ``propose_draft_token_ids``). We therefore dispatch it BEFORE
+        # bookkeeping so the draft kernels overlap with the host-side
+        # bookkeeping (D2H copies + token_ids_cpu updates), eliminating the
+        # bubble between target-model sampling and the draft model. This matches
+        # upstream vLLM ``gpu_model_runner``. ``use_padded_batch`` is computed
+        # once here and reused after bookkeeping for the non-padded (e.g. ngram
+        # CPU) path below.
+        use_padded_batch = False
+        if self.speculative_config:
+            use_padded_batch = (
+                self.speculative_config
+                and (
+                    self.speculative_config.use_eagle()
+                    or self.speculative_config.uses_draft_model()
+                    or self.speculative_config.uses_extract_hidden_states()
+                    or self.speculative_config.use_ngram_gpu()
+                )
+                and not self.speculative_config.disable_padded_drafter_batch
+            )
+
+        with record_function_or_nullcontext("draft_token"):
+            if self.speculative_config and use_padded_batch:
+                # EAGLE speculative decoding can use the GPU sampled tokens
+                # as inputs, and does not need to wait for bookkeeping to finish.
+                propose_draft_token_ids(sampler_output.sampled_token_ids)
+
         (
             logprobs_lists,
             valid_sampled_token_ids,
@@ -2260,25 +2290,10 @@ class NPUModelRunner(GPUModelRunner):
         )
 
         with record_function_or_nullcontext("draft_token"):
-            if self.speculative_config:
-                use_padded_batch = (
-                    self.speculative_config
-                    and (
-                        self.speculative_config.use_eagle()
-                        or self.speculative_config.uses_draft_model()
-                        or self.speculative_config.uses_extract_hidden_states()
-                        or self.speculative_config.use_ngram_gpu()
-                    )
-                    and not self.speculative_config.disable_padded_drafter_batch
-                )
-                if use_padded_batch:
-                    # EAGLE speculative decoding can use the GPU sampled tokens
-                    # as inputs, and does not need to wait for bookkeeping to finish.
-                    propose_draft_token_ids(sampler_output.sampled_token_ids)
-                if self.speculative_config and not use_padded_batch:
-                    # ngram and other speculative decoding methods use the sampled
-                    # tokens on the CPU, so they are run after bookkeeping.
-                    propose_draft_token_ids(valid_sampled_token_ids)
+            if self.speculative_config and not use_padded_batch:
+                # ngram and other speculative decoding methods use the sampled
+                # tokens on the CPU, so they are run after bookkeeping.
+                propose_draft_token_ids(valid_sampled_token_ids)
 
             # vLLM v0.18 defers KV connector finalization during target-model
             # forward when speculative decoding is enabled. Finalize here after
