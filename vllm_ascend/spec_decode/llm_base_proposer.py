@@ -924,6 +924,39 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         )
         return next_token + bias
 
+    def _log_mtp_step(self, step, query_len_real, query_len_padded, attn_md_entry):
+        """[DEBUG] 打印单个 MTP 步的 query_len 与 seq_len。
+
+        - query_len(real)：本步真正参与计算的 query token 数
+          （step 0 = 首 forward 的真实 token 数 num_tokens；
+           后续 draft 步 = 请求数 batch_size，每请求各 1 个新 token）。
+        - query_len(padded/graph)：padding 到 graph size 后实际喂进图的长度。
+        - seq_len：每请求的上下文/KV 长度（从该步 attn_metadata.seq_lens 取），
+          这是真正意义上的「seq_len」，随步数 +1、随轮次累积增长。
+        仅用于 debug 分支，会触发 D2H 同步读取 seq_lens。
+        """
+        seq_lens_preview = "n/a"
+        num_reqs = "n/a"
+        try:
+            if attn_md_entry:
+                md = next(iter(attn_md_entry.values()))
+                sl = getattr(md, "seq_lens", None)
+                if sl is not None:
+                    num_reqs = int(sl.shape[0])
+                    seq_lens_preview = sl[:8].detach().cpu().tolist()
+        except Exception as e:  # noqa: BLE001
+            seq_lens_preview = f"<err: {e}>"
+        logger.info(
+            "[MTP-DBG] method=%s step=%d query_len(real)=%s query_len(padded/graph)=%s "
+            "num_reqs=%s seq_lens[:8]=%s",
+            self.method,
+            step,
+            query_len_real,
+            query_len_padded,
+            num_reqs,
+            seq_lens_preview,
+        )
+
     def _run_merged_draft(
         self,
         num_input_tokens,
@@ -957,6 +990,12 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 if self.method == "mtp":
                     model_kwargs["positions"] = model_positions
 
+        self._log_mtp_step(
+            step=0,
+            query_len_real=num_tokens,
+            query_len_padded=num_input_tokens,
+            attn_md_entry=multi_steps_attn_metadata[0] if multi_steps_attn_metadata else None,
+        )
         ret_hidden_states = self.model(**model_kwargs)
         if not self.model_returns_tuple():
             last_hidden_states = ret_hidden_states
@@ -1072,6 +1111,13 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             forward_context = get_forward_context()
             if forward_context is not None:
                 forward_context.moe_layer_index = 0
+
+            self._log_mtp_step(
+                step=draft_step + 1,
+                query_len_real=batch_size,
+                query_len_padded=input_batch_size,
+                attn_md_entry=multi_steps_attn_metadata[draft_step + 1] if multi_steps_attn_metadata else None,
+            )
 
             # Update the inputs.
             # cast to int32 is crucial when eagle model is compiled.
