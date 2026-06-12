@@ -312,20 +312,28 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
 
         actual_seq_lengths_q = query_start_loc_cpu[1:].tolist()
         seq_lens_list = seq_lens.tolist()
-        # When flashcomm1/SP (or cudagraph) padding is active, the model runner
-        # inserts a dummy padding request into query_start_loc to satisfy the
-        # FIA TND-layout constraint (sum of q lengths == hidden_states.shape[0]).
-        # The query_start_loc buffer is sized `max_num_reqs + 2` to hold it, but
-        # the seq_lens buffer is only `max_num_reqs`, so when the batch is full
-        # the padded request overflows and `seq_lens[:num_reqs_padded]` silently
-        # truncates. That leaves `actual_seq_lengths_kv` (seq_lens_list) shorter
-        # than the q-derived batchSize and makes FIA fail with error 561002:
-        # "size of actualSeqLengthsKv is not equal to the batchSize".
-        # Pad the KV lengths to match. The dummy request reads from block 0
-        # (block_table is zero-filled for padded reqs) and its output is
-        # discarded, so any valid positive length works.
-        if len(seq_lens_list) < len(actual_seq_lengths_q):
-            seq_lens_list = seq_lens_list + [1] * (len(actual_seq_lengths_q) - len(seq_lens_list))
+        # flashcomm1/SP (or cudagraph) padding makes the model runner insert a
+        # dummy padding request into query_start_loc to satisfy the FIA TND-layout
+        # constraint (sum of q lengths == hidden_states.shape[0]), bumping the
+        # q-derived batchSize by one. The query_start_loc buffer is sized
+        # `max_num_reqs + 2` to hold it, but the seq_lens and block_table buffers
+        # are only `max_num_reqs`, so when the batch is full the padded request
+        # overflows and `[:num_reqs_padded]` silently truncates them. FIA then
+        # fails (error 561002) checking, in order, the `actualSeqLengthsKv` length
+        # and then the block_table row count against batchSize. Pad both to match:
+        # the dummy request points at block 0 and its output is discarded, so any
+        # valid positive KV length / zero block row works.
+        num_reqs_fia = len(actual_seq_lengths_q)
+        if len(seq_lens_list) < num_reqs_fia:
+            seq_lens_list = seq_lens_list + [1] * (num_reqs_fia - len(seq_lens_list))
+        if block_table is not None and block_table.shape[0] < num_reqs_fia:
+            block_table = torch.cat(
+                [
+                    block_table,
+                    block_table.new_zeros((num_reqs_fia - block_table.shape[0], block_table.shape[1])),
+                ],
+                dim=0,
+            )
 
         attn_metadata = AscendMetadata(
             num_actual_tokens=num_actual_tokens,
