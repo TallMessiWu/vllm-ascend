@@ -46,7 +46,6 @@ CATEGORIES = OrderedDict(
     [
         ("pr_9310", ("来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode", "#9333ea")),
         ("pr_9715", ("来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）", "#db61a2")),
-        ("pr_10205", ("来自 PR #10205 · 修复 MTP async spec decode 的 valid_sampled_token_count 拷贝同步", "#db61a2")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
         ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
         ("ops", ("私仓自有 · 自定义算子（scatter_pa_kv_cache）", "#06b6d4")),
@@ -56,8 +55,8 @@ CATEGORIES = OrderedDict(
 # 每个变更条目的元数据：(path, category_id, 说明, 是否为新增文件[, match 正则列表])
 # 注意：同一个 path 可以出现多次（被多个类目/层修改），每条对应一张卡片。
 #   - 默认（4 元素）：该文件整份 diff 归此类目，卡片展示完整文件 diff。
-#   - 当一个文件被多个类目改动时（如 device_op.py 同时含 scatter_pa 接线与 fused_gdn_gating
-#     回退），给同一 path 写多条，每条带第 5 元素 `match`（正则字符串列表）。脚本会把该文件
+#   - 当一个文件被多个类目改动时（同一 path 的改动横跨多个功能组），给同一 path 写多条，
+#     每条带第 5 元素 `match`（正则字符串列表）。脚本会把该文件
 #     每个改动行（+/-）按正则归到对应类目，未被任何正则命中的行用「双向就近继承」补齐；
 #     渲染时每张卡片只展示属于本类目的增删行，其余行折叠为「⋯ 省略 N 行 ⋯」并指向对应卡片。
 #     （维护约定见 CLAUDE.local.md「维护 index.html 差异分类时的注意事项」。）
@@ -106,21 +105,11 @@ FILES_META = [
     (
         "vllm_ascend/worker/model_runner_v1.py",
         "pr_9310", "异步 spec decode 路径优化：将 num_computed_tokens_cpu_tensor→device 拷贝提前复用（cpu_values 提升至 use_async_spec_decode 入口），避免重复 H2D 拷贝", False,
-        [r"cpu_values", r"num_computed_tokens_cpu_tensor", r"if self\.use_async_spec_decode:", r"device=self\.device"],
     ),
     # ============================ 来自 PR #9715 ============================
     (
         "vllm_ascend/patch/platform/patch_balance_schedule.py",
         "pr_9715", "精简 balance scheduler 补丁：删去随上游已收敛的大段重复 Scheduler 实现，仅保留版本兼容性修复所需的最小改动，消除 scheduler 运行时错误（+44/-621）", False,
-    ),
-    # ============================ 来自 PR #10205 ============================
-    # model_runner_v1.py 同时被 pr_9310（cpu_values 提前复用）与 pr_10205（MTP 拷贝同步修复）
-    # 改动，故此处以 match 正则只挑出 pr_10205 相关的改动行单独成卡（其余行折叠，见 pr_9310 卡片）。
-    (
-        "vllm_ascend/worker/model_runner_v1.py",
-        "pr_10205", "修复 MTP async spec decode 的 valid_sampled_token_count 拷贝同步：__init__ 时按 int64 dtype 重建 valid_sampled_token_count_cpu；valid_sampled_token_count_gpu 判空加 type: ignore[has-type] 注解；_copy_valid_sampled_token_count 调用移至 discard 处理之后，避免提前同步", False,
-        [r"type: ignore\[has-type\]", r"valid_sampled_token_count", r"use_async_scheduling",
-         r"pin_memory", r'device="cpu"', r"max_num_reqs", r"disable_padded_drafter_batch"],
     ),
     # ============================ 私仓自有 ============================
     (
@@ -342,8 +331,9 @@ FILES_META = [
 
 # 提前合入的上游 PR：下列文件的改动来自尚未合并进 upstream/main 的 PR，
 # 为本仓需要而提前合入；待上游合并后即可随上游同步、移除本地副本。
-# 注：PR #9382（GDN A5 自定义算子）、PR #10083（A5 fused_gdn_gating 回退 Triton）均已于上游合并，
-# 本仓对应的提前合入副本（含原 gdn_a5 类目，提交 0971c471）已随本次同步 upstream/main 自动收敛，不再单独成类。
+# 注：PR #9382（GDN A5 自定义算子）、PR #10083（A5 fused_gdn_gating 回退 Triton）、
+# PR #10205（MTP copy_valid_sampled_token_count 同步修复）均已于上游合并，本仓对应的提前合入副本
+# （含原 gdn_a5 类目、提交 0971c471，以及 pr_10205 类目）已随同步 upstream/main 自动收敛，不再单独成类。
 PR_9310 = {
     "url": "https://github.com/vllm-project/vllm-ascend/pull/9310",
     "title": "[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model",
@@ -358,15 +348,8 @@ PR_9715 = {
     "category": "pr_9715",
 }
 
-PR_10205 = {
-    "url": "https://github.com/vllm-project/vllm-ascend/pull/10205",
-    "title": "[BugFix][Performance] Fix MTP copy_valid_sampled_token_count sync",
-    "state": "OPEN",
-    "category": "pr_10205",
-}
-
 # 所有上游 PR 的汇总列表，用于渲染 PR 标签和概述
-PRS = [PR_9310, PR_9715, PR_10205]
+PRS = [PR_9310, PR_9715]
 
 # 类别 -> 该类别对应的上游 PR（用于卡片 PR 角标）。私仓自有类别返回 None。
 CAT_PR = {pr["category"]: pr for pr in PRS}
@@ -784,7 +767,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9310 / #9715 / #10205）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>）。<b>当同一文件被多个类目改动时（如 model_runner_v1.py 同含 #9310 与 #10205），每张卡片只展示属于本类目的增删行，其余以「⋯ 省略 N 行 ⋯」折叠并指向对应卡片。</b><br>
+    分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9310 / #9715）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083、#10205 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>）。<br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
