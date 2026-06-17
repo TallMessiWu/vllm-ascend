@@ -44,7 +44,6 @@ OUT = "index.html"
 # 约定：来自上游未合并 PR 的改动各自单独成类，与「私仓自有」严格区分。
 CATEGORIES = OrderedDict(
     [
-        ("pr_9310", ("来自 PR #9310 · Chunk 元数据预构建 + GDN Attn Builder 重构 + Eagle Spec Decode", "#9333ea")),
         ("pr_9715", ("来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）", "#db61a2")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
         ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
@@ -61,51 +60,6 @@ CATEGORIES = OrderedDict(
 #     渲染时每张卡片只展示属于本类目的增删行，其余行折叠为「⋯ 省略 N 行 ⋯」并指向对应卡片。
 #     （维护约定见 CLAUDE.local.md「维护 index.html 差异分类时的注意事项」。）
 FILES_META = [
-    # ============================ 来自 PR #9310 ============================
-    (
-        "tests/ut/attention/a2/test_attention_v1.py",
-        "pr_9310", "在既有上游单测中新增用例 test_unpadded_preserves_internal_seq_lens_cpu：校验 unpadded 后内部 _seq_lens_cpu 正确截断、seq_lens_cpu 保持 None", False,
-    ),
-    (
-        "tests/ut/ops/test_gdn_attn_builder.py",
-        "pr_9310", "由 tests/ut/patch/worker/patch_common/test_patch_gdn_attn.py 重命名迁移并扩展：覆盖 AscendGDNAttentionMetadataBuilder 的 chunk meta 预构建与 argsort stable 排序逻辑", False,
-    ),
-    (
-        "tests/ut/ops/a2/test_gdn_chunk_meta.py",
-        "pr_9310", "新增 GDN chunk 元数据用例，覆盖 _build_seq_lens / _validate_cu_seqlens / build_chunk_meta_device", False,
-    ),
-    (
-        "tests/ut/spec_decode/a2/test_eagle_proposer.py",
-        "pr_9310", "新增 Ascend Eagle Proposer 用例，覆盖异步 spec decode 下 proposer 初始化与行为", False,
-    ),
-    (
-        "vllm_ascend/ops/gdn.py",
-        "pr_9310", "新增 get_attn_backend() 返回 AscendGDNAttentionBackend；AscendGatedDeltaNetAttention 移除对 monkey-patch 的依赖、改用正式 ops 模块（import AttentionBackend / AscendGDNAttentionBackend，统一 fallback 错误信息）", False,
-    ),
-    (
-        "vllm_ascend/ops/gdn_attn_builder.py",
-        "pr_9310", "由 vllm_ascend/patch/worker/patch_gdn_attn.py 重命名重构为正式 ops 模块：实现 AscendGDNAttentionBackend / AscendGDNAttentionMetadataBuilder / GDNChunkedPrefillMetadata，prefill/decode 路径预构建 varlen chunk 元数据并附加到 attn_metadata，避免 forward 时 host→device round-trip", False,
-    ),
-    (
-        "vllm_ascend/ops/triton/fla/chunk.py",
-        "pr_9310", "chunk_gated_delta_rule_fwd / chunk_fwd_o：新增 cu_seqlens_host / chunk_indices_chunk64_host 通过 prebuilt meta 提前提取为 Python tuple，传入 AscendC 算子时避免每次 .tolist() 的同步开销", False,
-    ),
-    (
-        "vllm_ascend/patch/__init__.py",
-        "pr_9310", "更新补丁注释文档：patch_gdn_attn 说明替换为 patch_module（torch.argsort 补丁 + gdn_attn_builder 覆盖），标注相关 PR 与未来移除计划", False,
-    ),
-    (
-        "vllm_ascend/patch/worker/__init__.py",
-        "pr_9310", "移除 `import vllm_ascend.patch.worker.patch_gdn_attn`：GDN attn builder 已正式化至 ops 模块", False,
-    ),
-    (
-        "vllm_ascend/spec_decode/eagle_proposer.py",
-        "pr_9310", "简化 AscendEagleProposer.__init__：移除冗余命名参数传递，改为位置参数直接调用父类", False,
-    ),
-    (
-        "vllm_ascend/worker/model_runner_v1.py",
-        "pr_9310", "异步 spec decode 路径优化：将 num_computed_tokens_cpu_tensor→device 拷贝提前复用（cpu_values 提升至 use_async_spec_decode 入口），避免重复 H2D 拷贝", False,
-    ),
     # ============================ 来自 PR #9715 ============================
     (
         "vllm_ascend/patch/platform/patch_balance_schedule.py",
@@ -332,15 +286,10 @@ FILES_META = [
 # 提前合入的上游 PR：下列文件的改动来自尚未合并进 upstream/main 的 PR，
 # 为本仓需要而提前合入；待上游合并后即可随上游同步、移除本地副本。
 # 注：PR #9382（GDN A5 自定义算子）、PR #10083（A5 fused_gdn_gating 回退 Triton）、
-# PR #10205（MTP copy_valid_sampled_token_count 同步修复）均已于上游合并，本仓对应的提前合入副本
-# （含原 gdn_a5 类目、提交 0971c471，以及 pr_10205 类目）已随同步 upstream/main 自动收敛，不再单独成类。
-PR_9310 = {
-    "url": "https://github.com/vllm-project/vllm-ascend/pull/9310",
-    "title": "[Performance] Reuse prebuilt chunk host metadata for Ascend chunk ops and earse synchronize for qwen3.5 model",
-    "state": "OPEN",
-    "category": "pr_9310",
-}
-
+# PR #10205（MTP copy_valid_sampled_token_count 同步修复）、PR #9310（Chunk 元数据预构建 +
+# GDN Attn Builder 重构 + Eagle Spec Decode）均已于上游合并，本仓对应的提前合入副本
+# （含原 gdn_a5 类目、提交 0971c471，以及 pr_10205 / pr_9310 类目）已随同步 upstream/main
+# 收敛（PR #9310 收敛时另删除了 gdn.py 中与上游重复的 get_attn_backend 定义），不再单独成类。
 PR_9715 = {
     "url": "https://github.com/vllm-project/vllm-ascend/pull/9715",
     "title": "[Feature]Fix the scheduler runtime error caused by version compatibility issues.",
@@ -349,7 +298,7 @@ PR_9715 = {
 }
 
 # 所有上游 PR 的汇总列表，用于渲染 PR 标签和概述
-PRS = [PR_9310, PR_9715]
+PRS = [PR_9715]
 
 # 类别 -> 该类别对应的上游 PR（用于卡片 PR 角标）。私仓自有类别返回 None。
 CAT_PR = {pr["category"]: pr for pr in PRS}
@@ -767,7 +716,7 @@ footer {{ color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px 
   <div class="sub">
     上游基线：<b>{BASE}</b> @ <b>{base_sha}</b>　·　本仓分支：<b>{HEAD}</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
-    分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9310 / #9715）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083、#10205 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>）。<br>
+    分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9715）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083、#10205、#9310 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff {BASE} {HEAD}</code>）。<br>
     {pr_note}<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
