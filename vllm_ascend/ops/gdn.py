@@ -260,9 +260,6 @@ def get_non_spec_chunked_prefill_meta(attn_metadata):
 
 
 class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
-    def get_attn_backend(self) -> type[AttentionBackend]:
-        return AscendGDNAttentionBackend
-
     def _split_ba_for_tp(self, ba: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if hasattr(self, "split_ba"):
             return self.split_ba(ba)
