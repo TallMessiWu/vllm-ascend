@@ -226,5 +226,6 @@ csrc/third_party/
 
 # 本地配置 / 私仓专属（不纳入版本控制）
 .claude/settings.local.json
+AGENTS.local.md
 CLAUDE.local.md
 csrc/build_out/
