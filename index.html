@@ -76,7 +76,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>3ac10c80</b>　·　本仓分支：<b>main</b><br>
+    上游基线：<b>upstream/main</b> @ <b>5a9c2f8c</b>　·　本仓分支：<b>main</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
     分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9715）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083、#10205、#9310 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff upstream/main main</code>）。<br>
     其中 <b>1</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener">PR #9715</a>（[Feature]Fix the scheduler runtime error caused by version compatibility issues.，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>
@@ -893,10 +893,10 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增忽略项：私仓本地配置（CLAUDE.local.md、.claude/settings.local.json）与构建产物目录（csrc/build_out/），避免本地专属文件被提交</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index fdbbad5b..aeb6cd4b 100644</div>
+    <div class="diff"><div class="dl meta">index 20af3005..9e019762 100644</div>
 <div class="dl meta">--- a/.gitignore</div>
 <div class="dl meta">+++ b/.gitignore</div>
-<div class="dl hunk">@@ -222,3 +222,8 @@ csrc/third_party/</div>
+<div class="dl hunk">@@ -223,3 +223,8 @@ csrc/third_party/</div>
 <div class="dl ctx"> .codegraph/</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> .vllm_ascend/</div>
@@ -1028,7 +1028,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 npu_scatter_pa_kv_cache wrapper + ops.def/impl（+33 行，scatter_pa 算子注册）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index e6ed7384..0eda96de 100644</div>
+    <div class="diff"><div class="dl meta">index 627bc4e6..23d5ac0c 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding.cpp</div>
 <div class="dl hunk">@@ -639,6 +639,30 @@ at::Tensor npu_reshape_and_cache_bnsd(const at::Tensor&amp; hashq,</div>
@@ -1096,7 +1096,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">新增 npu_scatter_pa_kv_cache_meta + Meta ops.impl，并修复 Tensor(a!)/Tensor(b!) alias 约束（返回输入自身而非新建 tensor，适配 FULL_AND_PIECEWISE 图捕获）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index c2557b2d..9798880e 100644</div>
+    <div class="diff"><div class="dl meta">index faf18de4..6b825a00 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding_meta.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding_meta.cpp</div>
 <div class="dl hunk">@@ -521,6 +521,25 @@ at::Tensor npu_reshape_and_cache_bnsd_meta(const at::Tensor&amp; hashq,</div>
@@ -1125,7 +1125,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx"> at::Tensor npu_hamming_dist_top_k_meta(const at::Tensor &amp;hashq,</div>
 <div class="dl ctx">                                        const at::Tensor &amp;hashkCache,</div>
-<div class="dl hunk">@@ -1695,6 +1714,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
+<div class="dl hunk">@@ -1698,6 +1717,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
 <div class="dl ctx">     ops.impl(&quot;npu_hamming_dist_top_k&quot;, &amp;vllm_ascend::meta::npu_hamming_dist_top_k_meta);</div>
 <div class="dl ctx">     // reshape_and_cache_bnsd</div>
 <div class="dl ctx">     ops.impl(&quot;npu_reshape_and_cache_bnsd&quot;, &amp;vllm_ascend::meta::npu_reshape_and_cache_bnsd_meta);</div>
@@ -1152,7 +1152,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
   <div class="desc">scatter_pa 算子接入枢纽（私仓自有）：① 新增 _ensure_custom_ops_loaded，在 get_device_adaptor 取 A5 适配器时一次性 bootstrap 并 import vllm_ascend_C，绕过 enable_custom_op 的 A5 gate，使全部 custom op（scatter_pa、fused_gdn_gating、recurrent_gated_delta_rule、causal_conv1d 等）注册可用；② reshape_and_cache 改走 torch.ops._C_ascend.npu_scatter_pa_kv_cache 并按 alias 约束调整入参顺序</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index d8cfc2c6..59a75f89 100644</div>
+    <div class="diff"><div class="dl meta">index 8de0d583..45e2c0b8 100644</div>
 <div class="dl meta">--- a/vllm_ascend/device/device_op.py</div>
 <div class="dl meta">+++ b/vllm_ascend/device/device_op.py</div>
 <div class="dl hunk">@@ -782,15 +782,40 @@ class BaseDeviceAdaptor:</div>
