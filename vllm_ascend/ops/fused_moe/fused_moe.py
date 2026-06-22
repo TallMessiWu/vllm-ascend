@@ -283,6 +283,14 @@ class AscendMoERunner(MoERunner):
         # output. Skip any additional reduction here.
         return shared_output
 
+    def _maybe_reduce_final_output(
+        self,
+        states: torch.Tensor,
+        trunc_size: int,
+    ) -> torch.Tensor:
+        states = torch.ops.vllm.maybe_all_reduce_tensor_model_parallel(states)
+        return states[..., :trunc_size]
+
     # TODO: Remove this after drop v0.19.1 support
     def forward_impl(
         self,
@@ -688,7 +696,7 @@ class AscendFusedMoE(FusedMoE):
             mc2_mask=mc2_mask,
         )
 
-        if self.dynamic_eplb:
+        if self.dynamic_eplb and _EXTRA_CTX.eplb_heat_collection_status:
             expert_tokens = fused_experts_results.expert_tokens
             group_list_type = fused_experts_results.group_list_type
             assert expert_tokens is not None and group_list_type is not None, (
