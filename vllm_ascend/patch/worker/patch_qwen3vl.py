@@ -1,14 +1,21 @@
 import torch
+import torch.nn.functional as F
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
 from vllm.model_executor.models.qwen3 import Qwen3Attention
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeAttention
 from vllm.model_executor.models.qwen3_vl import (
+    Qwen3_VisionMLP,
     Qwen3_VisionTransformer,
     Qwen3VLForConditionalGeneration,
     pos_embed_interpolate_native,
 )
+from vllm.model_executor.models.vision import is_vit_use_data_parallel
 
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
+from vllm_ascend.ops.group_aligned_linear import (
+    GroupAlignedColumnParallelLinear,
+    GroupAlignedRowParallelLinear,
+)
 from vllm_ascend.ops.rotary_embedding import AscendMRotaryEmbedding
 
 
@@ -92,6 +99,46 @@ def _fast_pos_embed_interpolate(self, grid_thw: list[list[int]]) -> torch.Tensor
 
 
 Qwen3_VisionTransformer.fast_pos_embed_interpolate = _fast_pos_embed_interpolate
+
+
+def _patched_qwen3_vision_mlp_init(
+    self,
+    in_features: int,
+    hidden_features: int,
+    bias: bool = False,
+    act_fn=F.silu,
+    quant_config=None,
+    prefix: str = "",
+):
+    # Same as the upstream Qwen3_VisionMLP.__init__, but builds fc1/fc2 with the
+    # group-aligned TP linears so MX-quantized intermediate sizes that are not a
+    # multiple of group_size * tp_size (e.g. 4304) can still be tensor-parallel
+    # sharded on group boundaries. With data-parallel ViT (disable_tp=True) these
+    # behave exactly like the plain (replicated) linears.
+    torch.nn.Module.__init__(self)
+    use_data_parallel = is_vit_use_data_parallel()
+    self.linear_fc1 = GroupAlignedColumnParallelLinear(
+        in_features,
+        hidden_features,
+        bias=bias,
+        quant_config=quant_config,
+        return_bias=False,
+        prefix=f"{prefix}.linear_fc1",
+        disable_tp=use_data_parallel,
+    )
+    self.linear_fc2 = GroupAlignedRowParallelLinear(
+        hidden_features,
+        in_features,
+        bias=bias,
+        quant_config=quant_config,
+        return_bias=False,
+        prefix=f"{prefix}.linear_fc2",
+        disable_tp=use_data_parallel,
+    )
+    self.act_fn = act_fn
+
+
+Qwen3_VisionMLP.__init__ = _patched_qwen3_vision_mlp_init
 
 
 def patch_qwen3_vl_moe_pp_layer_range():
