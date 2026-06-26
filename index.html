@@ -76,30 +76,29 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <header class="top">
   <h1>Fork Divergence · 私仓相对上游的代码结构与变更</h1>
   <div class="sub">
-    上游基线：<b>upstream/main</b> @ <b>5a9c2f8c</b>　·　本仓分支：<b>main</b><br>
+    上游基线：<b>upstream/main</b> @ <b>ccceb970</b>　·　本仓分支：<b>main</b><br>
     目的：在 <b>Atlas A5（ascend950 / arch35，__CCE_AICORE__ == 310）</b> 上运行 <b>Qwen3.5</b>，修复 / 规避若干算子在 A5 上的精度与支持问题。<br>
     分层说明：本仓由 <b>upstream/main → 提前合入 PR（#9715）→ 私仓自有（依赖 / 调试 / scatter_pa_kv_cache 算子）</b> 逐层叠加而成（PR #9382、#10083、#10205、#9310 已合入上游，对应提前合入副本随同步 upstream/main 自动收敛）；本页每张卡片展示该文件 <b>相对 upstream/main 的当前差异</b>（<code>git diff upstream/main main</code>）。<br>
     其中 <b>1</b> 条改动来自上游 <a href="https://github.com/vllm-project/vllm-ascend/pull/9715" target="_blank" rel="noopener">PR #9715</a>（[Feature]Fix the scheduler runtime error caused by version compatibility issues.，当前 <b>OPEN</b>，为本仓需要提前合入；待上游合并后可随上游同步移除本地副本）。<br>
     重新生成：<code>git fetch upstream &amp;&amp; python tools/gen_fork_divergence_html.py</code>
   </div>
   <div class="stats">
-    <div class="stat-card"><div class="n">52</div><div class="l">变更文件</div></div>
-    <div class="stat-card"><div class="n">4</div><div class="l">分类</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13157</div><div class="l">新增行</div></div>
-    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-628</div><div class="l">删除行</div></div>
+    <div class="stat-card"><div class="n">51</div><div class="l">变更文件</div></div>
+    <div class="stat-card"><div class="n">3</div><div class="l">分类</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--add-fg)">+13225</div><div class="l">新增行</div></div>
+    <div class="stat-card"><div class="n" style="color:var(--del-fg)">-682</div><div class="l">删除行</div></div>
   </div>
 </header>
 <div class="layout">
   <aside>
     <h2>文件结构</h2>
-    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li></ul></li><li class="dir"><span class="tname">profiler/</span><ul><li class="file" data-cats="dev"><span class="dot" style="background:#f59e0b"></span><a href="#f_vllm_ascend_profiler_torch_npu_profiler_py__dev" class="tname">torch_npu_profiler.py</a></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_gitignore__deps" class="tname">.gitignore</a></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
+    <div class="tree"><ul><li class="dir"><span class="tname">csrc/</span><ul><li class="dir"><span class="tname">attention/</span><ul><li class="dir"><span class="tname">scatter_pa_kv_cache/</span><ul><li class="dir"><span class="tname">op_host/</span><ul><li class="dir"><span class="tname">config/</span><ul><li class="dir"><span class="tname">ascend910_93/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910_93_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend910b/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_binary_json__ops" class="tname">scatter_pa_kv_cache_binary.json</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend910b_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li><li class="dir"><span class="tname">ascend950/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_config_ascend950_scatter_pa_kv_cache_simplified_key_ini__ops" class="tname">scatter_pa_kv_cache_simplified_key.ini</a></li></ul></li></ul></li><li class="dir"><span class="tname">op_api/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_cpp__ops" class="tname">aclnn_scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_aclnn_scatter_pa_kv_cache_h__ops" class="tname">aclnn_scatter_pa_kv_cache.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_op_api_scatter_pa_kv_cache_h__ops" class="tname">scatter_pa_kv_cache.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_def_cpp__ops" class="tname">scatter_pa_kv_cache_def.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_infershape_cpp__ops" class="tname">scatter_pa_kv_cache_infershape.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_cpp__ops" class="tname">scatter_pa_kv_cache_tiling.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_h__ops" class="tname">scatter_pa_kv_cache_tiling.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_host_scatter_pa_kv_cache_tiling_arch35_cpp__ops" class="tname">scatter_pa_kv_cache_tiling_arch35.cpp</a></li></ul></li><li class="dir"><span class="tname">op_kernel/</span><ul><li class="dir"><span class="tname">arch35/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_common_h__ops" class="tname">common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_alibi_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_alibi_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_norm_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_norm_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_normal_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_non_contiguous_h__ops" class="tname">scatter_pa_kv_cache_nz_non_contiguous.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_omni_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_omni_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_arch35_scatter_pa_kv_cache_rope_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_rope_not_fully_load.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_cpp__ops" class="tname">scatter_pa_kv_cache.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_apt_cpp__ops" class="tname">scatter_pa_kv_cache_apt.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_common_h__ops" class="tname">scatter_pa_kv_cache_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_alibi_h__ops" class="tname">scatter_pa_kv_cache_compress_alibi.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_common_h__ops" class="tname">scatter_pa_kv_cache_compress_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_omni_h__ops" class="tname">scatter_pa_kv_cache_compress_omni.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_compress_rope_h__ops" class="tname">scatter_pa_kv_cache_compress_rope.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_nhsd_h__ops" class="tname">scatter_pa_kv_cache_nhsd.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_h__ops" class="tname">scatter_pa_kv_cache_normal.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_common_h__ops" class="tname">scatter_pa_kv_cache_normal_common.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_nz_not_fully_load_h__ops" class="tname">scatter_pa_kv_cache_normal_nz_not_fully_load.h</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_op_kernel_scatter_pa_kv_cache_normal_siso_h__ops" class="tname">scatter_pa_kv_cache_normal_siso.h</a></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_attention_scatter_pa_kv_cache_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li></ul></li></ul></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_CMakeLists_txt__ops" class="tname">CMakeLists.txt</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_build_aclnn_sh__ops" class="tname">build_aclnn.sh</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_cpp__ops" class="tname">torch_binding.cpp</a></li><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_csrc_torch_binding_meta_cpp__ops" class="tname">torch_binding_meta.cpp</a></li></ul></li><li class="dir"><span class="tname">tests/</span><ul><li class="dir"><span class="tname">e2e/</span><ul><li class="dir"><span class="tname">nightly/</span><ul><li class="dir"><span class="tname">single_node/</span><ul><li class="dir"><span class="tname">ops/</span><ul><li class="dir"><span class="tname">singlecard_ops/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_tests_e2e_nightly_single_node_ops_singlecard_ops_test_scatter_pa_kv_cache_py__ops" class="tname">test_scatter_pa_kv_cache.py</a></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="dir"><span class="tname">vllm_ascend/</span><ul><li class="dir"><span class="tname">device/</span><ul><li class="file" data-cats="ops"><span class="dot" style="background:#06b6d4"></span><a href="#f_vllm_ascend_device_device_op_py__ops" class="tname">device_op.py</a></li></ul></li><li class="dir"><span class="tname">patch/</span><ul><li class="dir"><span class="tname">platform/</span><ul><li class="file" data-cats="pr_9715"><span class="dot" style="background:#db61a2"></span><a href="#f_vllm_ascend_patch_platform_patch_balance_schedule_py__pr_9715" class="tname">patch_balance_schedule.py</a></li></ul></li></ul></li></ul></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_gitignore__deps" class="tname">.gitignore</a></li><li class="file" data-cats="deps"><span class="dot" style="background:#7c3aed"></span><a href="#f_requirements_txt__deps" class="tname">requirements.txt</a></li></ul></div>
   </aside>
   <main>
     <div class="toolbar">
-      <button class="cat-btn active" data-cat="all">全部 (52)</button>
+      <button class="cat-btn active" data-cat="all">全部 (51)</button>
 <button class="cat-btn" data-cat="pr_9715" style="--c:#db61a2"><span class="dot" style="background:#db61a2"></span>来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁） (1)</button>
 <button class="cat-btn" data-cat="deps" style="--c:#7c3aed"><span class="dot" style="background:#7c3aed"></span>私仓自有 · 依赖与构建 (2)</button>
-<button class="cat-btn" data-cat="dev" style="--c:#f59e0b"><span class="dot" style="background:#f59e0b"></span>私仓自有 · 开发调试 (1)</button>
 <button class="cat-btn" data-cat="ops" style="--c:#06b6d4"><span class="dot" style="background:#06b6d4"></span>私仓自有 · 自定义算子（scatter_pa_kv_cache） (48)</button>
       <span class="spacer"></span>
       <button class="mini" id="expand">展开全部</button>
@@ -115,17 +114,18 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">vllm_ascend/patch/platform/patch_balance_schedule.py</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+44</span><span class="stat del">-621</span>
+      <span class="stat add">+45</span><span class="stat del">-611</span>
     </div>
   </div>
   <div class="desc">精简 balance scheduler 补丁：删去随上游已收敛的大段重复 Scheduler 实现，仅保留版本兼容性修复所需的最小改动，消除 scheduler 运行时错误（+44/-621）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 47d61940..8d63c90c 100644</div>
+    <div class="diff"><div class="dl meta">index e2df4e6c..8d63c90c 100644</div>
 <div class="dl meta">--- a/vllm_ascend/patch/platform/patch_balance_schedule.py</div>
 <div class="dl meta">+++ b/vllm_ascend/patch/platform/patch_balance_schedule.py</div>
-<div class="dl hunk">@@ -1,30 +1,18 @@</div>
+<div class="dl hunk">@@ -1,47 +1,24 @@</div>
 <div class="dl ctx"> # mypy: ignore-errors</div>
+<div class="dl del">-import os</div>
 <div class="dl del">-import signal</div>
 <div class="dl del">-import time</div>
 <div class="dl del">-</div>
@@ -161,7 +161,24 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> _ORIGINAL_SCHEDULER = Scheduler</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -71,551 +59,28 @@ class BalanceScheduler(Scheduler):</div>
+<div class="dl ctx"> def _balance_scheduling_enabled(vllm_config) -&gt; bool:</div>
+<div class="dl del">-    # TODO: Unify this path with AscendConfig once AscendConfig initialization</div>
+<div class="dl del">-    # is moved earlier in the startup flow.</div>
+<div class="dl del">-    try:</div>
+<div class="dl del">-        from vllm_ascend.ascend_config import get_ascend_config</div>
+<div class="dl del">-</div>
+<div class="dl del">-        return bool(get_ascend_config().enable_balance_scheduling)</div>
+<div class="dl del">-    except Exception:</div>
+<div class="dl del">-        pass</div>
+<div class="dl ctx">     additional_config = getattr(vllm_config, &quot;additional_config&quot;, None) or {}</div>
+<div class="dl del">-    if &quot;enable_balance_scheduling&quot; in additional_config:</div>
+<div class="dl del">-        return bool(additional_config[&quot;enable_balance_scheduling&quot;])</div>
+<div class="dl del">-    return bool(int(os.getenv(&quot;VLLM_ASCEND_BALANCE_SCHEDULING&quot;, &quot;0&quot;)))</div>
+<div class="dl add">+    return bool(additional_config.get(&quot;enable_balance_scheduling&quot;, False))</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> </div>
+<div class="dl ctx"> class BalanceScheduler(Scheduler):</div>
+<div class="dl hunk">@@ -82,529 +59,28 @@ class BalanceScheduler(Scheduler):</div>
 <div class="dl ctx">     def schedule(self) -&gt; SchedulerOutput:</div>
 <div class="dl ctx">         if not self._balance_enabled:</div>
 <div class="dl ctx">             return super().schedule()</div>
@@ -367,11 +384,9 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-</div>
 <div class="dl del">-        # Next, schedule the WAITING requests.</div>
 <div class="dl del">-        if not preempted_reqs and self._pause_state == PauseState.UNPAUSED:</div>
-<div class="dl del">-            # Use a temporary RequestQueue to collect requests that need to be</div>
-<div class="dl del">-            # skipped and put back at the head of the waiting queue later</div>
-<div class="dl del">-            skipped_waiting_requests = create_request_queue(self.policy)</div>
+<div class="dl del">-            step_skipped_waiting = create_request_queue(self.policy)</div>
 <div class="dl del">-</div>
-<div class="dl del">-            while self.waiting and token_budget &gt; 0:</div>
+<div class="dl del">-            while (self.waiting or self.skipped_waiting) and token_budget &gt; 0:</div>
 <div class="dl del">-                if len(self.running) == self.max_num_running_reqs:</div>
 <div class="dl del">-                    break</div>
 <div class="dl del">-</div>
@@ -379,43 +394,24 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-                if balance_flag:</div>
 <div class="dl del">-                    break</div>
 <div class="dl del">-</div>
-<div class="dl del">-                request = self.waiting.peek_request()</div>
+<div class="dl del">-                request_queue = self._select_waiting_queue_for_scheduling()</div>
+<div class="dl del">-                if request_queue is None:</div>
+<div class="dl del">-                    break</div>
+<div class="dl del">-</div>
+<div class="dl del">-                request = request_queue.peek_request()</div>
 <div class="dl del">-                request_id = request.request_id</div>
 <div class="dl del">-</div>
-<div class="dl del">-                # KVTransfer: skip request if still waiting for remote kvs.</div>
-<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:</div>
-<div class="dl del">-                    if request.request_id not in self.finished_recving_kv_req_ids:</div>
+<div class="dl del">-                # try to promote blocked statuses while traversing skipped queue.</div>
+<div class="dl del">-                if self._is_blocked_waiting_status(request.status) and not self._try_promote_blocked_waiting_request(</div>
+<div class="dl del">-                    request</div>
+<div class="dl del">-                ):</div>
+<div class="dl del">-                    if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:</div>
 <div class="dl del">-                        logger.debug(</div>
 <div class="dl del">-                            &quot;%s is still in WAITING_FOR_REMOTE_KVS state.&quot;,</div>
 <div class="dl del">-                            request_id,</div>
 <div class="dl del">-                        )</div>
-<div class="dl del">-                        self.waiting.pop_request()</div>
-<div class="dl del">-                        skipped_waiting_requests.prepend_request(request)</div>
-<div class="dl del">-                        continue</div>
-<div class="dl del">-                    self._update_waiting_for_remote_kv(request)</div>
-<div class="dl del">-                    if request.num_preemptions:</div>
-<div class="dl del">-                        # We must be loading for a resumed preemption</div>
-<div class="dl del">-                        # rather than a new request.</div>
-<div class="dl del">-                        request.status = RequestStatus.PREEMPTED</div>
-<div class="dl del">-                    else:</div>
-<div class="dl del">-                        request.status = RequestStatus.WAITING</div>
-<div class="dl del">-</div>
-<div class="dl del">-                # Skip request if the structured output request is still waiting</div>
-<div class="dl del">-                # for FSM compilation.</div>
-<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:</div>
-<div class="dl del">-                    structured_output_req = request.structured_output_request</div>
-<div class="dl del">-                    if structured_output_req and structured_output_req.grammar:</div>
-<div class="dl del">-                        request.status = RequestStatus.WAITING</div>
-<div class="dl del">-                    else:</div>
-<div class="dl del">-                        self.waiting.pop_request()</div>
-<div class="dl del">-                        skipped_waiting_requests.prepend_request(request)</div>
-<div class="dl del">-                        continue</div>
-<div class="dl del">-</div>
-<div class="dl del">-                # Streaming: skip request if still waiting for next streaming req.</div>
-<div class="dl del">-                if request.status == RequestStatus.WAITING_FOR_STREAMING_REQ:</div>
-<div class="dl del">-                    assert not request.streaming_queue</div>
-<div class="dl del">-                    self.waiting.pop_request()</div>
-<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                    request_queue.pop_request()</div>
+<div class="dl del">-                    step_skipped_waiting.prepend_request(request)</div>
 <div class="dl del">-                    continue</div>
 <div class="dl del">-</div>
 <div class="dl del">-                # Check that adding the request still respects the max_loras</div>
@@ -429,8 +425,8 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-                    )</div>
 <div class="dl del">-                ):</div>
 <div class="dl del">-                    # Scheduling would exceed max_loras, skip.</div>
-<div class="dl del">-                    self.waiting.pop_request()</div>
-<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                    request_queue.pop_request()</div>
+<div class="dl del">-                    step_skipped_waiting.prepend_request(request)</div>
 <div class="dl del">-                    continue</div>
 <div class="dl del">-</div>
 <div class="dl del">-                num_external_computed_tokens = 0</div>
@@ -454,8 +450,8 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-                            # The request cannot be scheduled because</div>
 <div class="dl del">-                            # the KVConnector couldn&#x27;t determine</div>
 <div class="dl del">-                            # the number of matched tokens.</div>
-<div class="dl del">-                            self.waiting.pop_request()</div>
-<div class="dl del">-                            skipped_waiting_requests.prepend_request(request)</div>
+<div class="dl del">-                            request_queue.pop_request()</div>
+<div class="dl del">-                            step_skipped_waiting.prepend_request(request)</div>
 <div class="dl del">-                            continue</div>
 <div class="dl del">-</div>
 <div class="dl del">-                        num_external_computed_tokens = ext_tokens</div>
@@ -583,14 +579,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-                            preempted=request.num_preemptions &gt; 0,</div>
 <div class="dl del">-                        )</div>
 <div class="dl del">-</div>
-<div class="dl del">-                # Request was already popped from self.waiting</div>
-<div class="dl del">-                # unless it was re-added above due to new_blocks being None.</div>
-<div class="dl del">-                request = self.waiting.pop_request()</div>
+<div class="dl del">-                request = request_queue.pop_request()</div>
 <div class="dl del">-                if load_kv_async:</div>
 <div class="dl del">-                    # If loading async, allocate memory and put request</div>
 <div class="dl del">-                    # into the WAITING_FOR_REMOTE_KV state.</div>
-<div class="dl del">-                    skipped_waiting_requests.prepend_request(request)</div>
 <div class="dl del">-                    request.status = RequestStatus.WAITING_FOR_REMOTE_KVS</div>
+<div class="dl del">-                    step_skipped_waiting.prepend_request(request)</div>
+<div class="dl del">-                    request.num_computed_tokens = num_computed_tokens</div>
 <div class="dl del">-                    continue</div>
 <div class="dl del">-</div>
 <div class="dl del">-                self.running.append(request)</div>
@@ -624,9 +619,9 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl del">-                        if self.ec_connector is not None:</div>
 <div class="dl del">-                            self.ec_connector.update_state_after_alloc(request, i)</div>
 <div class="dl del">-</div>
-<div class="dl del">-            # Put back any skipped requests at the head of the waiting queue</div>
-<div class="dl del">-            if skipped_waiting_requests:</div>
-<div class="dl del">-                self.waiting.prepend_requests(skipped_waiting_requests)</div>
+<div class="dl del">-            # re-queue requests skipped in this pass ahead of older skipped items.</div>
+<div class="dl del">-            if step_skipped_waiting:</div>
+<div class="dl del">-                self.skipped_waiting.prepend_requests(step_skipped_waiting)</div>
 <div class="dl del">-</div>
 <div class="dl del">-        # Check if the scheduling constraints are satisfied.</div>
 <div class="dl del">-        total_num_scheduled_tokens = sum(num_scheduled_tokens.values())</div>
@@ -734,7 +729,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx">         return scheduler_output</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> </div>
-<div class="dl hunk">@@ -624,9 +89,19 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl hunk">@@ -613,9 +89,19 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
 <div class="dl ctx">         &quot;&quot;&quot;Core busy loop of the EngineCore for data parallel case.&quot;&quot;&quot;</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">         # Loop until process is sent a SIGINT or SIGTERM</div>
@@ -755,7 +750,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx">             # 2) Step the engine core.</div>
 <div class="dl ctx">             executed = self._process_engine_step()</div>
-<div class="dl hunk">@@ -644,7 +119,9 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl hunk">@@ -633,7 +119,9 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">             # 3) All-reduce operation to determine global unfinished reqs.</div>
 <div class="dl ctx">             self.engines_running = self._has_global_unfinished_reqs(local_unfinished_reqs)</div>
@@ -766,7 +761,7 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx">             if not self.engines_running:</div>
 <div class="dl ctx">                 if self.dp_rank == 0 or not self.has_coordinator:</div>
-<div class="dl hunk">@@ -664,62 +141,8 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
+<div class="dl hunk">@@ -653,62 +141,8 @@ class BalanceDPEngineCoreProc(DPEngineCoreProc):</div>
 <div class="dl ctx">                 self.current_wave += 1</div>
 <div class="dl ctx">                 self.step_counter = 0</div>
 <div class="dl ctx"> </div>
@@ -887,56 +882,25 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">.gitignore</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+5</span><span class="stat del">-0</span>
+      <span class="stat add">+6</span><span class="stat del">-0</span>
     </div>
   </div>
   <div class="desc">新增忽略项：私仓本地配置（CLAUDE.local.md、.claude/settings.local.json）与构建产物目录（csrc/build_out/），避免本地专属文件被提交</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 20af3005..9e019762 100644</div>
+    <div class="diff"><div class="dl meta">index 20af3005..bfd6a752 100644</div>
 <div class="dl meta">--- a/.gitignore</div>
 <div class="dl meta">+++ b/.gitignore</div>
-<div class="dl hunk">@@ -223,3 +223,8 @@ csrc/third_party/</div>
+<div class="dl hunk">@@ -223,3 +223,9 @@ csrc/third_party/</div>
 <div class="dl ctx"> .codegraph/</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx"> .vllm_ascend/</div>
 <div class="dl add">+</div>
 <div class="dl add">+# 本地配置 / 私仓专属（不纳入版本控制）</div>
 <div class="dl add">+.claude/settings.local.json</div>
+<div class="dl add">+AGENTS.local.md</div>
 <div class="dl add">+CLAUDE.local.md</div>
 <div class="dl add">+csrc/build_out/</div></div>
-  </details>
-</section>
-
-<section class="card" id="f_vllm_ascend_profiler_torch_npu_profiler_py__dev" data-cats="dev">
-  <div class="card-h" style="--c:#f59e0b">
-    <div class="card-h-left">
-      <span class="catbadge" style="background:#f59e0b">私仓自有 · 开发调试</span>
-      
-      
-      <code class="path">vllm_ascend/profiler/torch_npu_profiler.py</code>
-    </div>
-    <div class="card-h-right">
-      <span class="stat add">+3</span><span class="stat del">-1</span>
-    </div>
-  </div>
-  <div class="desc">NPU profiler 默认开启 PipeUtilization 指标，方便查看算子利用率（关闭无用的 AiCoreNone）</div>
-  <details class="diff-wrap" open>
-    <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index bbd811a0..a1ce44a7 100644</div>
-<div class="dl meta">--- a/vllm_ascend/profiler/torch_npu_profiler.py</div>
-<div class="dl meta">+++ b/vllm_ascend/profiler/torch_npu_profiler.py</div>
-<div class="dl hunk">@@ -50,7 +50,9 @@ class TorchNPUProfilerWrapper(WorkerProfiler):</div>
-<div class="dl ctx">             export_type=torch_npu.profiler.ExportType.Text,</div>
-<div class="dl ctx">             profiler_level=torch_npu.profiler.ProfilerLevel.Level1,</div>
-<div class="dl ctx">             msprof_tx=False,</div>
-<div class="dl del">-            aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,</div>
-<div class="dl add">+            # aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,</div>
-<div class="dl add">+            # 查看算子利用率</div>
-<div class="dl add">+            aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,</div>
-<div class="dl ctx">             l2_cache=False,</div>
-<div class="dl ctx">             op_attr=False,</div>
-<div class="dl ctx">             data_simplification=True,</div></div>
   </details>
 </section>
 
@@ -949,17 +913,156 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">csrc/build_aclnn.sh</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+6</span><span class="stat del">-0</span>
+      <span class="stat add">+63</span><span class="stat del">-39</span>
     </div>
   </div>
   <div class="desc">ascend950 分支 CUSTOM_OPS_ARRAY 加入 scatter_pa_kv_cache（mega_moe 以注释保留为 DEFERRED 占位）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index c6b3761b..0f597990 100755</div>
+    <div class="diff"><div class="dl meta">index 4a1cf907..0f597990 100755</div>
 <div class="dl meta">--- a/csrc/build_aclnn.sh</div>
 <div class="dl meta">+++ b/csrc/build_aclnn.sh</div>
-<div class="dl hunk">@@ -212,6 +212,12 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
-<div class="dl ctx">     log &quot;catlass include=${ABSOLUTE_CATLASS_PATH}&quot;</div>
+<div class="dl hunk">@@ -8,30 +8,6 @@ log() {</div>
+<div class="dl ctx">     echo &quot;[build_aclnn] $*&quot;</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-setup_catlass_dependency() {</div>
+<div class="dl del">-    local catlass_path=&quot;${ROOT_DIR}/csrc/third_party/catlass/include&quot;</div>
+<div class="dl del">-    local catlass_commit</div>
+<div class="dl del">-    local absolute_catlass_path</div>
+<div class="dl del">-</div>
+<div class="dl del">-    git config --global --add safe.directory &quot;$ROOT_DIR&quot;</div>
+<div class="dl del">-    catlass_commit=$(git config -f &quot;${ROOT_DIR}/.gitmodules&quot; --get submodule.csrc/third_party/catlass.commit)</div>
+<div class="dl del">-    if [[ ! -d &quot;${catlass_path}&quot; ]]; then</div>
+<div class="dl del">-        echo &quot;dependency catlass is missing, try to fetch it...&quot;</div>
+<div class="dl del">-        git submodule sync</div>
+<div class="dl del">-        if ! git submodule update --init --recursive; then</div>
+<div class="dl del">-            log &quot;fetch failed&quot;</div>
+<div class="dl del">-            exit 1</div>
+<div class="dl del">-        fi</div>
+<div class="dl del">-        cd &quot;${ROOT_DIR}/csrc/third_party/catlass&quot; || exit 1</div>
+<div class="dl del">-        git fetch origin</div>
+<div class="dl del">-        git checkout &quot;${catlass_commit}&quot; || exit 1</div>
+<div class="dl del">-        cd - || exit 1</div>
+<div class="dl del">-    fi</div>
+<div class="dl del">-    absolute_catlass_path=$(cd &quot;${catlass_path}&quot; &amp;&amp; pwd)</div>
+<div class="dl del">-    export CPATH=&quot;${absolute_catlass_path}${CPATH:+:${CPATH}}&quot;</div>
+<div class="dl del">-    log &quot;catlass include=${absolute_catlass_path}&quot;</div>
+<div class="dl del">-}</div>
+<div class="dl del">-</div>
+<div class="dl ctx"> resolve_op_dir() {</div>
+<div class="dl ctx">     local op_name=$1</div>
+<div class="dl ctx">     local candidate_dir</div>
+<div class="dl hunk">@@ -78,14 +54,9 @@ log &quot;env: ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-&lt;unset&gt;} ASCEND_TOOLKIT_HOME=${AS</div>
+<div class="dl ctx"> if [[ &quot;$SOC_VERSION&quot; =~ ^ascend310 ]]; then</div>
+<div class="dl ctx">     log &quot;matched SOC branch: ascend310&quot;</div>
+<div class="dl ctx">     # ASCEND310P series</div>
+<div class="dl del">-    # dependency: catlass</div>
+<div class="dl del">-    setup_catlass_dependency</div>
+<div class="dl del">-</div>
+<div class="dl ctx">     CUSTOM_OPS_ARRAY=(</div>
+<div class="dl ctx">         &quot;causal_conv1d_v310&quot;</div>
+<div class="dl ctx">         &quot;recurrent_gated_delta_rule_v310&quot;</div>
+<div class="dl del">-        &quot;chunk_fwd_o&quot;</div>
+<div class="dl del">-        &quot;chunk_gated_delta_rule_fwd_h&quot;</div>
+<div class="dl ctx">     )</div>
+<div class="dl ctx">     CUSTOM_OPS=$(IFS=&#x27;;&#x27;; echo &quot;${CUSTOM_OPS_ARRAY[*]}&quot;)</div>
+<div class="dl ctx">     SOC_ARG=&quot;ascend310p&quot;</div>
+<div class="dl hunk">@@ -93,7 +64,24 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend910b ]]; then</div>
+<div class="dl ctx">     log &quot;matched SOC branch: ascend910b&quot;</div>
+<div class="dl ctx">     # ASCEND910B (A2) series</div>
+<div class="dl ctx">     # dependency: catlass</div>
+<div class="dl del">-    setup_catlass_dependency</div>
+<div class="dl add">+    git config --global --add safe.directory &quot;$ROOT_DIR&quot;</div>
+<div class="dl add">+    CATLASS_PATH=${ROOT_DIR}/csrc/third_party/catlass/include</div>
+<div class="dl add">+    CATLASS_COMMIT=$(git config -f &quot;${ROOT_DIR}/.gitmodules&quot; --get submodule.csrc/third_party/catlass.commit)</div>
+<div class="dl add">+    if [[ ! -d &quot;${CATLASS_PATH}&quot; ]]; then</div>
+<div class="dl add">+        echo &quot;dependency catlass is missing, try to fetch it...&quot;</div>
+<div class="dl add">+        git submodule sync</div>
+<div class="dl add">+        if ! git submodule update --init --recursive; then</div>
+<div class="dl add">+            echo &quot;fetch failed&quot;</div>
+<div class="dl add">+            exit 1</div>
+<div class="dl add">+        fi</div>
+<div class="dl add">+        cd &quot;${ROOT_DIR}/csrc/third_party/catlass&quot; || exit 1</div>
+<div class="dl add">+        git fetch origin</div>
+<div class="dl add">+        git checkout &quot;${CATLASS_COMMIT}&quot; || exit 1</div>
+<div class="dl add">+        cd - || exit 1</div>
+<div class="dl add">+    fi</div>
+<div class="dl add">+    ABSOLUTE_CATLASS_PATH=$(cd &quot;${CATLASS_PATH}&quot; &amp;&amp; pwd)</div>
+<div class="dl add">+    export CPATH=&quot;${ABSOLUTE_CATLASS_PATH}${CPATH:+:${CPATH}}&quot;</div>
+<div class="dl add">+    log &quot;catlass include=${ABSOLUTE_CATLASS_PATH}&quot;</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     CUSTOM_OPS_ARRAY=(</div>
+<div class="dl ctx">         &quot;scatter_nd_update_v2&quot;</div>
+<div class="dl hunk">@@ -112,8 +100,8 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend910b ]]; then</div>
+<div class="dl ctx">         &quot;causal_conv1d&quot;</div>
+<div class="dl ctx">         &quot;lightning_indexer_quant&quot;</div>
+<div class="dl ctx">         &quot;compressor&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer_metadata&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer_metadata&quot;</div>
+<div class="dl ctx">         &quot;sparse_attn_sharedkv&quot;</div>
+<div class="dl ctx">         &quot;sparse_attn_sharedkv_metadata&quot;</div>
+<div class="dl ctx">         &quot;hc_pre_sinkhorn&quot;</div>
+<div class="dl hunk">@@ -141,8 +129,21 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend910_93 ]]; then</div>
+<div class="dl ctx">     log &quot;matched SOC branch: ascend910_93&quot;</div>
+<div class="dl ctx">     # ASCEND910C (A3) series</div>
+<div class="dl ctx">     # dependency: catlass</div>
+<div class="dl del">-    setup_catlass_dependency</div>
+<div class="dl del">-</div>
+<div class="dl add">+    git config --global --add safe.directory &quot;$ROOT_DIR&quot;</div>
+<div class="dl add">+    CATLASS_PATH=${ROOT_DIR}/csrc/third_party/catlass/include</div>
+<div class="dl add">+    CATLASS_COMMIT=$(git config -f &quot;${ROOT_DIR}/.gitmodules&quot; --get submodule.csrc/third_party/catlass.commit)</div>
+<div class="dl add">+    if [[ ! -d &quot;${CATLASS_PATH}&quot; ]]; then</div>
+<div class="dl add">+        echo &quot;dependency catlass is missing, try to fetch it...&quot;</div>
+<div class="dl add">+        git submodule sync</div>
+<div class="dl add">+        if ! git submodule update --init --recursive; then</div>
+<div class="dl add">+            echo &quot;fetch failed&quot;</div>
+<div class="dl add">+            exit 1</div>
+<div class="dl add">+        fi</div>
+<div class="dl add">+        cd &quot;${ROOT_DIR}/csrc/third_party/catlass&quot; || exit 1</div>
+<div class="dl add">+        git fetch origin</div>
+<div class="dl add">+        git checkout &quot;${CATLASS_COMMIT}&quot; || exit 1</div>
+<div class="dl add">+        cd - || exit 1</div>
+<div class="dl add">+    fi</div>
+<div class="dl ctx">     CUSTOM_OPS_ARRAY=(</div>
+<div class="dl ctx">         &quot;scatter_nd_update_v2&quot;</div>
+<div class="dl ctx">         &quot;grouped_matmul_swiglu_quant_weight_nz_tensor_list&quot;</div>
+<div class="dl hunk">@@ -163,8 +164,8 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend910_93 ]]; then</div>
+<div class="dl ctx">         &quot;moe_grouped_matmul&quot;</div>
+<div class="dl ctx">         &quot;lightning_indexer_quant&quot;</div>
+<div class="dl ctx">         &quot;compressor&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer_metadata&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer_metadata&quot;</div>
+<div class="dl ctx">         &quot;sparse_attn_sharedkv&quot;</div>
+<div class="dl ctx">         &quot;sparse_attn_sharedkv_metadata&quot;</div>
+<div class="dl ctx">         &quot;hc_pre_sinkhorn&quot;</div>
+<div class="dl hunk">@@ -191,16 +192,39 @@ elif [[ &quot;$SOC_VERSION&quot; =~ ^ascend950 ]]; then</div>
+<div class="dl ctx">     log &quot;matched SOC branch: ascend950&quot;</div>
+<div class="dl ctx">     # ASCEND950 (A5) series</div>
+<div class="dl ctx">     # dependency: catlass</div>
+<div class="dl del">-    setup_catlass_dependency</div>
+<div class="dl add">+    git config --global --add safe.directory &quot;$ROOT_DIR&quot;</div>
+<div class="dl add">+    CATLASS_PATH=${ROOT_DIR}/csrc/third_party/catlass/include</div>
+<div class="dl add">+    CATLASS_COMMIT=$(git config -f &quot;${ROOT_DIR}/.gitmodules&quot; --get submodule.csrc/third_party/catlass.commit)</div>
+<div class="dl add">+    if [[ ! -d &quot;${CATLASS_PATH}&quot; ]]; then</div>
+<div class="dl add">+        echo &quot;dependency catlass is missing, try to fetch it...&quot;</div>
+<div class="dl add">+        git submodule sync</div>
+<div class="dl add">+        if ! git submodule update --init --recursive; then</div>
+<div class="dl add">+            echo &quot;fetch failed&quot;</div>
+<div class="dl add">+            exit 1</div>
+<div class="dl add">+        fi</div>
+<div class="dl add">+        cd &quot;${ROOT_DIR}/csrc/third_party/catlass&quot; || exit 1</div>
+<div class="dl add">+        git fetch origin</div>
+<div class="dl add">+        git checkout &quot;${CATLASS_COMMIT}&quot; || exit 1</div>
+<div class="dl add">+        cd - || exit 1</div>
+<div class="dl add">+    fi</div>
+<div class="dl add">+    ABSOLUTE_CATLASS_PATH=$(cd &quot;${CATLASS_PATH}&quot; &amp;&amp; pwd)</div>
+<div class="dl add">+    export CPATH=&quot;${ABSOLUTE_CATLASS_PATH}${CPATH:+:${CPATH}}&quot;</div>
+<div class="dl add">+    log &quot;catlass include=${ABSOLUTE_CATLASS_PATH}&quot;</div>
 <div class="dl ctx"> </div>
 <div class="dl ctx">     CUSTOM_OPS_ARRAY=(</div>
 <div class="dl add">+        &quot;scatter_pa_kv_cache&quot;</div>
@@ -970,7 +1073,16 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+        # &quot;mega_moe&quot;</div>
 <div class="dl ctx">         &quot;moe_gating_top_k_hash&quot;</div>
 <div class="dl ctx">         &quot;indexer_compress_epilog&quot;</div>
-<div class="dl ctx">         &quot;inplace_partial_rotary_mul&quot;</div></div>
+<div class="dl ctx">         &quot;inplace_partial_rotary_mul&quot;</div>
+<div class="dl ctx">         &quot;kv_compress_epilog&quot;</div>
+<div class="dl ctx">         &quot;compressor&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer&quot;</div>
+<div class="dl del">-        &quot;vllm_quant_lightning_indexer_metadata&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer&quot;</div>
+<div class="dl add">+        &quot;quant_lightning_indexer_metadata&quot;</div>
+<div class="dl ctx">         &quot;kv_quant_sparse_attn_sharedkv&quot;</div>
+<div class="dl ctx">         &quot;kv_quant_sparse_attn_sharedkv_metadata&quot;</div>
+<div class="dl ctx">         &quot;hc_pre_sinkhorn&quot;</div></div>
   </details>
 </section>
 
@@ -1022,13 +1134,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">csrc/torch_binding.cpp</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+33</span><span class="stat del">-0</span>
+      <span class="stat add">+41</span><span class="stat del">-18</span>
     </div>
   </div>
   <div class="desc">新增 npu_scatter_pa_kv_cache wrapper + ops.def/impl（+33 行，scatter_pa 算子注册）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index 627bc4e6..23d5ac0c 100644</div>
+    <div class="diff"><div class="dl meta">index a31d4cb4..23d5ac0c 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding.cpp</div>
 <div class="dl hunk">@@ -639,6 +639,30 @@ at::Tensor npu_reshape_and_cache_bnsd(const at::Tensor&amp; hashq,</div>
@@ -1062,7 +1174,60 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> at::Tensor npu_sign_bits_pack(const at::Tensor&amp; input,</div>
 <div class="dl ctx">                                    const int64_t size) {</div>
 <div class="dl ctx">     int64_t ySize = (input.size(0) + 7) / 8;</div>
-<div class="dl hunk">@@ -2384,6 +2408,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl hunk">@@ -1066,7 +1090,7 @@ std::tuple&lt;at::Tensor, at::Tensor&gt; construct_quant_lightning_indexer_output_tens</div>
+<div class="dl ctx">     return std::tuple&lt;at::Tensor, at::Tensor&gt;(sparse_indices_out, sparse_values_out);</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-std::tuple&lt;at::Tensor, at::Tensor&gt; npu_vllm_quant_lightning_indexer_npu(</div>
+<div class="dl add">+std::tuple&lt;at::Tensor, at::Tensor&gt; npu_quant_lightning_indexer_npu(</div>
+<div class="dl ctx">     const at::Tensor &amp;query, const at::Tensor &amp;key, const at::Tensor &amp;weights,</div>
+<div class="dl ctx">     const at::Tensor &amp;query_dequant_scale, const at::Tensor &amp;key_dequant_scale,</div>
+<div class="dl ctx">     int64_t query_quant_mode, int64_t key_quant_mode,</div>
+<div class="dl hunk">@@ -1098,7 +1122,7 @@ std::tuple&lt;at::Tensor, at::Tensor&gt; npu_vllm_quant_lightning_indexer_npu(</div>
+<div class="dl ctx">                     &quot;key_dequant_scale must be contiguous on all axes except axis 0&quot;);</div>
+<div class="dl ctx">     }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    EXEC_NPU_CMD(aclnnVllmQuantLightningIndexer, query,</div>
+<div class="dl add">+    EXEC_NPU_CMD(aclnnQuantLightningIndexer, query,</div>
+<div class="dl ctx">         key, weights, query_dequant_scale, key_dequant_scale, actual_seq_lengths_query, actual_seq_lengths_key,</div>
+<div class="dl ctx">         block_table, metadata, query_quant_mode, key_quant_mode, query_layout_ptr, key_layout_ptr, sparse_count, sparse_mode,</div>
+<div class="dl ctx">         pre_tokens, next_tokens, cmp_ratio, return_value, stride, scale_stride, sparse_indices_out, sparse_values_out);</div>
+<div class="dl hunk">@@ -1227,7 +1251,7 @@ at::Tensor npu_sparse_attn_sharedkv_metadata_npu(</div>
+<div class="dl ctx">     return output;</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-at::Tensor npu_vllm_quant_lightning_indexer_metadata_npu(</div>
+<div class="dl add">+at::Tensor npu_quant_lightning_indexer_metadata_npu(</div>
+<div class="dl ctx">     int64_t num_heads_q, int64_t num_heads_k, int64_t head_dim, int64_t query_quant_mode, int64_t key_quant_mode,</div>
+<div class="dl ctx">     const c10::optional&lt;at::Tensor&gt; &amp;actual_seq_lengths_query, const c10::optional&lt;at::Tensor&gt; &amp;actual_seq_lengths_key, int64_t batch_size,</div>
+<div class="dl ctx">     int64_t max_seqlen_q, int64_t max_seqlen_k, const c10::string_view layout_query, c10::string_view layout_key, int64_t sparse_count,</div>
+<div class="dl hunk">@@ -1250,7 +1274,7 @@ at::Tensor npu_vllm_quant_lightning_indexer_metadata_npu(</div>
+<div class="dl ctx">     std::string layout_key_str = std::string(layout_key);</div>
+<div class="dl ctx">     char *layout_key_ptr = const_cast&lt;char *&gt;(layout_key_str.c_str());</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-    EXEC_NPU_CMD(aclnnVllmQuantLightningIndexerMetadata, actual_seq_lengths_query_val, actual_seq_lengths_key_val,</div>
+<div class="dl add">+    EXEC_NPU_CMD(aclnnQuantLightningIndexerMetadata, actual_seq_lengths_query_val, actual_seq_lengths_key_val,</div>
+<div class="dl ctx">                     num_heads_q, num_heads_k, head_dim, query_quant_mode, key_quant_mode, batch_size,</div>
+<div class="dl ctx">                     max_seqlen_q, max_seqlen_k, layout_query_ptr, layout_key_ptr, sparse_count,</div>
+<div class="dl ctx">                     sparse_mode, pre_tokens, next_tokens, cmp_ratio, output);</div>
+<div class="dl hunk">@@ -2152,16 +2176,6 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl ctx">         &quot;                                   Tensor? num_accepted_tokens, &quot;</div>
+<div class="dl ctx">         &quot;                                   float scale_value=1.0) -&gt; (Tensor output)&quot;);</div>
+<div class="dl ctx">     ops.impl(&quot;npu_recurrent_gated_delta_rule_310&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_recurrent_gated_delta_rule_310);</div>
+<div class="dl del">-</div>
+<div class="dl del">-    ops.def(</div>
+<div class="dl del">-        &quot;chunk_gated_delta_rule_fwd_h(Tensor k, Tensor w, Tensor u, Tensor? g=None, *, Tensor? gk=None, Tensor? initial_state=None, bool? output_final_state=False, int? chunk_size=None, bool? save_new_value=True, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? use_exp2=False, bool? transpose_state_layout=False) -&gt; (Tensor h_out, Tensor v_new_out, Tensor final_state_out)&quot;</div>
+<div class="dl del">-    );</div>
+<div class="dl del">-    ops.impl(&quot;chunk_gated_delta_rule_fwd_h&quot;, torch::kPrivateUse1, &amp;vllm_ascend::chunk_gated_delta_rule_fwd_h);</div>
+<div class="dl del">-</div>
+<div class="dl del">-    ops.def(</div>
+<div class="dl del">-        &quot;chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, float scale, *, Tensor? g=None, Tensor? g_gamma=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, int? chunk_size=None, bool? transpose_state_layout=False) -&gt; Tensor&quot;</div>
+<div class="dl del">-    );</div>
+<div class="dl del">-    ops.impl(&quot;chunk_fwd_o&quot;, torch::kPrivateUse1, &amp;vllm_ascend::chunk_fwd_o);</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> #else</div>
+<div class="dl ctx"> // Pybind on other platform</div>
+<div class="dl hunk">@@ -2394,6 +2408,15 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
 <div class="dl ctx">     );</div>
 <div class="dl ctx">     ops.impl(&quot;npu_reshape_and_cache_bnsd&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_reshape_and_cache_bnsd);</div>
 <div class="dl ctx"> </div>
@@ -1077,7 +1242,43 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+</div>
 <div class="dl ctx">     ops.def(&quot;npu_sign_bits_pack(Tensor input, int size) -&gt; Tensor&quot;);</div>
 <div class="dl ctx">     ops.impl(&quot;npu_sign_bits_pack&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_sign_bits_pack);</div>
-<div class="dl ctx"> </div></div>
+<div class="dl ctx"> </div>
+<div class="dl hunk">@@ -2471,7 +2494,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl ctx">     ops.impl(&quot;compressor&quot;, torch::kPrivateUse1, &amp;vllm_ascend::compressor);</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     ops.def(</div>
+<div class="dl del">-        &quot;npu_vllm_quant_lightning_indexer(&quot;</div>
+<div class="dl add">+        &quot;npu_quant_lightning_indexer(&quot;</div>
+<div class="dl ctx">             &quot;Tensor query, Tensor key, Tensor weights, &quot;</div>
+<div class="dl ctx">             &quot;Tensor query_dequant_scale, Tensor key_dequant_scale, &quot;</div>
+<div class="dl ctx">             &quot;int query_quant_mode=0, int key_quant_mode=0, &quot;</div>
+<div class="dl hunk">@@ -2486,7 +2509,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl ctx">             &quot;int cmp_ratio=1, bool return_value=False&quot;</div>
+<div class="dl ctx">         &quot;) -&gt; (Tensor sparse_indices, Tensor sparse_values)&quot;</div>
+<div class="dl ctx">         );</div>
+<div class="dl del">-    ops.impl(&quot;npu_vllm_quant_lightning_indexer&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_vllm_quant_lightning_indexer_npu);</div>
+<div class="dl add">+    ops.impl(&quot;npu_quant_lightning_indexer&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_quant_lightning_indexer_npu);</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     ops.def(</div>
+<div class="dl ctx">         &quot;npu_sparse_attn_sharedkv(&quot;</div>
+<div class="dl hunk">@@ -2547,7 +2570,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl ctx">     ops.impl(&quot;npu_sparse_attn_sharedkv_metadata&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_sparse_attn_sharedkv_metadata_npu);</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     ops.def(</div>
+<div class="dl del">-        &quot;npu_vllm_quant_lightning_indexer_metadata(&quot;</div>
+<div class="dl add">+        &quot;npu_quant_lightning_indexer_metadata(&quot;</div>
+<div class="dl ctx">             &quot;int num_heads_q, &quot;</div>
+<div class="dl ctx">             &quot;int num_heads_k, &quot;</div>
+<div class="dl ctx">             &quot;int head_dim, &quot;</div>
+<div class="dl hunk">@@ -2568,7 +2591,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)</div>
+<div class="dl ctx">             &quot;str device=\&quot;npu\&quot;&quot;</div>
+<div class="dl ctx">         &quot;) -&gt; (Tensor metadata)&quot;</div>
+<div class="dl ctx">         );</div>
+<div class="dl del">-    ops.impl(&quot;npu_vllm_quant_lightning_indexer_metadata&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_vllm_quant_lightning_indexer_metadata_npu);</div>
+<div class="dl add">+    ops.impl(&quot;npu_quant_lightning_indexer_metadata&quot;, torch::kPrivateUse1, &amp;vllm_ascend::npu_quant_lightning_indexer_metadata_npu);</div>
+<div class="dl ctx"> </div>
+<div class="dl ctx">     ops.def(</div>
+<div class="dl ctx">           &quot;npu_hc_post(&quot;</div></div>
   </details>
 </section>
 
@@ -1090,13 +1291,13 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
       <code class="path">csrc/torch_binding_meta.cpp</code>
     </div>
     <div class="card-h-right">
-      <span class="stat add">+21</span><span class="stat del">-0</span>
+      <span class="stat add">+25</span><span class="stat del">-8</span>
     </div>
   </div>
   <div class="desc">新增 npu_scatter_pa_kv_cache_meta + Meta ops.impl，并修复 Tensor(a!)/Tensor(b!) alias 约束（返回输入自身而非新建 tensor，适配 FULL_AND_PIECEWISE 图捕获）</div>
   <details class="diff-wrap" open>
     <summary>查看 diff</summary>
-    <div class="diff"><div class="dl meta">index faf18de4..6b825a00 100644</div>
+    <div class="diff"><div class="dl meta">index ef8166d3..6b825a00 100644</div>
 <div class="dl meta">--- a/csrc/torch_binding_meta.cpp</div>
 <div class="dl meta">+++ b/csrc/torch_binding_meta.cpp</div>
 <div class="dl hunk">@@ -521,6 +521,25 @@ at::Tensor npu_reshape_and_cache_bnsd_meta(const at::Tensor&amp; hashq,</div>
@@ -1125,7 +1326,36 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl ctx"> </div>
 <div class="dl ctx"> at::Tensor npu_hamming_dist_top_k_meta(const at::Tensor &amp;hashq,</div>
 <div class="dl ctx">                                        const at::Tensor &amp;hashkCache,</div>
-<div class="dl hunk">@@ -1698,6 +1717,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
+<div class="dl hunk">@@ -899,7 +918,7 @@ std::tuple&lt;at::Tensor, at::Tensor&gt; construct_quant_lightning_indexer_output_tens</div>
+<div class="dl ctx">     return std::tuple&lt;at::Tensor, at::Tensor&gt;(sparse_indices_out, sparse_values_out);</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-std::tuple&lt;at::Tensor, at::Tensor&gt; npu_vllm_quant_lightning_indexer_meta(</div>
+<div class="dl add">+std::tuple&lt;at::Tensor, at::Tensor&gt; npu_quant_lightning_indexer_meta(</div>
+<div class="dl ctx">     const at::Tensor &amp;query, const at::Tensor &amp;key, const at::Tensor &amp;weights,</div>
+<div class="dl ctx">     const at::Tensor &amp;query_dequant_scale, const at::Tensor &amp;key_dequant_scale,</div>
+<div class="dl ctx">     int64_t query_quant_mode, int64_t key_quant_mode,</div>
+<div class="dl hunk">@@ -1008,7 +1027,7 @@ at::Tensor npu_sparse_attn_sharedkv_metadata_meta(</div>
+<div class="dl ctx">     return output;</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> </div>
+<div class="dl del">-at::Tensor npu_vllm_quant_lightning_indexer_metadata_meta(</div>
+<div class="dl add">+at::Tensor npu_quant_lightning_indexer_metadata_meta(</div>
+<div class="dl ctx">     int64_t num_heads_q, int64_t num_heads_k, int64_t head_dim, int64_t query_quant_mode, int64_t key_quant_mode,</div>
+<div class="dl ctx">     const c10::optional&lt;at::Tensor&gt; &amp;actual_seq_lengths_query, const c10::optional&lt;at::Tensor&gt; &amp;actual_seq_lengths_key, int64_t batch_size,</div>
+<div class="dl ctx">     int64_t max_seqlen_q, int64_t max_seqlen_k, const c10::string_view layout_query, c10::string_view layout_key, int64_t sparse_count,</div>
+<div class="dl hunk">@@ -1642,10 +1661,6 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
+<div class="dl ctx">     ops.impl(&quot;npu_causal_conv1d_310&quot;, &amp;vllm_ascend::meta::npu_causal_conv1d_310_meta);</div>
+<div class="dl ctx">     // npu_recurrent_gated_delta_rule_310</div>
+<div class="dl ctx">     ops.impl(&quot;npu_recurrent_gated_delta_rule_310&quot;, &amp;vllm_ascend::meta::npu_recurrent_gated_delta_rule_310_meta);</div>
+<div class="dl del">-    // chunk_gated_delta_rule_fwd_h</div>
+<div class="dl del">-    ops.impl(&quot;chunk_gated_delta_rule_fwd_h&quot;, &amp;vllm_ascend::meta::chunk_gated_delta_rule_fwd_h_meta);</div>
+<div class="dl del">-    // chunk_fwd_o</div>
+<div class="dl del">-    ops.impl(&quot;chunk_fwd_o&quot;, &amp;vllm_ascend::meta::chunk_fwd_o_meta);</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> }</div>
+<div class="dl ctx"> #else</div>
+<div class="dl hunk">@@ -1702,6 +1717,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
 <div class="dl ctx">     ops.impl(&quot;npu_hamming_dist_top_k&quot;, &amp;vllm_ascend::meta::npu_hamming_dist_top_k_meta);</div>
 <div class="dl ctx">     // reshape_and_cache_bnsd</div>
 <div class="dl ctx">     ops.impl(&quot;npu_reshape_and_cache_bnsd&quot;, &amp;vllm_ascend::meta::npu_reshape_and_cache_bnsd_meta);</div>
@@ -1133,7 +1363,18 @@ footer { color:var(--muted); font-size:12px; padding:18px 22px; border-top:1px s
 <div class="dl add">+    ops.impl(&quot;npu_scatter_pa_kv_cache&quot;, &amp;vllm_ascend::meta::npu_scatter_pa_kv_cache_meta);</div>
 <div class="dl ctx">     // npu_sign_bits_pack</div>
 <div class="dl ctx">     ops.impl(&quot;npu_sign_bits_pack&quot;, &amp;vllm_ascend::meta::npu_sign_bits_pack_meta);</div>
-<div class="dl ctx">     // CopyAndExpandEagleInputs</div></div>
+<div class="dl ctx">     // CopyAndExpandEagleInputs</div>
+<div class="dl hunk">@@ -1712,8 +1729,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {</div>
+<div class="dl ctx">     ops.impl(&quot;moe_grouped_matmul&quot;, &amp;vllm_ascend::meta::moe_grouped_matmul_meta);</div>
+<div class="dl ctx">     ops.impl(&quot;moe_gating_top_k_hash&quot;, &amp;vllm_ascend::meta::moe_gating_top_k_hash_meta);</div>
+<div class="dl ctx">     ops.impl(&quot;compressor&quot;, &amp;vllm_ascend::meta::compressor_meta);</div>
+<div class="dl del">-    ops.impl(&quot;npu_vllm_quant_lightning_indexer&quot;, &amp;vllm_ascend::meta::npu_vllm_quant_lightning_indexer_meta);</div>
+<div class="dl del">-    ops.impl(&quot;npu_vllm_quant_lightning_indexer_metadata&quot;, &amp;vllm_ascend::meta::npu_vllm_quant_lightning_indexer_metadata_meta);</div>
+<div class="dl add">+    ops.impl(&quot;npu_quant_lightning_indexer&quot;, &amp;vllm_ascend::meta::npu_quant_lightning_indexer_meta);</div>
+<div class="dl add">+    ops.impl(&quot;npu_quant_lightning_indexer_metadata&quot;, &amp;vllm_ascend::meta::npu_quant_lightning_indexer_metadata_meta);</div>
+<div class="dl ctx">     ops.impl(&quot;npu_sparse_attn_sharedkv&quot;, &amp;vllm_ascend::meta::npu_sparse_attn_sharedkv_meta);</div>
+<div class="dl ctx">     ops.impl(&quot;npu_sparse_attn_sharedkv_metadata&quot;, &amp;vllm_ascend::meta::npu_sparse_attn_sharedkv_metadata_meta);</div>
+<div class="dl ctx">     ops.impl(&quot;npu_hc_post&quot;, &amp;vllm_ascend::meta::npu_hc_post_meta);</div></div>
   </details>
 </section>
 

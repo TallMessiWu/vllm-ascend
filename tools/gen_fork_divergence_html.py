@@ -46,7 +46,6 @@ CATEGORIES = OrderedDict(
     [
         ("pr_9715", ("来自 PR #9715 · 修复 scheduler 版本兼容性导致的运行时错误（精简 balance scheduler 补丁）", "#db61a2")),
         ("deps", ("私仓自有 · 依赖与构建", "#7c3aed")),
-        ("dev", ("私仓自有 · 开发调试", "#f59e0b")),
         ("ops", ("私仓自有 · 自定义算子（scatter_pa_kv_cache）", "#06b6d4")),
     ]
 )
@@ -73,11 +72,6 @@ FILES_META = [
     (
         ".gitignore",
         "deps", "新增忽略项：私仓本地配置（CLAUDE.local.md、.claude/settings.local.json）与构建产物目录（csrc/build_out/），避免本地专属文件被提交", False,
-    ),
-    # ============================ 私仓自有 · 开发调试 ============================
-    (
-        "vllm_ascend/profiler/torch_npu_profiler.py",
-        "dev", "NPU profiler 默认开启 PipeUtilization 指标，方便查看算子利用率（关闭无用的 AiCoreNone）", False,
     ),
     # ============================ 私仓自有 · 自定义算子（scatter_pa_kv_cache） ============================
     # --- 共享构建接线 ---
