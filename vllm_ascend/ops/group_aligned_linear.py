@@ -109,6 +109,13 @@ class GroupAlignedColumnParallelLinear(ColumnParallelLinear):
     For a column-parallel layer the MX groups run along the (unsharded) input
     dim, so the output weight, weight_scale and bias all share the same
     per-element output split -- no weight/scale distinction is needed here.
+
+    .. deprecated::
+        MXFP8 group-aligned TP sharding is now handled centrally in
+        ``AscendLinearMethod.create_weights`` (see ``method_adapters.py``), so plain
+        ``ColumnParallelLinear`` works without this subclass. Kept for backward
+        compatibility; scheduled for removal in a later PR. The pure
+        ``group_aligned_partition`` helper above remains in active use.
     """
 
     def __init__(self, input_size: int, output_size: int, *, group_size: int | None = None, **kwargs):
@@ -164,6 +171,13 @@ class GroupAlignedRowParallelLinear(RowParallelLinear):
     Here the MX groups run along the sharded input dim, so the weight is split
     by *element* counts while the weight_scale is split by *group* counts. The
     two are told apart by the full size of the loaded tensor along ``input_dim``.
+
+    .. deprecated::
+        MXFP8 group-aligned TP sharding is now handled centrally in
+        ``AscendLinearMethod.create_weights`` (see ``method_adapters.py``), so plain
+        ``RowParallelLinear`` works without this subclass. Kept for backward
+        compatibility; scheduled for removal in a later PR. The pure
+        ``group_aligned_partition`` helper above remains in active use.
     """
 
     def __init__(self, input_size: int, output_size: int, *, group_size: int | None = None, **kwargs):
