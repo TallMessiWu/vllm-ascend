@@ -39,6 +39,7 @@ from vllm.v1.attention.backends.registry import (  # type: ignore
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 
+import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.utils import (
@@ -62,6 +63,7 @@ from vllm_ascend.compilation.acl_graph import (
 )
 from vllm_ascend.device.device_op import DeviceOperator
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
+from vllm_ascend.quantization.utils import get_dynamic_mx_quant_scale_alg
 from vllm_ascend.utils import is_950, vllm_version_is, weak_ref_tensors
 
 if vllm_version_is("0.27.1"):
@@ -538,6 +540,20 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # attn_metadata during graph replay. Record the captured layer name only
         # for that path.
         self._layer_name: str | None = None
+        # MXFP8 QuantFlashAttn prefill (A5-only custom op). The op accepts only
+        # FP8_E4M3 inputs, so every configuration this guard excludes keeps the
+        # BF16 fused-infer-attention path.
+        self.qfa_prefill_enabled = (
+            envs_ascend.VLLM_ASCEND_ENABLE_QFA_PREFILL
+            and is_950()
+            # Head sizes supported by quant_flash_attn whose descale layout
+            # needs no D-axis padding (D=72 would need padding to 128).
+            and self.head_size in (64, 128, 256)
+            and self.sliding_window is None
+            and self.sinks is None
+            and self.attn_type == AttentionType.DECODER
+        )
+        self._qfa_mask: torch.Tensor | None = None
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1344,6 +1360,131 @@ class AscendAttentionBackendImpl(AttentionImpl):
             actual_seq_lengths_kv = attn_metadata.seq_lens_list
         return key, value, block_size, block_table, actual_seq_lengths_kv
 
+    def _get_qfa_mask(self, device: torch.device) -> torch.Tensor:
+        # quant_flash_attn mask_mode=3 requires a fixed (2048, 2048) int8 mask
+        # where 1 marks masked (strict upper-triangular) positions. Do not reuse
+        # the FIA mask from AttentionMaskBuilder: its dtype/polarity contract is
+        # not guaranteed to match this op.
+        if self._qfa_mask is None or self._qfa_mask.device != device:
+            self._qfa_mask = torch.triu(torch.ones(2048, 2048, dtype=torch.int8, device=device), diagonal=1)
+        return self._qfa_mask
+
+    def _qfa_quant_query_key(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize (T, N, D) BF16 to MXFP8 along D (32-element groups).
+
+        Returns the FP8_E4M3 tensor and its E8M0 descale in the packed
+        (T, N, D/64, 2) layout quant_flash_attn expects (adjacent scale groups
+        pack pairwise into the trailing dim of 2).
+        """
+        num_tokens, num_heads, head_size = x.shape
+        fp8, scale = torch_npu.npu_dynamic_mx_quant(
+            x.reshape(num_tokens * num_heads, head_size),
+            dst_type=torch.float8_e4m3fn,
+            scale_alg=get_dynamic_mx_quant_scale_alg(),
+        )
+        scale = scale.view(torch.uint8).reshape(num_tokens, num_heads, head_size // 64, 2)
+        return fp8.reshape(num_tokens, num_heads, head_size), scale.view(torch.float8_e8m0fnu)
+
+    def _qfa_quant_value_per_seq(self, value: torch.Tensor, seq_lens: list[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize (T, N_kv, D) BF16 values to MXFP8 along the sequence dim.
+
+        quant_flash_attn shares one E8M0 scale per (head, channel) across every
+        32 tokens of a sequence and packs adjacent groups pairwise, so the TND
+        v_descale has sum(ceil(S_i / 64)) leading rows. Sequences are padded
+        with zeros up to a 64-token multiple before quantization; zeros never
+        raise a group's max, so real tokens keep exact scales, and the padded
+        slots are never read back (cu_seqlens bounds the kernel).
+        """
+        num_kv_heads, head_size = value.shape[1], value.shape[2]
+        scale_alg = get_dynamic_mx_quant_scale_alg()
+        fp8_chunks: list[torch.Tensor] = []
+        scale_chunks: list[torch.Tensor] = []
+        start = 0
+        for seq_len in seq_lens:
+            chunk = value[start : start + seq_len]
+            start += seq_len
+            padded_len = cdiv(seq_len, 64) * 64
+            if padded_len != seq_len:
+                chunk = torch.nn.functional.pad(chunk, (0, 0, 0, 0, 0, padded_len - seq_len))
+            # (S, N, D) -> (N*D, S): the shared quant groups run along S.
+            chunk = chunk.permute(1, 2, 0).contiguous().view(num_kv_heads * head_size, padded_len)
+            fp8, scale = torch_npu.npu_dynamic_mx_quant(chunk, dst_type=torch.float8_e4m3fn, scale_alg=scale_alg)
+            fp8 = fp8.view(num_kv_heads, head_size, padded_len).permute(2, 0, 1)
+            fp8_chunks.append(fp8[:seq_len])
+            # (N*D, S/32) -> (S/64, N, D, 2)
+            scale = scale.view(torch.uint8).reshape(num_kv_heads, head_size, padded_len // 64, 2)
+            scale_chunks.append(scale.permute(2, 0, 1, 3))
+        v_fp8 = fp8_chunks[0] if len(fp8_chunks) == 1 else torch.cat(fp8_chunks)
+        v_descale = scale_chunks[0] if len(scale_chunks) == 1 else torch.cat(scale_chunks)
+        return v_fp8.contiguous(), v_descale.contiguous().view(torch.float8_e8m0fnu)
+
+    def _forward_qfa_prefill(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        """PrefillNoCache through the MXFP8 quant_flash_attn custom op.
+
+        Q/K/V are quantized online right before the attention call; the KV
+        cache keeps BF16 through the regular reshape_and_cache path, and every
+        other attention state stays on the FIA BF16 path.
+        """
+        cu_list = attn_metadata.actual_seq_lengths_q
+        num_tokens = cu_list[-1]
+        num_seqs = len(cu_list)
+        seq_lens = [cu_list[0]] + [cu_list[i] - cu_list[i - 1] for i in range(1, num_seqs)]
+        max_seqlen = max(seq_lens)
+
+        cu_seqlens = attn_metadata.query_start_loc
+        if cu_seqlens is not None:
+            cu_seqlens = cu_seqlens[: num_seqs + 1]
+            if cu_seqlens.dtype != torch.int32:
+                cu_seqlens = cu_seqlens.to(torch.int32)
+        else:
+            cu_seqlens = torch.tensor([0, *cu_list], dtype=torch.int32, device=query.device)
+
+        q_fp8, q_descale = self._qfa_quant_query_key(query[:num_tokens])
+        k_fp8, k_descale = self._qfa_quant_query_key(key[:num_tokens])
+        v_fp8, v_descale = self._qfa_quant_value_per_seq(value[:num_tokens], seq_lens)
+
+        # The metadata AICPU op and the main op must receive matching
+        # arguments; a mismatch is undefined behavior, hence the shared dict.
+        common_args: dict[str, Any] = dict(
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            mask_mode=3,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+            layout_q="TND",
+            layout_q_descale="TND",
+            layout_kv="TND",
+            layout_out="TND",
+        )
+        metadata = DeviceOperator.npu_quant_flash_attn_metadata(
+            num_heads_q=self.num_heads,
+            num_heads_kv=self.num_kv_heads,
+            head_dim=self.head_size,
+            v_descale=v_descale,
+            **common_args,
+        )
+        attn_output = DeviceOperator.npu_quant_flash_attn(
+            q_fp8,
+            k_fp8,
+            v_fp8,
+            q_descale,
+            k_descale,
+            v_descale,
+            metadata,
+            self.scale,
+            attn_mask=self._get_qfa_mask(query.device),
+            **common_args,
+        )
+        output[:num_tokens] = attn_output
+        return output
+
     def forward_fused_infer_attention(
         self,
         query: torch.Tensor,
@@ -1365,6 +1506,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
+        if (
+            self.qfa_prefill_enabled
+            and attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
+            and attn_metadata.causal
+        ):
+            return self._forward_qfa_prefill(query, key, value, attn_metadata, output)
         passed_value = value
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
             key, value, attn_metadata, kv_cache

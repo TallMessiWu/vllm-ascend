@@ -100,6 +100,14 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Control the aclrtMemcpyBatchAsync compile path for KV cache offloading.
     # "1": force enable, "0": force disable, None: auto-detect from CANN headers.
     "VLLM_ASCEND_ENABLE_BATCH_MEMCPY": lambda: os.getenv("VLLM_ASCEND_ENABLE_BATCH_MEMCPY", None),
+    # Whether to run full-attention prefill (PrefillNoCache batches) through the
+    # MXFP8 QuantFlashAttn custom op on A5 hardware. Q/K/V are quantized online
+    # to FP8_E4M3 with E8M0 microscaling right before the attention call; the KV
+    # cache stays BF16 and decode/chunked-prefill keep the FIA BF16 path.
+    # 0 (default): always use the BF16 fused-infer-attention path.
+    # 1: use QuantFlashAttn for eligible prefill batches (A5 only; layers with
+    #    sliding window, sinks, or unsupported head sizes fall back to FIA).
+    "VLLM_ASCEND_ENABLE_QFA_PREFILL": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_PREFILL", "0"))),
 }
 
 # end-env-vars-definition
