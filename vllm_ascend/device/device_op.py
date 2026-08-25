@@ -1163,6 +1163,100 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
         return hidden_states, A5DeviceAdaptor.maybe_normalize_mxfp_scale_layout(dynamic_scale)
 
     @staticmethod
+    def npu_quant_flash_attn_metadata(
+        *,
+        num_heads_q: int,
+        num_heads_kv: int,
+        head_dim: int,
+        cu_seqlens_q: torch.Tensor | None = None,
+        cu_seqlens_kv: torch.Tensor | None = None,
+        seqused_q: torch.Tensor | None = None,
+        seqused_kv: torch.Tensor | None = None,
+        v_descale: torch.Tensor | None = None,
+        batch_size: int = 0,
+        max_seqlen_q: int = -1,
+        max_seqlen_kv: int = -1,
+        mask_mode: int = 0,
+        layout_q: str = "TND",
+        layout_q_descale: str = "TND",
+        layout_kv: str = "TND",
+        layout_out: str = "TND",
+    ) -> torch.Tensor:
+        # A5 disables the generic custom-op loader, so register the in-tree
+        # operators lazily after the NPU runtime has been initialized.
+        import vllm_ascend.vllm_ascend_C  # type: ignore[import-untyped]  # noqa: F401, PLC0415
+
+        return torch.ops._C_ascend.npu_quant_flash_attn_metadata(
+            num_heads_q,
+            num_heads_kv,
+            head_dim,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv,
+            seqused_q=seqused_q,
+            seqused_kv=seqused_kv,
+            v_descale=v_descale,
+            batch_size=batch_size,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_kv=max_seqlen_kv,
+            mask_mode=mask_mode,
+            layout_q=layout_q,
+            layout_q_descale=layout_q_descale,
+            layout_kv=layout_kv,
+            layout_out=layout_out,
+        )
+
+    @staticmethod
+    def npu_quant_flash_attn(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        q_descale: torch.Tensor,
+        k_descale: torch.Tensor,
+        v_descale: torch.Tensor,
+        metadata: torch.Tensor,
+        softmax_scale: float,
+        *,
+        block_table: torch.Tensor | None = None,
+        cu_seqlens_q: torch.Tensor | None = None,
+        cu_seqlens_kv: torch.Tensor | None = None,
+        seqused_q: torch.Tensor | None = None,
+        seqused_kv: torch.Tensor | None = None,
+        attn_mask: torch.Tensor | None = None,
+        mask_mode: int = 0,
+        max_seqlen_q: int = -1,
+        max_seqlen_kv: int = -1,
+        layout_q: str = "TND",
+        layout_q_descale: str = "TND",
+        layout_kv: str = "TND",
+        layout_out: str = "TND",
+    ) -> torch.Tensor:
+        import vllm_ascend.vllm_ascend_C  # type: ignore[import-untyped]  # noqa: F401, PLC0415
+
+        return torch.ops._C_ascend.npu_quant_flash_attn(
+            q,
+            k,
+            v,
+            q_descale,
+            k_descale,
+            v_descale,
+            metadata,
+            softmax_scale,
+            block_table=block_table,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv,
+            seqused_q=seqused_q,
+            seqused_kv=seqused_kv,
+            attn_mask=attn_mask,
+            mask_mode=mask_mode,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_kv=max_seqlen_kv,
+            layout_q=layout_q,
+            layout_q_descale=layout_q_descale,
+            layout_kv=layout_kv,
+            layout_out=layout_out,
+        )
+
+    @staticmethod
     def npu_grouped_matmul_swiglu_quant(
         *,
         x: torch.Tensor,

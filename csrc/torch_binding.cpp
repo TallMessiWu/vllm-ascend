@@ -51,6 +51,8 @@
 #include "attention/sparse_attention_score_prefill/sparse_attention_score_prefill_torch_adpt.h"
 #include "attention/store_kv_block/store_kv_block_torch_adpt.h"
 #include "attention/store_kv_block_metadata/store_kv_block_metadata_torch_adpt.cpp"
+#include "attention/quant_flash_attn/quant_flash_attn_torch_adpt.h"
+#include "attention/quant_flash_attn_metadata/quant_flash_attn_metadata_torch_adpt.h"
 #include <c10/core/Device.h>
 #include <c10/core/Scalar.h>
 #include <c10/util/Exception.h>
@@ -2578,5 +2580,36 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("npu_msa_index_score", torch::kPrivateUse1,
              &vllm_ascend::npu_msa_index_score);
+
+    ops.def(
+        "npu_quant_flash_attn("
+        "Tensor q, Tensor k, Tensor v, "
+        "Tensor q_descale, Tensor k_descale, Tensor v_descale, "
+        "Tensor metadata, float softmax_scale, *, "
+        "Tensor? block_table=None, Tensor? p_scale=None, "
+        "Tensor? cu_seqlens_q=None, Tensor? cu_seqlens_kv=None, "
+        "Tensor? seqused_q=None, Tensor? seqused_kv=None, "
+        "Tensor? sinks=None, Tensor? attn_mask=None, "
+        "int quant_mode=1, int mask_mode=0, int win_left=-1, int win_right=-1, "
+        "int max_seqlen_q=-1, int max_seqlen_kv=-1, "
+        "str layout_q=\"TND\", str layout_q_descale=\"TND\", "
+        "str layout_kv=\"TND\", str layout_out=\"TND\") -> Tensor"
+    );
+    ops.impl("npu_quant_flash_attn", torch::kPrivateUse1,
+             &vllm_ascend::npu_quant_flash_attn);
+
+    ops.def(
+        "npu_quant_flash_attn_metadata("
+        "int num_heads_q, int num_heads_kv, int head_dim, *, "
+        "Tensor? cu_seqlens_q=None, Tensor? cu_seqlens_kv=None, "
+        "Tensor? seqused_q=None, Tensor? seqused_kv=None, "
+        "Tensor? v_descale=None, int batch_size=0, "
+        "int max_seqlen_q=-1, int max_seqlen_kv=-1, "
+        "int quant_mode=1, int mask_mode=0, int win_left=-1, int win_right=-1, "
+        "str layout_q=\"TND\", str layout_q_descale=\"TND\", "
+        "str layout_kv=\"TND\", str layout_out=\"TND\") -> Tensor"
+    );
+    ops.impl("npu_quant_flash_attn_metadata", torch::kPrivateUse1,
+             &vllm_ascend::npu_quant_flash_attn_metadata);
 }
 #endif

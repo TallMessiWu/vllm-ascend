@@ -1486,6 +1486,39 @@ void store_kv_block(
 
 }
 
+at::Tensor npu_quant_flash_attn_meta(
+    const at::Tensor &q, const at::Tensor &, const at::Tensor &v,
+    const at::Tensor &, const at::Tensor &, const at::Tensor &,
+    const at::Tensor &, double,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+    c10::string_view, c10::string_view, c10::string_view, c10::string_view)
+{
+    // layout_q/layout_out are TND-only for quant_mode=1, so the output is
+    // (T, N, Dv); Dv depends on the KV layout, which is unambiguous from v.dim().
+    c10::SymInt value_head_dim = (v.dim() == 5) ? v.sym_size(2) * v.sym_size(4)
+                               : (v.dim() == 4) ? v.sym_size(3)
+                                                : v.sym_size(2);
+    const std::vector<c10::SymInt> output_size = {q.sym_size(0), q.sym_size(1), value_head_dim};
+    return at::empty_symint(output_size, q.options().dtype(at::kBFloat16).device(c10::kMeta));
+}
+
+at::Tensor npu_quant_flash_attn_metadata_meta(
+    int64_t, int64_t, int64_t,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    const c10::optional<at::Tensor> &, const c10::optional<at::Tensor> &,
+    const c10::optional<at::Tensor> &,
+    int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+    c10::string_view, c10::string_view, c10::string_view, c10::string_view)
+{
+    constexpr int64_t METADATA_SIZE = 4096;
+    return at::empty_symint({c10::SymInt(METADATA_SIZE)},
+                            at::TensorOptions().dtype(at::kInt).device(c10::kMeta));
+}
+
 } // namespace meta
 } // namespace vllm_ascend
 
@@ -1591,6 +1624,9 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
      // store_kv_block
     ops.impl("store_kv_block_pre", &vllm_ascend::meta::store_kv_block_metadata);
     ops.impl("store_kv_block", &vllm_ascend::meta::store_kv_block);
+    // Quant flash attention (MXFP8) and its AICPU metadata companion
+    ops.impl("npu_quant_flash_attn", &vllm_ascend::meta::npu_quant_flash_attn_meta);
+    ops.impl("npu_quant_flash_attn_metadata", &vllm_ascend::meta::npu_quant_flash_attn_metadata_meta);
 }
 }
 #endif
