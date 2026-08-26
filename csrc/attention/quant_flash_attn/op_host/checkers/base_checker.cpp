@@ -61,9 +61,13 @@ ge::graphStatus QfaBaseChecker::CheckFormatSupport(const gert::CompileTimeTensor
 {
     if (desc != nullptr) {
         auto format = desc->GetOriginFormat();
+        // CANN 9.1.0 declares Ops::Base::ToString(ge::Format) but ships no
+        // definition, which leaves liboptiling.so with an undefined symbol at
+        // load time; print the raw enum value instead of calling it.
         OP_CHECK_IF(
             (FORMAT_SUPPORT_SET.find(format) == FORMAT_SUPPORT_SET.end()),
-            OP_LOGE_FOR_INVALID_FORMAT("QuantFlashAttn", name.c_str(), Ops::Base::ToString(format).c_str(), "ND"),
+            OP_LOGE_FOR_INVALID_FORMAT("QuantFlashAttn", name.c_str(),
+                                       std::to_string(static_cast<int32_t>(format)).c_str(), "ND"),
             return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
