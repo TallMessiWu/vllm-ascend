@@ -11,4 +11,12 @@
 if (BUILD_OPS_RTY_KERNEL)
 else()
     add_modules_sources(OPTYPE common ACLNNTYPE no_need_aclnn)
+    # ops_base_compat.cpp supplies the Ops::Base::ToString overloads that
+    # CANN 9.1.0 declares but ships no definition for. The add_modules_sources
+    # globs only collect *_tiling*.cpp, so register it explicitly with the
+    # tiling object, which both liboptiling.so and libcust_opmaster_rt2.0.so
+    # link.
+    if (TARGET ${OPHOST_NAME}_tiling_obj)
+        target_sources(${OPHOST_NAME}_tiling_obj PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ops_base_compat.cpp)
+    endif()
 endif()
