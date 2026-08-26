@@ -23,6 +23,7 @@ import torch
 import torch_npu
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
+from vllm.logger import logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
     AttentionBackend,
@@ -1432,6 +1433,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         cache keeps BF16 through the regular reshape_and_cache path, and every
         other attention state stays on the FIA BF16 path.
         """
+        # Smoke comparisons rely on this marker to prove the quantized path
+        # actually ran (a non-eligible model would silently keep FIA and make
+        # the on/off outputs identical).
+        logger.info_once(
+            "QFA MXFP8 prefill path engaged (num_heads=%s, num_kv_heads=%s, head_size=%s)",
+            self.num_heads,
+            self.num_kv_heads,
+            self.head_size,
+        )
         cu_list = attn_metadata.actual_seq_lengths_q
         num_tokens = cu_list[-1]
         num_seqs = len(cu_list)
