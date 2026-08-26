@@ -554,6 +554,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and self.sinks is None
             and self.attn_type == AttentionType.DECODER
         )
+        # get_dynamic_mx_quant_scale_alg() falls back to get_current_vllm_config(),
+        # which only holds a value while the model is being built. Resolve it here
+        # instead of on the prefill path, where the context is already gone.
+        self._qfa_scale_alg = get_dynamic_mx_quant_scale_alg(self.vllm_config)
         self._qfa_mask: torch.Tensor | None = None
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
@@ -1381,7 +1385,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         fp8, scale = torch_npu.npu_dynamic_mx_quant(
             x.reshape(num_tokens * num_heads, head_size),
             dst_type=torch.float8_e4m3fn,
-            scale_alg=get_dynamic_mx_quant_scale_alg(),
+            scale_alg=self._qfa_scale_alg,
         )
         scale = scale.view(torch.uint8).reshape(num_tokens, num_heads, head_size // 64, 2)
         return fp8.reshape(num_tokens, num_heads, head_size), scale.view(torch.float8_e8m0fnu)
@@ -1397,7 +1401,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         slots are never read back (cu_seqlens bounds the kernel).
         """
         num_kv_heads, head_size = value.shape[1], value.shape[2]
-        scale_alg = get_dynamic_mx_quant_scale_alg()
+        scale_alg = self._qfa_scale_alg
         fp8_chunks: list[torch.Tensor] = []
         scale_chunks: list[torch.Tensor] = []
         start = 0
