@@ -2302,6 +2302,11 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 )
             if hasattr(attn_metadata, "causal") and not attn_metadata.causal:
                 attn_metadata.attn_mask = None
+            # Draft metadata inherits the target model's attn_state (e.g.
+            # PrefillNoCache during the prompt pass); flag it so target-only
+            # fast paths such as the QFA MXFP8 prefill stay off the drafter.
+            if hasattr(attn_metadata, "is_draft_pass"):
+                attn_metadata.is_draft_pass = True
 
             for layer_name in attn_group.layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata

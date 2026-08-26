@@ -177,6 +177,11 @@ class AscendMetadata:
     attn_mask: torch.Tensor | None = None
     # Current state of this attention run.
     attn_state: AscendAttentionState = AscendAttentionState.ChunkedPrefill
+    # True when this metadata drives a speculative draft-model pass. The draft
+    # prompt pass shallow-copies the target model's metadata (including a
+    # PrefillNoCache attn_state), so target-model-only fast paths must check
+    # this flag instead of attn_state alone.
+    is_draft_pass: bool = False
 
     # Number of tokens excluding padding.
     num_actual_tokens: int = 0
@@ -1520,10 +1525,16 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
+        # QFA prefill is scoped to the target model. The MTP draft prompt pass
+        # inherits PrefillNoCache from the target metadata, but letting it into
+        # the QFA path queues an AICPU metadata task right before the drafter's
+        # FULL-graph replays, which the runtime aborts with an aicpu exception
+        # (507018) when serving with MTP + aclgraph enabled.
         if (
             self.qfa_prefill_enabled
             and attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
             and attn_metadata.causal
+            and not getattr(attn_metadata, "is_draft_pass", False)
         ):
             return self._forward_qfa_prefill(query, key, value, attn_metadata, output)
         passed_value = value
