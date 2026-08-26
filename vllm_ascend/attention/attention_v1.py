@@ -564,6 +564,14 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # instead of on the prefill path, where the context is already gone.
         self._qfa_scale_alg = get_dynamic_mx_quant_scale_alg(self.vllm_config)
         self._qfa_mask: torch.Tensor | None = None
+        # Milestone C: MXFP8 KV cache + QuantFlashAttn paged decode. The FP8
+        # values and E8M0 scale planes live inside this layer's own BF16 cache
+        # allocation (byte reinterpretation), so the kv_cache_spec, block
+        # accounting and the hybrid GDN/attention page sharing stay untouched.
+        # Draft-model impls never attach, keeping the draft on BF16 + FIA.
+        self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
+        self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
+        self._qfa_v_staging: torch.Tensor | None = None
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1537,6 +1545,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and not getattr(attn_metadata, "is_draft_pass", False)
         ):
             return self._forward_qfa_prefill(query, key, value, attn_metadata, output)
+        if self._qfa_fp8_views is not None:
+            # This layer's cache now holds MXFP8 bytes, which the BF16
+            # fused-infer-attention path would read as garbage. The paged QFA
+            # read path lands in milestone C2; fail loudly until then rather
+            # than serving silently wrong results.
+            raise NotImplementedError(
+                f"QFA MXFP8 KV cache has no read path for attn_state={attn_metadata.attn_state} yet "
+                "(milestone C2). Unset VLLM_ASCEND_ENABLE_QFA_DECODE to keep the BF16 path."
+            )
         passed_value = value
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
             key, value, attn_metadata, kv_cache
@@ -1797,6 +1814,235 @@ class AscendAttentionBackendImpl(AttentionImpl):
             slot_mapping=slot_mapping,
         )
 
+    # ------------------------------------------------------------------
+    # Milestone C: MXFP8 KV cache (values + E8M0 scale planes carved out of
+    # this layer's own BF16 cache allocation)
+    # ------------------------------------------------------------------
+    QFA_V_GROUP = 64  # tokens sharing one packed V scale row
+    QFA_STAGING_ROWS = 128  # two V windows: a step of <=1+num_spec may cross one boundary
+
+    def _qfa_attach_fp8_cache(self) -> None:
+        """Carve k/v FP8 values and E8M0 scale planes out of the BF16 cache.
+
+        A BF16 cache holds 2 bytes per element while MXFP8 needs 1 byte per
+        element plus 1/32 byte of scale, so both planes fit inside the existing
+        allocation with room to spare. Taking them as flat byte prefixes keeps
+        every view contiguous, which the custom op requires. Nothing about the
+        kv_cache_spec, the block accounting or the hybrid GDN/attention page
+        sharing changes - only this layer's interpretation of its own bytes.
+        """
+        num_blocks, block_size, num_kv_heads, head_size = self.key_cache.shape
+        if block_size != self.QFA_STAGING_ROWS:
+            raise AssertionError(f"QFA decode requires block_size 128, got {block_size}")
+        values = num_blocks * block_size * num_kv_heads * head_size
+        k_scale_bytes = values // 32  # one E8M0 byte per 32-element group along D
+        v_scale_bytes = num_blocks * (block_size // self.QFA_V_GROUP) * num_kv_heads * head_size * 2
+
+        def carve(cache: torch.Tensor, scale_bytes: int, scale_shape: tuple[int, ...]):
+            if not cache.is_contiguous():
+                raise AssertionError("QFA decode needs a contiguous KV cache; got a strided view")
+            flat = cache.view(torch.uint8).reshape(-1)
+            if flat.numel() < values + scale_bytes:
+                raise AssertionError(f"KV cache too small for MXFP8: {flat.numel()} < {values + scale_bytes}")
+            fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
+            scale = flat[values : values + scale_bytes].view(*scale_shape)
+            scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
+            return fp8, scale
+
+        k_fp8, k_scale = carve(
+            self.key_cache, k_scale_bytes, (num_blocks, block_size, num_kv_heads, head_size // 64, 2)
+        )
+        v_fp8, v_scale = carve(
+            self.value_cache,
+            v_scale_bytes,
+            (num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2),
+        )
+        self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
+        max_reqs = self.vllm_config.scheduler_config.max_num_seqs
+        # One spare row absorbs padding/dummy requests so they never touch a
+        # real request's staging window.
+        self._qfa_v_staging = torch.zeros(
+            max_reqs + 1,
+            self.QFA_STAGING_ROWS,
+            num_kv_heads,
+            head_size,
+            dtype=self.value_cache.dtype,
+            device=self.value_cache.device,
+        )
+
+    def _qfa_quant_along_tokens(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize (W, 64, N, D) BF16 windows along the token axis.
+
+        quant_flash_attn shares one E8M0 scale per (head, channel) across 32
+        tokens and packs adjacent groups pairwise, so each 64-token window
+        yields exactly one (N, D, 2) scale row.
+        """
+        w, group, num_kv_heads, head_size = rows.shape
+        cols = rows.permute(0, 2, 3, 1).reshape(w * num_kv_heads * head_size, group)
+        fp8, scale = torch_npu.npu_dynamic_mx_quant(
+            cols.contiguous(), dst_type=torch.float8_e4m3fn, scale_alg=self._qfa_scale_alg
+        )
+        fp8 = fp8.reshape(w, num_kv_heads, head_size, group).permute(0, 3, 1, 2)
+        scale = scale.view(torch.uint8).reshape(w, num_kv_heads, head_size, 2)
+        return fp8.contiguous(), scale
+
+    def _qfa_write_key(self, key: torch.Tensor, slots: torch.Tensor) -> None:
+        """Quantize (T, N, D) keys along D and scatter them by slot."""
+        k_fp8, k_scale, _, _ = self._qfa_fp8_views
+        num_tokens, num_kv_heads, head_size = key.shape
+        fp8, scale = torch_npu.npu_dynamic_mx_quant(
+            key.reshape(num_tokens * num_kv_heads, head_size),
+            dst_type=torch.float8_e4m3fn,
+            scale_alg=self._qfa_scale_alg,
+        )
+        fp8 = fp8.reshape(num_tokens, num_kv_heads, head_size).view(torch.uint8)
+        scale = scale.view(torch.uint8).reshape(num_tokens, num_kv_heads, head_size // 64, 2)
+        # Slot -1 marks padded and dummy tokens. index_put_ has no skip
+        # semantics, so those fold onto block 0, which vLLM permanently
+        # reserves as a null block that no request is ever allocated.
+        safe_slots = torch.where(slots >= 0, slots, torch.zeros_like(slots)).to(torch.int64)
+        k_fp8.view(-1, num_kv_heads, head_size).index_put_((safe_slots,), fp8)
+        k_scale.view(-1, num_kv_heads, head_size // 64, 2).index_put_((safe_slots,), scale)
+
+    def _qfa_commit_windows(
+        self,
+        rows: torch.Tensor,
+        window_slots: torch.Tensor,
+        num_kv_heads: int,
+        head_size: int,
+    ) -> None:
+        """Quantize (W, 64, N, D) window rows and store them at their slots."""
+        _, _, v_fp8, v_scale = self._qfa_fp8_views
+        fp8, scale = self._qfa_quant_along_tokens(rows)
+        v_fp8.view(-1, self.QFA_V_GROUP, num_kv_heads, head_size).index_put_((window_slots,), fp8)
+        v_scale.view(-1, num_kv_heads, head_size, 2).index_put_((window_slots,), scale)
+
+    def _qfa_write_value_decode(
+        self,
+        value: torch.Tensor,
+        req_ids: torch.Tensor,
+        positions: torch.Tensor,
+        seq_lens: torch.Tensor,
+        block_tables: torch.Tensor,
+        num_reqs: int,
+    ) -> None:
+        """Stage new values, then re-quantize the affected 64-token windows.
+
+        A window's scale is shared by all its tokens, so appending a token
+        invalidates the FP8 bytes already written for that window. The staging
+        ring keeps the last 128 tokens of each request in BF16 so the window
+        can be re-quantized from the original values instead of from lossy FP8.
+        A step of at most 1 + num_spec tokens crosses at most one boundary, so
+        rewriting the last two windows per request always suffices - a fixed
+        amount of work with static shapes, which aclgraph capture requires.
+        """
+        staging = self._qfa_v_staging
+        group = self.QFA_V_GROUP
+        num_kv_heads, head_size = value.shape[1], value.shape[2]
+
+        staging[req_ids, positions % self.QFA_STAGING_ROWS] = value
+
+        reqs = torch.arange(num_reqs, device=value.device)
+        lens = seq_lens[:num_reqs]
+        last_window = torch.div(lens - 1, group, rounding_mode="floor").clamp(min=0)
+        windows = torch.stack([(last_window - 1).clamp(min=0), last_window], dim=1).reshape(-1)
+        win_reqs = reqs.repeat_interleave(2)
+
+        rows = staging.view(-1, 2, group, num_kv_heads, head_size)[win_reqs, windows % 2]
+        # Zero whatever lies past the request's current length: stale ring rows
+        # left by a rejected speculative token must not raise a window's scale.
+        valid = (lens.repeat_interleave(2) - windows * group).clamp(0, group)
+        keep = torch.arange(group, device=value.device).unsqueeze(0) < valid.unsqueeze(1)
+        rows = rows * keep.view(-1, group, 1, 1)
+
+        blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
+        self._qfa_commit_windows(rows, blocks * 2 + (windows % 2), num_kv_heads, head_size)
+
+    def _qfa_write_value_bulk(
+        self,
+        value: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        num_reqs: int,
+    ) -> None:
+        """Whole-window value writes for prefill and chunked-prefill batches.
+
+        These batches add far more tokens than the staging ring holds, so every
+        fully covered window is quantized straight from the incoming values;
+        only a partially filled leading window borrows its earlier tokens from
+        the ring. Request lengths come from the metadata's host lists, which
+        prefill has already materialized, so this costs no extra sync.
+        """
+        staging = self._qfa_v_staging
+        group = self.QFA_V_GROUP
+        num_kv_heads, head_size = value.shape[1], value.shape[2]
+        block_tables = attn_metadata.block_tables
+        cu_q = attn_metadata.actual_seq_lengths_q
+        seq_lens_list = attn_metadata.seq_lens_list
+
+        q_start = 0
+        for req in range(num_reqs):
+            q_end = cu_q[req]
+            q_len = q_end - q_start
+            new_len = seq_lens_list[req]
+            if q_len <= 0 or new_len <= 0:
+                q_start = q_end
+                continue
+            ctx_len = new_len - q_len
+            first_window = ctx_len // group
+            num_windows = (new_len - 1) // group - first_window + 1
+            lead = ctx_len - first_window * group  # earlier tokens sharing the first window
+
+            buf = value.new_zeros(num_windows * group, num_kv_heads, head_size)
+            if lead > 0:
+                ring_rows = torch.arange(first_window * group, ctx_len, device=value.device) % self.QFA_STAGING_ROWS
+                buf[:lead] = staging[req, ring_rows]
+            buf[lead : lead + q_len] = value[q_start:q_end]
+
+            windows = torch.arange(first_window, first_window + num_windows, device=value.device)
+            blocks = block_tables[req, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
+            self._qfa_commit_windows(
+                buf.view(num_windows, group, num_kv_heads, head_size),
+                blocks * 2 + (windows % 2),
+                num_kv_heads,
+                head_size,
+            )
+
+            # Keep the tail in the ring so the next step can re-quantize it.
+            tail = min(new_len, self.QFA_STAGING_ROWS)
+            tail_positions = torch.arange(new_len - tail, new_len, device=value.device)
+            staging[req, tail_positions % self.QFA_STAGING_ROWS] = buf[tail_positions - first_window * group]
+            q_start = q_end
+
+    def _qfa_write_kv(self, key: torch.Tensor, value: torch.Tensor, attn_metadata: AscendMetadata) -> None:
+        """MXFP8 replacement for reshape_and_cache on QFA-owned layers."""
+        if self._qfa_fp8_views is None:
+            self._qfa_attach_fp8_cache()
+        num_tokens = attn_metadata.num_actual_tokens
+        self._qfa_write_key(key[:num_tokens], attn_metadata.slot_mapping[:num_tokens])
+
+        num_reqs = len(attn_metadata.actual_seq_lengths_q)
+        value = value[:num_tokens]
+        if attn_metadata.attn_state in (
+            AscendAttentionState.DecodeOnly,
+            AscendAttentionState.SpecDecoding,
+        ):
+            query_start_loc = attn_metadata.query_start_loc
+            # TODO(milestone C2): read the runner's persistent device seq_lens
+            # instead; the builder hands out a CPU tensor today, making this an
+            # H2D copy per layer per step.
+            seq_lens = attn_metadata.seq_lens.to(value.device, non_blocking=True)
+            token_ids = torch.arange(num_tokens, device=value.device)
+            # Map each token back to its request on device: async scheduling
+            # makes the host-side lengths optimistic, so they cannot be trusted.
+            starts = query_start_loc[:num_reqs]
+            req_ids = torch.searchsorted(query_start_loc[1 : num_reqs + 1].contiguous(), token_ids, right=True)
+            ctx_lens = seq_lens[:num_reqs] - (query_start_loc[1 : num_reqs + 1] - starts)
+            positions = ctx_lens[req_ids] + (token_ids - starts[req_ids])
+            self._qfa_write_value_decode(value, req_ids, positions, seq_lens, attn_metadata.block_tables, num_reqs)
+        else:
+            self._qfa_write_value_bulk(value, attn_metadata, num_reqs)
+        notify_kv_cache_written()
+
     def reshape_and_cache(
         self,
         query: torch.Tensor,
@@ -1809,6 +2055,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         if len(kv_cache) > 1:
             if self.key_cache is None:
                 self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
+            if (
+                self.qfa_decode_enabled
+                and self.kv_sharing_target_layer_name is None
+                and not getattr(attn_metadata, "is_draft_pass", False)
+                and not _EXTRA_CTX.is_draft_model
+                and self.attn_type != AttentionType.ENCODER_DECODER
+            ):
+                self._qfa_write_kv(key, value, attn_metadata)
+                return query, key, value, output
             if self.kv_sharing_target_layer_name is not None:
                 # KV-sharing target layers consume another layer's cache.
                 # Writing their dummy/current K/V would overwrite shared slots.

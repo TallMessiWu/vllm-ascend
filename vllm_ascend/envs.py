@@ -108,6 +108,16 @@ env_variables: dict[str, Callable[[], Any]] = {
     # 1: use QuantFlashAttn for eligible prefill batches (A5 only; layers with
     #    sliding window, sinks, or unsupported head sizes fall back to FIA).
     "VLLM_ASCEND_ENABLE_QFA_PREFILL": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_PREFILL", "0"))),
+    # Whether to store full-attention KV as MXFP8 inside the existing BF16
+    # cache allocation and run decode/verify/chunked-prefill through the
+    # QuantFlashAttn paged path (PA_BBND). Requires
+    # VLLM_ASCEND_ENABLE_QFA_PREFILL=1 (the prefill pass produces the
+    # quantized cache), A5 hardware, block_size 128, and is mutually
+    # exclusive with prefix caching / KV connectors (validated at startup).
+    # The MTP draft model keeps its BF16 cache and the FIA path.
+    # 0 (default): decode stays on the BF16 fused-infer-attention path.
+    # 1: FP8 KV cache + QuantFlashAttn decode for eligible layers.
+    "VLLM_ASCEND_ENABLE_QFA_DECODE": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_DECODE", "0"))),
 }
 
 # end-env-vars-definition

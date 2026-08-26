@@ -459,6 +459,7 @@ class NPUPlatform(Platform):
 
         # 9.Validate SFA / DCP / KV and SP consistency (vllm_config)
         _validate_sfa_dcp_kv_sp(vllm_config)
+        _validate_qfa_decode_config(vllm_config)
 
         # 10.Set pytorch NPU allocator env (vllm_config)
         _set_pytorch_npu_alloc_env(vllm_config)
@@ -1231,6 +1232,41 @@ def _setup_worker_and_scheduler(
             vllm_config.scheduler_config.scheduler_cls = (
                 "vllm_ascend.core.batch_job_aware_scheduler.BatchJobAwareScheduler"
             )
+
+
+def _validate_qfa_decode_config(vllm_config: VllmConfig) -> None:
+    """Reject configs the MXFP8 QFA decode path cannot serve correctly.
+
+    The FP8 KV layout lives inside the BF16 cache allocation as a byte-level
+    reinterpretation, so anything that moves or shares raw cache blocks
+    behind the attention impl's back would silently corrupt it.
+    """
+    import vllm_ascend.envs as envs_ascend
+
+    if not envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE:
+        return
+
+    problems: list[str] = []
+    if not envs_ascend.VLLM_ASCEND_ENABLE_QFA_PREFILL:
+        problems.append("VLLM_ASCEND_ENABLE_QFA_PREFILL=1 is required (the prefill pass produces the quantized cache)")
+    if get_ascend_device_type() != AscendDeviceType.A5:
+        problems.append("QuantFlashAttn is only available on A5 (ascend950)")
+    cache_config = vllm_config.cache_config
+    if cache_config.block_size is not None and cache_config.block_size != 128:
+        problems.append(f"block_size must be 128, got {cache_config.block_size}")
+    if cache_config.enable_prefix_caching:
+        problems.append("prefix caching is unsupported (scale planes are not tracked across shared blocks)")
+    if vllm_config.kv_transfer_config is not None:
+        problems.append("KV connectors copy raw cache bytes and would corrupt the FP8 layout")
+    if vllm_config.parallel_config.prefill_context_parallel_size > 1:
+        problems.append("prefill context parallelism is unsupported")
+    if vllm_config.model_config is not None:
+        if vllm_config.model_config.runner_type == "pooling":
+            problems.append("pooling models are unsupported")
+        if model_uses_sfa_sparse(vllm_config.model_config):
+            problems.append("SFA sparse models are unsupported")
+    if problems:
+        raise AssertionError("VLLM_ASCEND_ENABLE_QFA_DECODE=1 is incompatible with this config: " + "; ".join(problems))
 
 
 def _validate_sfa_dcp_kv_sp(vllm_config: VllmConfig) -> None:
