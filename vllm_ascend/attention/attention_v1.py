@@ -1982,7 +1982,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
         quant_flash_attn shares one E8M0 scale per (head, channel) across 32
         tokens and packs adjacent groups pairwise, so each 64-token window
-        yields exactly one (N, D, 2) scale row.
+        yields exactly one (N, D, 2) scale row. Both results come back as raw
+        bytes: index_put_ has no float8 kernel, and the cache planes are byte
+        views anyway.
         """
         w, group, num_kv_heads, head_size = rows.shape
         cols = rows.permute(0, 2, 3, 1).reshape(w * num_kv_heads * head_size, group)
@@ -1991,7 +1993,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         fp8 = fp8.reshape(w, num_kv_heads, head_size, group).permute(0, 3, 1, 2)
         scale = scale.view(torch.uint8).reshape(w, num_kv_heads, head_size, 2)
-        return fp8.contiguous(), scale
+        return fp8.contiguous().view(torch.uint8), scale
 
     def _qfa_write_key(self, key: torch.Tensor, slots: torch.Tensor) -> None:
         """Quantize (T, N, D) keys along D and scatter them by slot."""
