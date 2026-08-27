@@ -2126,14 +2126,23 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
 
     def _qfa_attach_fp8_cache(self) -> None:
-        """Carve k/v FP8 values and E8M0 scale planes out of the BF16 cache.
+        """Bind the MXFP8 value planes and allocate the E8M0 scale side tables.
 
-        A BF16 cache holds 2 bytes per element while MXFP8 needs 1 byte per
-        element plus 1/32 byte of scale, so both planes fit inside the existing
-        allocation with room to spare. Taking them as flat byte prefixes keeps
-        every view contiguous, which the custom op requires. Nothing about the
-        kv_cache_spec, the block accounting or the hybrid GDN/attention page
-        sharing changes - only this layer's interpretation of its own bytes.
+        The values are this layer's own KV cache, reinterpreted as bytes: a
+        worker patch declares the spec as float8_e4m3fn, so the allocator sized
+        the page for one byte per element and block b starts exactly at
+        b * page. That matters more than it sounds. Carving the planes out of a
+        BF16-sized cache instead put block b at half that offset, i.e. on the
+        page the allocator had given to block b // 2, and on Qwen3.8-27B the
+        blocks belonging to every request but the first were overwritten
+        wholesale between the write and the next read - measured with a 0xA5
+        canary, of which 253 of 125952 bytes survived on block 60 while block
+        12 stayed pristine.
+
+        The scales stay out of the cache entirely. Sharing the allocation with
+        them would make the block stride 33/32 of the value bytes, and a plane
+        with that stride cannot be contiguous, which the custom op requires.
+        As side tables they cost 1/32 of the values instead.
         """
         num_blocks, block_size, num_kv_heads, head_size = self.key_cache.shape
         # The cache is always laid out in kernel blocks, even when the KV
@@ -2143,46 +2152,35 @@ class AscendAttentionBackendImpl(AttentionImpl):
             raise AssertionError(
                 f"QFA decode requires a 128-token kernel block, got a cache shaped {tuple(self.key_cache.shape)}"
             )
-        # A storage far larger than this layer's own tensor means the buffer
-        # holds someone else's blocks too - which is exactly the question
-        # behind carving the planes out of it. Equal sizes kill that theory.
-        for name, cache in (("k", self.key_cache), ("v", self.value_cache)):
-            store = cache.untyped_storage()
-            logger.info(
-                "QFA-CACHE[L%s] %s tensor=%s bytes=%s storage=%s bytes=%s shape=%s",
-                self._qfa_uid,
-                name,
-                hex(cache.data_ptr()),
-                cache.numel() * cache.element_size(),
-                hex(store.data_ptr()),
-                store.nbytes(),
-                tuple(cache.shape),
+        if self.key_cache.element_size() != 1:
+            raise AssertionError(
+                "QFA decode needs a one-byte-per-element KV cache; got "
+                f"{self.key_cache.dtype}. The kv_cache_spec patch did not take effect."
             )
+        device = self.key_cache.device
+        k_fp8 = self.key_cache.view(torch.uint8)
+        v_fp8 = self.value_cache.view(torch.uint8)
+        # Unwritten bytes must read as +0.0: the op reads the padded tile past
+        # seqused_kv, and what sits there changes the result - stamping 0xA5
+        # into it was enough to derail an otherwise correct request.
+        k_fp8.zero_()
+        v_fp8.zero_()
 
-        values = num_blocks * block_size * num_kv_heads * head_size
-        k_scale_bytes = values // 32  # one E8M0 byte per 32-element group along D
-        v_scale_bytes = num_blocks * (block_size // self.QFA_V_GROUP) * num_kv_heads * head_size * 2
+        def scale_plane(*shape: int) -> torch.Tensor:
+            # 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale.
+            return torch.zeros(*shape, dtype=torch.uint8, device=device)
 
-        def carve(cache: torch.Tensor, scale_bytes: int, scale_shape: tuple[int, ...]):
-            if not cache.is_contiguous():
-                raise AssertionError("QFA decode needs a contiguous KV cache; got a strided view")
-            flat = cache.view(torch.uint8).reshape(-1)
-            if flat.numel() < values + scale_bytes:
-                raise AssertionError(f"KV cache too small for MXFP8: {flat.numel()} < {values + scale_bytes}")
-            fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
-            scale = flat[values : values + scale_bytes].view(*scale_shape)
-            scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
-            return fp8, scale
-
-        k_fp8, k_scale = carve(
-            self.key_cache, k_scale_bytes, (num_blocks, block_size, num_kv_heads, head_size // 64, 2)
-        )
-        v_fp8, v_scale = carve(
-            self.value_cache,
-            v_scale_bytes,
-            (num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2),
-        )
+        k_scale = scale_plane(num_blocks, block_size, num_kv_heads, head_size // 64, 2)
+        v_scale = scale_plane(num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2)
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
+        logger.info_once(
+            "QFA MXFP8 cache bound: %s blocks x %s tokens x %s heads x %s, scales %.0f MiB/layer",
+            num_blocks,
+            block_size,
+            num_kv_heads,
+            head_size,
+            (k_scale.numel() + v_scale.numel()) / 2**20,
+        )
         max_reqs = self.vllm_config.scheduler_config.max_num_seqs
         # One spare row absorbs padding/dummy requests so they never touch a
         # real request's staging window.
@@ -2191,8 +2189,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
             self.QFA_STAGING_ROWS,
             num_kv_heads,
             head_size,
-            dtype=self.value_cache.dtype,
-            device=self.value_cache.device,
+            dtype=torch.bfloat16,
+            device=device,
         )
 
     def _qfa_quant_along_tokens(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

@@ -1175,3 +1175,33 @@
 #       Remove this patch once vllm-ascend's bundled PyTorch >= 2.13.0
 #       (which, like upstream, allows eps >= 0 for inference).
 #
+
+# ** 32. File: worker/patch_qfa_kv_cache_spec.py**
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#   1. `vllm.model_executor.layers.attention.attention.Attention.get_kv_cache_spec`
+#    Why:
+#       With VLLM_ASCEND_ENABLE_QFA_DECODE the full-attention KV cache holds MXFP8
+#       values (one byte per element) instead of BF16, and their E8M0 scales live in
+#       side tables the impl owns. vLLM still derives the page size from the model
+#       dtype, so it sizes each page for two bytes per element. That is not merely
+#       wasteful: the allocator hands blocks out by page, so a layer storing one byte
+#       per element inside a two-byte page puts its block b on the page belonging to
+#       block b // 2, which the hybrid allocator has already given to another request
+#       or KV cache group. Measured on Qwen3.8-27B: with a 0xA5 canary in the value
+#       plane, block 12 stayed pristine while only 253 of 125952 bytes survived on
+#       block 60, and every request but the first produced NaN attention output.
+#    How:
+#       Wrap `get_kv_cache_spec` and, for layers whose impl reports
+#       `qfa_decode_enabled`, rebuild the returned FullAttentionSpec with
+#       `dtype=torch.float8_e4m3fn`. Layers that fall back to the BF16 FIA path keep
+#       the original spec, so this is per-layer rather than a global cache_dtype
+#       change. The impl asserts the one-byte element size when it binds the cache,
+#       so a patch that failed to apply fails loudly instead of silently miscomputing.
+#    Related PR (if no, explain why):
+#       No upstream PR: this describes an Ascend-only cache layout that vLLM has no
+#       notion of. Upstreaming would need a general "quantized KV cache with external
+#       scales" spec, which is a larger design discussion.
+#    Future Plan:
+#       Replace with a first-class AscendQFAAttentionSpec once the scale side tables
+#       are folded into the page accounting, following AscendMLAAttentionSpec's
+#       scale_dim/scale_dtype pattern in vllm_ascend/core/kv_cache_interface.py.
