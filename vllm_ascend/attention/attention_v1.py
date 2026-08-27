@@ -2347,6 +2347,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
         nonzero means the two paths disagree on this window's scale, which is
         what explains a step whose logprobs move far more than the usual
         quantization error. Debug only, and nothing here is written back.
+
+        Measured on Qwen3.8-27B, num_spec=3, first window of a 5-token prompt:
+        410 of 4096 scale bytes moved on the first verify (ctx 5 -> 9), 244 on
+        the second (ctx 7 -> 11). A moved byte is one E8M0 step, halving that
+        channel's V precision, and that was enough to shift one step's chosen
+        logprob by 0.88 where the ordinary quantization error is around 0.02.
+        The count falls as the window fills - four more tokens rarely raise
+        the max of a nearly full window - so this is worst right after prefill
+        and fades in steady state. It is inherent to sharing a scale along the
+        token axis, not a defect: a verify batch must write every candidate's
+        KV before the read that decides which of them survive.
         """
         confirmed = (ctx_lens.repeat_interleave(2) - windows * group).clamp(0, group)
         _, scale_confirmed = self._qfa_quant_along_tokens(
