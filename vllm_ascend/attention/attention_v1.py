@@ -1976,6 +1976,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 parts.append(f"{name}={val}")
         logger.info("QFA-DEBUG[L%s] %s %s", self._qfa_uid, tag, " ".join(parts))
 
+    def _qfa_nan_census(self, plane: torch.Tensor, block: int, length: int) -> tuple[int, int]:
+        """NaN-encoding e4m3 bytes in one block, inside vs past `length`.
+
+        0x7F and 0xFF are the only NaN encodings in e4m3, so a nonzero count is
+        unambiguous: either the quantizer emitted them or something else wrote
+        into these bytes.
+        """
+        rows = plane[block]
+        nan = (rows & 0x7F) == 0x7F
+        return int(nan[:length].sum()), int(nan[length:].sum())
+
     def _qfa_probe_decode(
         self,
         q_fp8: torch.Tensor,
@@ -2041,11 +2052,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             single.append(bad(run(args, one_q, one_qs, attn_metadata.block_tables[req : req + 1].contiguous()), 0))
 
         def poison(plane: torch.Tensor, req: int) -> tuple[int, int]:
-            """NaN-encoding bytes in this request's block, inside vs past its length."""
-            block = plane[int(attn_metadata.block_tables[req, 0])]
-            length = int(seq_lens[req])
-            nan = (block & 0x7F) == 0x7F  # e4m3 NaN, either sign
-            return int(nan[:length].sum()), int(nan[length:].sum())
+            return self._qfa_nan_census(plane, int(attn_metadata.block_tables[req, 0]), int(seq_lens[req]))
 
         self._qfa_debug(
             "probe-decode",
@@ -2101,6 +2108,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
             "verify-bulk",
             state=str(attn_metadata.attn_state),
             reqs=[p[0] for p in pending],
+            k_nan=[self._qfa_nan_census(k_fp8, int(block_tables[p[0], 0]), p[4]) for p in pending],
+            v_nan=[self._qfa_nan_census(v_fp8, int(block_tables[p[0], 0]), p[4]) for p in pending],
             k_ok=k_ok,
             k_scale_ok=ks_ok,
             v_ok=v_ok,
@@ -2134,17 +2143,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
             flat = cache.view(torch.uint8).reshape(-1)
             if flat.numel() < values + scale_bytes:
                 raise AssertionError(f"KV cache too small for MXFP8: {flat.numel()} < {values + scale_bytes}")
-            # Both planes must start at 0x00, which reads as +0.0 in e4m3 and
-            # 2^-127 in e8m0. The bytes underneath are whatever the BF16
-            # allocation happened to hold, and in e4m3 0x7F and 0xFF are NaN:
-            # the kernel reads a padded tile past seqused_kv and multiplies
-            # before masking, so a single NaN byte in the unwritten tail of a
-            # block poisons that request's whole output row. Blocks that land
-            # on freshly zeroed pages survive, which is why this only bites
-            # some requests.
-            flat[: values + scale_bytes].zero_()
             fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
             scale = flat[values : values + scale_bytes].view(*scale_shape)
+            scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
             return fp8, scale
 
         k_fp8, k_scale = carve(
