@@ -122,6 +122,12 @@ env_variables: dict[str, Callable[[], Any]] = {
     # (request ids, context lengths, staging positions, block/window slots)
     # for this many attention calls per layer, then go quiet. 0 disables.
     "VLLM_ASCEND_QFA_DEBUG_STEPS": lambda: int(os.getenv("VLLM_ASCEND_QFA_DEBUG_STEPS", "0")),
+    # Debug aid for the V window scale: report, for this many decode steps on
+    # the first eligible layer only, how many scale bytes this step's not yet
+    # confirmed tokens moved. Separate from QFA_DEBUG_STEPS because tracing
+    # the decay across whole 64-token windows needs hundreds of steps, which
+    # every other probe on every layer would drown out. 0 disables.
+    "VLLM_ASCEND_QFA_SCALE_PROBE": lambda: int(os.getenv("VLLM_ASCEND_QFA_SCALE_PROBE", "0")),
 }
 
 # end-env-vars-definition

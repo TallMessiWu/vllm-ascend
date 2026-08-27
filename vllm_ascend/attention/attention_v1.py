@@ -619,6 +619,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # for the debug log; _layer_name is not populated on the write path.
         self._qfa_uid = AscendAttentionBackendImpl._qfa_next_uid
         AscendAttentionBackendImpl._qfa_next_uid += 1
+        # Tracing the scale shift across whole windows takes hundreds of steps,
+        # so it runs on the first eligible layer only: every layer does the
+        # same window arithmetic, and 16 copies of it would bury the trace.
+        self._qfa_scale_probe_left = (
+            envs_ascend.VLLM_ASCEND_QFA_SCALE_PROBE if self.qfa_decode_enabled and self._qfa_uid == 0 else 0
+        )
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -2320,8 +2326,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
         blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
         _, scale = self._qfa_commit_windows(rows, blocks * 2 + (windows % 2), num_kv_heads, head_size)
-        if self._qfa_debug_left > 0:
-            self._qfa_scale_shift_census(raw_rows, windows, ctx_lens, group, scale)
+        if self._qfa_scale_probe_left > 0:
+            self._qfa_scale_probe_left -= 1
+            self._qfa_scale_shift_census(raw_rows, windows, ctx_lens, lens, group, scale)
 
     def _qfa_window_keep(self, valid: torch.Tensor, group: int) -> torch.Tensor:
         """Row mask zeroing everything past a window's valid token count."""
@@ -2332,6 +2339,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         raw_rows: torch.Tensor,
         windows: torch.Tensor,
         ctx_lens: torch.Tensor,
+        seq_lens: torch.Tensor,
         group: int,
         scale_now: torch.Tensor,
     ) -> None:
@@ -2353,20 +2361,32 @@ class AscendAttentionBackendImpl(AttentionImpl):
         the second (ctx 7 -> 11). A moved byte is one E8M0 step, halving that
         channel's V precision, and that was enough to shift one step's chosen
         logprob by 0.88 where the ordinary quantization error is around 0.02.
-        The count falls as the window fills - four more tokens rarely raise
-        the max of a nearly full window - so this is worst right after prefill
-        and fades in steady state. It is inherent to sharing a scale along the
-        token axis, not a defect: a verify batch must write every candidate's
-        KV before the read that decides which of them survive.
+        The count falls as a window fills - four more tokens rarely raise the
+        max of a nearly full one - but a window restarts empty every `group`
+        tokens, so it recurs on that period rather than fading once. What does
+        fade with sequence length is its weight: only the current window can
+        move, and that is a shrinking share of the KV a query reads. All of it
+        is inherent to sharing a scale along the token axis, not a defect: a
+        verify batch must write every candidate's KV before the read that
+        decides which of them survive.
         """
         confirmed = (ctx_lens.repeat_interleave(2) - windows * group).clamp(0, group)
         _, scale_confirmed = self._qfa_quant_along_tokens(
             raw_rows * self._qfa_window_keep(confirmed, group).view(-1, group, 1, 1)
         )
-        self._qfa_debug(
-            "scale-shift",
-            moved=int((scale_confirmed != scale_now).sum()),
-            of=scale_now.numel(),
+        # `fill` is what the count has to be read against: a window restarts
+        # empty every `group` tokens, so the shift recurs on that period
+        # rather than fading away once. What does fade is its weight - only
+        # the current window can move, and it is a shrinking share of the KV
+        # a query reads as the sequence grows.
+        seq = int(seq_lens[0])
+        logger.info(
+            "QFA-SCALE reqs=%d seq=%d fill=%d moved=%d of=%d",
+            seq_lens.numel(),
+            seq,
+            seq - (seq - 1) // group * group,
+            int((scale_confirmed != scale_now).sum()),
+            scale_now.numel(),
         )
 
     def _qfa_write_value_bulk(
