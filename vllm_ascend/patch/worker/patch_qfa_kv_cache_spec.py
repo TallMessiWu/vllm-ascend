@@ -19,6 +19,7 @@ import dataclasses
 
 import torch
 from vllm.config import VllmConfig
+from vllm.logger import logger
 from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheSpec
 
@@ -40,7 +41,24 @@ def _qfa_get_kv_cache_spec(self: Attention, vllm_config: VllmConfig) -> KVCacheS
         return spec
     if type(spec) is not FullAttentionSpec:
         raise AssertionError(f"QFA decode expects a plain FullAttentionSpec, got {type(spec).__name__}")
-    return dataclasses.replace(spec, dtype=torch.float8_e4m3fn)
+    new_spec = dataclasses.replace(spec, dtype=torch.float8_e4m3fn)
+    # The page is what the allocator budgets, and it only shrinks if nothing
+    # pads it back up. On hybrid models the mamba page is padded to match a
+    # BF16 attention page during platform setup, before this patch runs, so
+    # the halved page can get padded straight back and the memory saving
+    # silently evaporates. Log both so the run says which one happened.
+    logger.info(
+        "QFA MXFP8 spec: %s dtype %s -> %s, page %d -> %d bytes (real %d -> %d), block_size %d",
+        self.layer_name,
+        spec.dtype,
+        new_spec.dtype,
+        spec.page_size_bytes,
+        new_spec.page_size_bytes,
+        spec.real_page_size_bytes,
+        new_spec.real_page_size_bytes,
+        new_spec.block_size,
+    )
+    return new_spec
 
 
 Attention.get_kv_cache_spec = _qfa_get_kv_cache_spec
