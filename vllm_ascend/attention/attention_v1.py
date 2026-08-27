@@ -1957,8 +1957,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
     # ------------------------------------------------------------------
     _qfa_next_uid = 0  # layer tag for the debug log, bumped per constructed impl
 
-    QFA_CANARY = 0xA5  # stamped into unwritten value bytes to catch foreign writes
-
     QFA_V_GROUP = 64  # tokens sharing one packed V scale row
     QFA_STAGING_ROWS = 128  # two V windows: a step of <=1+num_spec may cross one boundary
 
@@ -2122,14 +2120,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             reqs=[p[0] for p in pending],
             k_nan=[self._qfa_nan_census(k_fp8, int(block_tables[p[0], 0]), p[4]) for p in pending],
             v_nan=[self._qfa_nan_census(v_fp8, int(block_tables[p[0], 0]), p[4]) for p in pending],
-            # Intact canary bytes in the padding we never write, out of its size.
-            k_canary=[
-                (
-                    int((k_fp8[int(block_tables[p[0], 0])][p[4] :] == self.QFA_CANARY).sum()),
-                    k_fp8[int(block_tables[p[0], 0])][p[4] :].numel(),
-                )
-                for p in pending
-            ],
             k_ok=k_ok,
             k_scale_ok=ks_ok,
             v_ok=v_ok,
@@ -2182,10 +2172,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
             scale = flat[values : values + scale_bytes].view(*scale_shape)
             scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
-            # Canary: every byte we have not written should still read 0xA5.
-            # A block that loses the pattern in its padding is being written by
-            # something other than this layer, which is the open question.
-            fp8.fill_(self.QFA_CANARY)
             return fp8, scale
 
         k_fp8, k_scale = carve(
