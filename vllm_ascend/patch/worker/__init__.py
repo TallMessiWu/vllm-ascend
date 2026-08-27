@@ -72,3 +72,4 @@ import vllm_ascend.patch.worker.patch_v2.patch_dspark  # noqa
 # only patch routed experts capture in main2main.
 import vllm_ascend.patch.worker.patch_routed_experts_capture  # noqa
 import vllm_ascend.patch.worker.patch_qfa_kv_cache_spec  # noqa
+import vllm_ascend.patch.worker.patch_qfa_scale_budget  # noqa

@@ -1226,3 +1226,35 @@
 #       smallest group block and get_kv_cache_spec runs again afterwards: a block
 #       sized for FP8 over there feeds back into itself and halves the page on the
 #       second pass, which with an MTP drafter present killed the run.
+#
+# ** 33. File: worker/patch_qfa_scale_budget.py**
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#   1. `vllm.v1.core.kv_cache_utils.get_kv_cache_config_from_groups`
+#    Why:
+#       vLLM budgets the memory it allocates, and it does not allocate the E8M0
+#       scale side tables patch 32's cache needs - the impl does, after this
+#       function has already decided how many blocks fit. The two therefore add
+#       up to more than the device has. The overshoot is not the 1/32 the format
+#       implies either: value planes are shared, since a block id is unique
+#       across the pool and every layer's tensor views the same memory, while
+#       each MXFP8 layer holds its own scale table sized to address every block.
+#       So the cost scales with how the layers were grouped. Measured on
+#       Qwen3.8-27B: 1.3 GiB (3.2% of values) without MTP, where 16 layers share
+#       a group, and 11.7 GiB (49%) with MTP, where grouping falls apart into one
+#       layer per group - enough to abort the run at the default 0.85 GPU
+#       utilization while allocating the tables.
+#    How:
+#       Wrap the function and subtract the tables' share from `available_memory`
+#       before the original computes the block count, so every number downstream
+#       - blocks, capacity, reported concurrency - describes memory the device
+#       actually has. Sizes come from `vllm_ascend/attention/qfa_scale.py`, which
+#       the impl also allocates from, and the impl asserts the two agree. Layouts
+#       this arithmetic does not model (mixed page sizes, i.e. MLA) are left
+#       alone with a warning rather than guessed at; they have no MXFP8 layer.
+#    Related PR (if no, explain why):
+#       No upstream PR: vLLM has no notion of a KV cache whose scales live
+#       outside the pages it accounts for. Upstreaming needs the first-class spec
+#       described in patch 32's future plan, which would make this unnecessary.
+#    Future Plan:
+#       Remove together with patch 32 once an AscendQFAAttentionSpec folds the
+#       scales into the page accounting.

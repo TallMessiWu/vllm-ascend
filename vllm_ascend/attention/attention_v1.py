@@ -43,6 +43,7 @@ from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
+from vllm_ascend.attention.qfa_scale import qfa_scale_bytes_per_kernel_block
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
     PagedAttentionGraphParam,
@@ -2202,6 +2203,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
         k_scale = scale_plane(num_blocks, block_size, num_kv_heads, head_size // 64, 2)
         v_scale = scale_plane(num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2)
+        # The reservation that keeps these tables inside the memory budget is
+        # computed from qfa_scale_bytes_per_kernel_block; if the shapes above
+        # drift from it the budget is silently short by the difference.
+        expected = num_blocks * qfa_scale_bytes_per_kernel_block(num_kv_heads, head_size)
+        if k_scale.numel() + v_scale.numel() != expected:
+            raise AssertionError(
+                f"QFA scale tables are {k_scale.numel() + v_scale.numel()} bytes but the memory "
+                f"reservation sized them at {expected}; keep both in qfa_scale.py"
+            )
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
         # Per layer, not info_once: the scale tables are allocated outside
         # vLLM's KV budget, so their total is only visible by summing what each
