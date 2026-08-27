@@ -116,7 +116,9 @@ env_variables: dict[str, Callable[[], Any]] = {
     # exclusive with prefix caching / KV connectors (validated at startup).
     # The MTP draft model keeps its BF16 cache and the FIA path.
     # 0 (default): decode stays on the BF16 fused-infer-attention path.
-    # 1: FP8 KV cache + QuantFlashAttn decode for eligible layers.
+    # 1: FP8 KV cache + QuantFlashAttn decode for eligible layers. Ignored
+    # when speculative decoding is configured - that combination loses both
+    # accuracy and KV capacity, see the note in AscendAttentionBackendImpl.
     "VLLM_ASCEND_ENABLE_QFA_DECODE": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_DECODE", "0"))),
     # Debug aid for the QFA paged path: dump the per-request bookkeeping
     # (request ids, context lengths, staging positions, block/window slots)

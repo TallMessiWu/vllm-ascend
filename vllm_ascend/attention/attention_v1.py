@@ -604,14 +604,38 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # That patch keys off this flag alone, so this flag is what decides
         # the cache's dtype - it must stay false for any layer that serves
         # from the BF16 FIA path, which _building_backbone() enforces above.
-        self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
+        #
+        # Speculative decoding is excluded because on this cache it costs more
+        # than it returns, on both counts measured on Qwen3.8-27B:
+        #   - Output quality. The V scale is shared across 32 tokens, and a
+        #     verify step must write all 1 + num_spec candidates before the
+        #     read that judges them, so tokens that may yet be rejected still
+        #     raise the scale and coarsen every token already in the window.
+        #     Worst step moved a logprob by 0.96 and turned one prompt into a
+        #     repetition loop.
+        #   - KV capacity. Speculation breaks the layer grouping apart (16 FP8
+        #     layers, one BF16 drafter, 48 GDN), and the scale tables, which
+        #     are per layer where the values are shared, grow from 3% of the
+        #     values to 49%. Concurrency lands at 18.59x against BF16's 24.67x.
+        # Without speculation the same cache is a clear win - 83.40x against
+        # 71.67x - so only the combination is turned off. QFA prefill stays on
+        # either way: it leaves the KV cache in BF16 and has neither problem.
+        spec_config = self.vllm_config.speculative_config
+        self.qfa_decode_enabled = (
+            self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE and spec_config is None
+        )
+        if self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE and spec_config is not None:
+            logger.warning_once(
+                "VLLM_ASCEND_ENABLE_QFA_DECODE is set but speculative decoding is on, so the "
+                "MXFP8 KV cache stays off and decode serves from BF16. The two together lose "
+                "both accuracy and KV capacity; QFA prefill is unaffected."
+            )
         self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
         # Upper bound on tokens per request in a decode step, mirroring the
         # metadata builder. Passing the bound rather than the batch's actual
         # max keeps the value constant across steps, which aclgraph capture
         # needs - the kernels still clip their work to the real seqused/cu
         # values they read from device memory.
-        spec_config = self.vllm_config.speculative_config
         self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
         self._qfa_pending_check: list = []
