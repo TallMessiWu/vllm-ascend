@@ -1440,14 +1440,19 @@ class AscendAttentionBackendImpl(AttentionImpl):
             # (S, N, D) -> (N*D, S): the shared quant groups run along S.
             chunk = chunk.permute(1, 2, 0).contiguous().view(num_kv_heads * head_size, padded_len)
             fp8, scale = torch_npu.npu_dynamic_mx_quant(chunk, dst_type=torch.float8_e4m3fn, scale_alg=scale_alg)
-            fp8 = fp8.view(num_kv_heads, head_size, padded_len).permute(2, 0, 1)
+            # Reorder as bytes throughout: transposing an FP8/E8M0 tensor can
+            # drop to an AICPU fallback kernel that aborts the stream (507018).
+            fp8 = fp8.view(torch.uint8).view(num_kv_heads, head_size, padded_len).permute(2, 0, 1)
             fp8_chunks.append(fp8[:seq_len])
             # (N*D, S/32) -> (S/64, N, D, 2)
             scale = scale.view(torch.uint8).reshape(num_kv_heads, head_size, padded_len // 64, 2)
             scale_chunks.append(scale.permute(2, 0, 1, 3))
         v_fp8 = fp8_chunks[0] if len(fp8_chunks) == 1 else torch.cat(fp8_chunks)
         v_descale = scale_chunks[0] if len(scale_chunks) == 1 else torch.cat(scale_chunks)
-        return v_fp8.contiguous(), v_descale.contiguous().view(torch.float8_e8m0fnu)
+        return (
+            v_fp8.contiguous().view(torch.float8_e4m3fn),
+            v_descale.contiguous().view(torch.float8_e8m0fnu),
+        )
 
     def _forward_qfa_prefill(
         self,
@@ -1570,10 +1575,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         q_fp8, q_descale = self._qfa_quant_query_key(query[:num_tokens])
         if decode:
             group = self.num_heads // self.num_kv_heads
+            # (T, Nq, D/64, 2) -> (Nkv, T, G, D/64, 2). The reorder runs on a
+            # uint8 view: a 5-D transpose of e8m0 has no AICORE kernel and the
+            # AICPU fallback aborts the stream.
             q_descale = (
-                q_descale.reshape(num_tokens, self.num_kv_heads, group, self.head_size // 64, 2)
+                q_descale.view(torch.uint8)
+                .reshape(num_tokens, self.num_kv_heads, group, self.head_size // 64, 2)
                 .permute(1, 0, 2, 3, 4)
                 .contiguous()
+                .view(torch.float8_e8m0fnu)
             )
 
         common_args = self._qfa_paged_common_args(attn_metadata, decode)
@@ -1991,9 +2001,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
         fp8, scale = torch_npu.npu_dynamic_mx_quant(
             cols.contiguous(), dst_type=torch.float8_e4m3fn, scale_alg=self._qfa_scale_alg
         )
-        fp8 = fp8.reshape(w, num_kv_heads, head_size, group).permute(0, 3, 1, 2)
+        # Reorder as bytes: transposing a float8 tensor drops to an AICPU
+        # fallback kernel that fails on this hardware (507018).
+        fp8 = fp8.view(torch.uint8).reshape(w, num_kv_heads, head_size, group).permute(0, 3, 1, 2)
         scale = scale.view(torch.uint8).reshape(w, num_kv_heads, head_size, 2)
-        return fp8.contiguous().view(torch.uint8), scale
+        return fp8.contiguous(), scale
 
     def _qfa_write_key(self, key: torch.Tensor, slots: torch.Tensor) -> None:
         """Quantize (T, N, D) keys along D and scatter them by slot."""
