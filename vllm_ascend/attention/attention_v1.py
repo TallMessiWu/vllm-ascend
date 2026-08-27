@@ -43,7 +43,7 @@ from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
-from vllm_ascend.attention.qfa_scale import QFA_KERNEL_BLOCK, qfa_scale_bytes_per_kernel_block
+from vllm_ascend.attention.qfa_scale import QFA_KERNEL_BLOCK, plan_v_windows, qfa_scale_bytes_per_kernel_block
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
     PagedAttentionGraphParam,
@@ -509,25 +509,45 @@ class AscendAttentionPCPMetadataBuilder(AscendAttentionMetadataBuilder):
         return metadata
 
 
-def _building_backbone() -> bool:
-    """Whether the layer under construction belongs to the backbone model.
-
-    QFA owns its layers' KV cache format, so only the backbone may opt in.
-    vLLM builds side models under their own model tag - the MTP drafter under
-    "eagle_head", Gemma's cross decoder and the vision towers under theirs -
-    and those layers serve from the BF16 FIA path. A side layer that still
-    declared MXFP8 would be handed a one-byte-per-element cache that FIA reads
-    as garbage, because the kv_cache_spec patch keys off qfa_decode_enabled
-    alone. The tag decides, not the layer name, which differs per drafter.
+def _qfa_model_tag() -> str:
+    """The model tag the layer under construction is being built under.
 
     Read through the module so the current value is seen: `model_tag` is a
     module-level global that set_model_tag() rebinds, so a from-import would
-    freeze it at "backbone". Anything but the backbone falls back to BF16 -
-    over-excluding costs speed, under-excluding costs correctness.
+    freeze it at "backbone".
     """
     from vllm.compilation import backends as compilation_backends
 
-    return getattr(compilation_backends, "model_tag", "backbone") == "backbone"
+    return getattr(compilation_backends, "model_tag", "backbone")
+
+
+def _qfa_layer_eligible(vllm_config) -> bool:
+    """Whether the layer under construction may own an MXFP8 KV cache.
+
+    QFA owns its layers' cache format and the kv_cache_spec patch keys off
+    `qfa_decode_enabled` alone, so a layer that declares MXFP8 and then serves
+    from the BF16 FIA path is handed a one-byte-per-element cache it reads as
+    garbage. The tag decides, not the layer name, which differs per drafter.
+
+    The backbone always qualifies. The MTP drafter does too, and has to: vLLM
+    buckets KV cache layers by exact spec equality and then takes the smallest
+    bucket as the group size (`_get_kv_cache_groups_uniform_page_size`), so one
+    BF16 drafter standing beside 16 MXFP8 layers collapses every group to a
+    single layer. Value planes are shared across a group but scale side tables
+    are per layer, so that collapse took the tables from 3% of the values to
+    49% and left MTP + QFA at 18.59x concurrency against BF16's 24.67x. On the
+    same spec the drafter merges back into the attention group and the layout
+    is the BF16 one again.
+
+    Every other side model stays on BF16: Gemma's cross decoder, the vision
+    towers, the dflash2 candidate selector, and the non-MTP drafters, whose
+    passes this backend does not route through the paged op.
+    """
+    tag = _qfa_model_tag()
+    if tag == "backbone":
+        return True
+    spec = vllm_config.speculative_config
+    return tag == "eagle_head" and spec is not None and getattr(spec, "method", None) == "mtp"
 
 
 class AscendAttentionBackendImpl(AttentionImpl):
@@ -590,8 +610,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and self.sliding_window is None
             and self.sinks is None
             and self.attn_type == AttentionType.DECODER
-            and _building_backbone()
+            and _qfa_layer_eligible(self.vllm_config)
         )
+        # The MTP drafter is the one side model that owns an MXFP8 cache, and
+        # it runs a single token per request per pass, so its bounds differ.
+        self._qfa_is_draft_layer = _qfa_model_tag() != "backbone"
         # get_dynamic_mx_quant_scale_alg() falls back to get_current_vllm_config(),
         # which only holds a value while the model is being built. Resolve it here
         # instead of on the prefill path, where the context is already gone.
@@ -603,42 +626,33 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # element; the E8M0 scales are side tables the impl allocates itself.
         # That patch keys off this flag alone, so this flag is what decides
         # the cache's dtype - it must stay false for any layer that serves
-        # from the BF16 FIA path, which _building_backbone() enforces above.
+        # from the BF16 FIA path, which _qfa_layer_eligible() enforces above.
         #
-        # Speculative decoding is excluded because on this cache it costs more
-        # than it returns, on both counts measured on Qwen3.8-27B:
-        #   - Output quality. The V scale is shared across 32 tokens, and a
-        #     verify step must write all 1 + num_spec candidates before the
-        #     read that judges them, so tokens that may yet be rejected still
-        #     raise the scale and coarsen every token already in the window.
-        #     Worst step moved a logprob by 0.96 and turned one prompt into a
-        #     repetition loop.
-        #   - KV capacity. Speculation breaks the layer grouping apart (16 FP8
-        #     layers, one BF16 drafter, 48 GDN), and the scale tables, which
-        #     are per layer where the values are shared, grow from 3% of the
-        #     values to 49%. Concurrency lands at 18.59x against BF16's 24.67x.
-        # Without speculation the same cache is a clear win - 83.40x against
-        # 71.67x - so only the combination is turned off. QFA prefill stays on
-        # either way: it leaves the KV cache in BF16 and has neither problem.
+        # Speculative decoding rides on the same cache. Both of the things it
+        # used to cost have their own answer now: the layer grouping, by the
+        # MTP drafter declaring MXFP8 alongside the backbone rather than
+        # standing alone as the smallest bucket (see _qfa_layer_eligible), and
+        # the V window scale, by writing the window twice around the attention
+        # read (see _qfa_write_value_decode). Until C3 captures the paged path
+        # this combination needs enforce_eager; the platform validates it.
         spec_config = self.vllm_config.speculative_config
-        self.qfa_decode_enabled = (
-            self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE and spec_config is None
-        )
-        if self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE and spec_config is not None:
-            logger.warning_once(
-                "VLLM_ASCEND_ENABLE_QFA_DECODE is set but speculative decoding is on, so the "
-                "MXFP8 KV cache stays off and decode serves from BF16. The two together lose "
-                "both accuracy and KV capacity; QFA prefill is unaffected."
-            )
+        self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
         self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
         # Upper bound on tokens per request in a decode step, mirroring the
         # metadata builder. Passing the bound rather than the batch's actual
         # max keeps the value constant across steps, which aclgraph capture
         # needs - the kernels still clip their work to the real seqused/cu
         # values they read from device memory.
-        self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
+        # The drafter proposes one token per request per pass whatever
+        # num_speculative_tokens says, so it keeps the tighter bound.
+        self._qfa_decode_threshold = (
+            1 if self._qfa_is_draft_layer else 1 + (spec_config.num_speculative_tokens if spec_config else 0)
+        )
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
         self._qfa_pending_check: list = []
+        # Set by _qfa_write_value_decode on a verify step and consumed by
+        # _qfa_flush_restore once the attention read is done. See there.
+        self._qfa_pending_restore: tuple | None = None
         # Impls are constructed in layer order, so this doubles as a layer tag
         # for the debug log; _layer_name is not populated on the write path.
         self._qfa_uid = AscendAttentionBackendImpl._qfa_next_uid
@@ -1686,6 +1700,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         if decode and self._qfa_debug_left > 0:
             self._qfa_probe_decode(q_fp8, q_descale_tnd, attn_metadata, attn_output, common_args)
+        # The read is over, so the confirmed-scale view of the V windows has
+        # served its purpose and must not outlive it.
+        self._qfa_flush_restore()
         output[:num_tokens] = attn_output
         return output
 
@@ -1710,11 +1727,16 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
-        # QFA prefill is scoped to the target model. The MTP draft prompt pass
-        # inherits PrefillNoCache from the target metadata, but letting it into
-        # the QFA path queues an AICPU metadata task right before the drafter's
-        # FULL-graph replays, which the runtime aborts with an aicpu exception
-        # (507018) when serving with MTP + aclgraph enabled.
+        # QFA prefill stays scoped to the target model even though the MTP
+        # drafter now owns an MXFP8 cache of its own. A PrefillNoCache batch
+        # does not read the cache at all, so BF16 FIA is free to serve it, and
+        # the draft prompt pass runs once per request - there is nothing to
+        # win here and something to lose: it inherits PrefillNoCache from the
+        # target metadata, and letting it into the QFA path queues an AICPU
+        # metadata task right before the drafter's FULL-graph replays, which
+        # the runtime aborts with an aicpu exception (507018). The bytes that
+        # pass writes still go through _qfa_write_kv, so what it leaves in the
+        # cache is MXFP8 either way.
         if (
             self.qfa_prefill_enabled
             and attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
@@ -1722,15 +1744,21 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and not getattr(attn_metadata, "is_draft_pass", False)
         ):
             return self._forward_qfa_prefill(query, key, value, attn_metadata, output)
-        if (
-            self.qfa_decode_enabled
-            and not getattr(attn_metadata, "is_draft_pass", False)
-            and not _EXTRA_CTX.is_draft_model
-        ):
+        if self.qfa_decode_enabled and attn_metadata.attn_state != AscendAttentionState.PrefillNoCache:
             # This layer's cache holds MXFP8 bytes, which the BF16
             # fused-infer-attention path would read as garbage, so every state
-            # that reads the cache has to go through the paged QFA op. An
-            # unhandled state must fail loudly rather than serve wrong numbers.
+            # that reads the cache has to go through the paged QFA op -
+            # including the MTP drafter's own passes, which own such a cache
+            # too. An unhandled state must fail loudly rather than serve
+            # wrong numbers.
+            #
+            # PrefillNoCache is the one state excluded, because it is the one
+            # state that reads no cache at all: _get_fia_params hands the
+            # batch's own BF16 K/V straight back and never touches the planes.
+            # Whatever did not take the QFA prefill branch above - a
+            # non-causal prefill, and the draft prompt pass, which is kept out
+            # of it so its AICPU metadata task does not land next to the
+            # drafter's graph replays - is served correctly by BF16 FIA.
             if attn_metadata.attn_state in (
                 AscendAttentionState.DecodeOnly,
                 AscendAttentionState.SpecDecoding,
@@ -2012,6 +2040,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
     _qfa_next_uid = 0  # layer tag for the debug log, bumped per constructed impl
 
     QFA_V_GROUP = 64  # tokens sharing one packed V scale row
+    QFA_E4M3_MAX = 448.0  # largest magnitude e4m3 holds at scale 1
 
     def _qfa_debug(self, tag: str, **fields) -> None:
         """Log the per-request bookkeeping for the first few calls on a layer."""
@@ -2321,6 +2350,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         seq_lens: torch.Tensor,
         block_tables: torch.Tensor,
         num_reqs: int,
+        spec_verify: bool,
     ) -> None:
         """Re-quantize the 64-token windows this step appended to.
 
@@ -2339,21 +2369,21 @@ class AscendAttentionBackendImpl(AttentionImpl):
         most 1 + num_spec new tokens that is one window, or two when the step
         crosses a boundary, so the work stays a fixed two slots per request -
         static shapes, which aclgraph capture requires.
+
+        On a verify step (`spec_verify`) the window is written twice: once
+        here at the scale the confirmed tokens alone imply, which is what the
+        attention read of this step sees, and once in _qfa_flush_restore at
+        the scale the unclamped values need, which is what stays. Everywhere
+        else confirmed == valid and the two would coincide, so a single write
+        is issued and the non-speculative path is untouched.
         """
         group = self.QFA_V_GROUP
         num_kv_heads, head_size = value.shape[1], value.shape[2]
 
-        reqs = torch.arange(num_reqs, device=value.device)
         lens = seq_lens[:num_reqs]
-        last_window = torch.div(lens - 1, group, rounding_mode="floor").clamp(min=0)
-        # The first window holding a new token; clamped so a request with no
-        # new tokens (a padded row) degenerates to a harmless duplicate write.
-        first_window = torch.minimum(torch.div(ctx_lens, group, rounding_mode="floor"), last_window)
-        windows = torch.stack([first_window, last_window], dim=1).reshape(-1)
-        win_reqs = reqs.repeat_interleave(2)
-
-        blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
-        window_slots = blocks * 2 + (windows % 2)
+        plan = plan_v_windows(ctx_lens, seq_lens, block_tables, num_reqs, group)
+        first_window, last_window = plan["first_window"], plan["last_window"]
+        window_slots = plan["window_slots"]
         raw_rows = self._qfa_dequant_windows(window_slots, num_kv_heads, head_size)
         # Overlay this step's tokens. A token belongs to whichever of the two
         # rows covers its window; the ones it does not belong to would corrupt
@@ -2374,13 +2404,67 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # Zero whatever lies past the request's current length: a rejected
         # speculative token leaves committed bytes past the rolled-back tail,
         # and they must not raise this window's scale.
-        valid = (lens.repeat_interleave(2) - windows * group).clamp(0, group)
-        rows = raw_rows * self._qfa_window_keep(valid, group).view(-1, group, 1, 1)
+        rows = raw_rows * self._qfa_window_keep(plan["valid"], group).view(-1, group, 1, 1)
 
-        _, scale = self._qfa_commit_windows(rows, window_slots, num_kv_heads, head_size)
+        if not spec_verify:
+            self._qfa_commit_windows(rows, window_slots, num_kv_heads, head_size)
+            return
+
+        # A verify step writes 1 + num_spec candidates before the read that
+        # decides which of them survive, so left alone this step's drafts set
+        # the scale the whole window - confirmed history included - is
+        # re-rounded at. Hold the window at the scale the confirmed tokens
+        # alone imply for the duration of the read, with the drafts clamped
+        # into that range. The first query token is confirmed: it is the token
+        # the previous step sampled, and its logits are what judge draft 1, so
+        # that query reads exactly what a non-speculative run would have held.
+        _, scale_read = self._qfa_quant_along_tokens(
+            rows * self._qfa_window_keep(plan["confirmed"], group).view(-1, group, 1, 1)
+        )
+        self._qfa_commit_windows(self._qfa_clamp_to_scale(rows, scale_read), window_slots, num_kv_heads, head_size)
+        # _qfa_flush_restore puts the unclamped rows back once the read is
+        # done. They are handed over from here rather than re-read from what
+        # was just written, because a clamped draft that gets accepted would
+        # otherwise enter history at a value it never had - and the confirmed
+        # maximum computed from it could never climb back. Simulated at 3x
+        # worse than changing nothing (sim_qfa_spec_scale_policies.py).
+        self._qfa_pending_restore = (rows, window_slots, num_kv_heads, head_size)
         if self._qfa_scale_probe_left > 0:
             self._qfa_scale_probe_left -= 1
-            self._qfa_scale_shift_census(raw_rows, windows, ctx_lens, lens, group, scale)
+            _, scale_full = self._qfa_quant_along_tokens(rows)
+            self._qfa_scale_shift_census(scale_read, scale_full, lens, group)
+
+    def _qfa_clamp_to_scale(self, rows: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """Clamp (W,64,N,D) to what e4m3 holds at the given (W,N,D,2) E8M0 bytes.
+
+        Clamping and re-quantizing, rather than dividing by the scale here,
+        keeps every rounding decision inside npu_dynamic_mx_quant: the clamped
+        maximum stays in the same power-of-two bucket, so the operator derives
+        exactly this scale again. Two roundings of the same cache, ours and the
+        operator's, would otherwise have to agree byte for byte forever.
+
+        Byte 0 is the "unwritten" scale, 2^-127. It means the row had no
+        confirmed token to scale from - the drafts opened a window of their
+        own - and such a row is left alone rather than clamped to nothing.
+        """
+        limit = (torch.exp2((scale.to(torch.int32) - 127).to(torch.float32)) * self.QFA_E4M3_MAX).to(rows.dtype)
+        limit = torch.where(scale == 0, rows.new_full((), torch.finfo(rows.dtype).max), limit)
+        limit = limit.permute(0, 3, 1, 2).repeat_interleave(self.QFA_V_GROUP // 2, dim=1)
+        return torch.clamp(rows, -limit, limit)
+
+    def _qfa_flush_restore(self) -> None:
+        """Put the V windows back at the scale their unclamped values need.
+
+        The confirmed-scale view _qfa_write_value_decode leaves behind is for
+        the attention read of that one step and nothing else. Restoring from
+        the rows it stashed - not from the cache, which now holds the clamped
+        bytes - leaves the committed cache byte identical to what a single
+        unclamped write produces, so the accuracy already measured against
+        BF16 carries over unchanged.
+        """
+        pending, self._qfa_pending_restore = self._qfa_pending_restore, None
+        if pending is not None:
+            self._qfa_commit_windows(*pending)
 
     def _qfa_window_keep(self, valid: torch.Tensor, group: int) -> torch.Tensor:
         """Row mask zeroing everything past a window's valid token count."""
@@ -2408,61 +2492,46 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
     def _qfa_scale_shift_census(
         self,
-        raw_rows: torch.Tensor,
-        windows: torch.Tensor,
-        ctx_lens: torch.Tensor,
+        scale_read: torch.Tensor,
+        scale_full: torch.Tensor,
         seq_lens: torch.Tensor,
         group: int,
-        scale_now: torch.Tensor,
     ) -> None:
-        """Count the scale bytes this step's unconfirmed tokens moved.
+        """Count the scale bytes this step's unconfirmed tokens would have moved.
 
-        A V window shares one E8M0 scale per (head, channel) across its 64
-        tokens, so appending a token rewrites the bytes already committed for
-        the tokens before it whenever the window's max crosses a power of two.
-        A verify step appends up to 1 + num_spec tokens before the attention
-        read, so that read can see a scale a non-speculative run would only
-        reach several steps later - the same history, quantized differently.
-        Re-quantizing from the confirmed tokens alone measures how far THIS
-        step's newly written tokens moved the scale. Read it as speculation's
-        cost only against the same table at NUM_SPEC=0, which is not zero
-        either - there the step still appends one token. The ratio between the
-        two is speculation's share; a single run's numbers are not.
+        A V window shares one E8M0 scale per (head, channel) across 32 tokens,
+        so a token appended to it re-rounds every token already committed
+        whenever the window's maximum crosses a power of two. A verify step
+        appends up to 1 + num_spec of them before the attention read, and the
+        drafts among those may not survive. This is the gap the two-write
+        sequence closes: `scale_read` is what the read actually saw,
+        `scale_full` what it would have seen without the split, and the count
+        is how many bytes separate them.
 
-        Debug only, and nothing here is written back.
+        Debug only, and nothing here is written back. It costs an extra
+        quantize, so it runs on the first eligible layer only and only while
+        VLLM_ASCEND_QFA_SCALE_PROBE has budget left.
 
-        Measured on Qwen3.8-27B, num_spec=3, 512 tokens, 146 steps. The count
-        tracks how full the CURRENT 32-token scale group is, and the op packs
-        two of them per window, so it peaks twice per window rather than once:
-        mean 1591/4096 at fill 0-7, 418 at 8-15, 107 at 24-31, then 1332 again
-        at 32-39 as the second group opens. A group's first step tops out at
-        exactly 2048 - that group's every byte - because it had no confirmed
-        token to be quantized from. A moved byte is one E8M0 step, halving
-        that channel's V precision; on one step that was enough to shift the
-        chosen logprob by 0.88 where the ordinary quantization error is 0.02.
-        What fades with sequence length is the weight, not the count: only the
-        current group can move, and it is a shrinking share of the KV a query
-        reads. All of this is inherent to sharing a scale along the token
-        axis, not a defect - a verify batch must write every candidate's KV
-        before the read that decides which of them survive.
+        Read the count against `fill` - how full the current 32-token scale
+        group is - not against the sequence length. A window restarts empty
+        every `group` tokens, and the operator packs two groups per window, so
+        the count peaks twice per window rather than fading. Measured on
+        Qwen3.8-27B before the split, num_spec=3, 512 tokens, 146 steps: mean
+        1591/4096 at fill 0-7, 418 at 8-15, 107 at 24-31, then 1332 again at
+        32-39 as the second group opens. A group's first step topped out at
+        exactly 2048 - every byte of it - because it had no confirmed token to
+        be quantized from. What fades with sequence length is the weight, not
+        the count: only the current group can move, and it is a shrinking
+        share of the KV a query reads.
         """
-        confirmed = (ctx_lens.repeat_interleave(2) - windows * group).clamp(0, group)
-        _, scale_confirmed = self._qfa_quant_along_tokens(
-            raw_rows * self._qfa_window_keep(confirmed, group).view(-1, group, 1, 1)
-        )
-        # `fill` is what the count has to be read against: a window restarts
-        # empty every `group` tokens, so the shift recurs on that period
-        # rather than fading away once. What does fade is its weight - only
-        # the current window can move, and it is a shrinking share of the KV
-        # a query reads as the sequence grows.
         seq = int(seq_lens[0])
         logger.info(
             "QFA-SCALE reqs=%d seq=%d fill=%d moved=%d of=%d",
             seq_lens.numel(),
             seq,
             seq - (seq - 1) // group * group,
-            int((scale_confirmed != scale_now).sum()),
-            scale_now.numel(),
+            int((scale_read != scale_full).sum()),
+            scale_full.numel(),
         )
 
     def _qfa_write_value_bulk(
@@ -2517,25 +2586,35 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
             if self._qfa_debug_left > 0:
                 self._qfa_pending_check.append((req, q_start, q_end, ctx_len, new_len, window_slots, fp8, scale))
-
-            self._qfa_debug(
-                "write-bulk",
-                state=str(attn_metadata.attn_state),
-                req=req,
-                q=(q_start, q_end),
-                new_len=new_len,
-                ctx=ctx_len,
-                first_w=first_window,
-                n_w=num_windows,
-                lead=lead,
-                slots=window_slots,
-                buf_sum=round(float(buf.abs().sum()), 3),
-                val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
-            )
+                # buf_sum / val_sum are device-to-host syncs; as arguments they
+                # would run whether or not the log does. See the decode branch.
+                self._qfa_debug(
+                    "write-bulk",
+                    state=str(attn_metadata.attn_state),
+                    req=req,
+                    q=(q_start, q_end),
+                    new_len=new_len,
+                    ctx=ctx_len,
+                    first_w=first_window,
+                    n_w=num_windows,
+                    lead=lead,
+                    slots=window_slots,
+                    buf_sum=round(float(buf.abs().sum()), 3),
+                    val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
+                )
             q_start = q_end
 
     def _qfa_write_kv(self, key: torch.Tensor, value: torch.Tensor, attn_metadata: AscendMetadata) -> None:
         """MXFP8 replacement for reshape_and_cache on QFA-owned layers."""
+        if self._qfa_pending_restore is not None:
+            # A V window is still holding the confirmed-scale view meant for
+            # one attention read. Serving another step from it would treat
+            # clamped drafts as history; failing here says which invariant
+            # broke instead of quietly degrading the cache.
+            raise AssertionError(
+                "QFA: a V window was left at its read-time scale by the previous call. "
+                "reshape_and_cache and the paged read must stay paired inside one forward()."
+            )
         if self._qfa_fp8_views is None:
             self._qfa_attach_fp8_cache()
         num_tokens = attn_metadata.num_actual_tokens
@@ -2559,25 +2638,39 @@ class AscendAttentionBackendImpl(AttentionImpl):
             req_ids = torch.searchsorted(query_start_loc[1 : num_reqs + 1].contiguous(), token_ids, right=True)
             ctx_lens = seq_lens[:num_reqs] - (query_start_loc[1 : num_reqs + 1] - starts)
             positions = ctx_lens[req_ids] + (token_ids - starts[req_ids])
-            self._qfa_debug(
-                "write-decode",
-                state=str(attn_metadata.attn_state),
-                num_tokens=num_tokens,
-                num_reqs=num_reqs,
-                qsl=query_start_loc[: num_reqs + 1],
-                seq_lens=seq_lens[:num_reqs],
-                ctx=ctx_lens,
-                req_ids=req_ids,
-                pos=positions,
-                slots=attn_metadata.slot_mapping[:num_tokens],
-                bt0=attn_metadata.block_tables[:num_reqs, :2],
-                # Non-finite inputs mean the hidden state reaching attention is
-                # already broken, and the cache is not what needs fixing.
-                k_in_nan=[int((~torch.isfinite(key[t].float())).sum()) for t in range(num_tokens)],
-                v_in_nan=[int((~torch.isfinite(value[t].float())).sum()) for t in range(num_tokens)],
+            # Guarded rather than left to _qfa_debug's own early return: the
+            # nan census below is an argument, so it runs before the call does,
+            # and `int()` on a device tensor is an NPU->CPU sync. Unguarded it
+            # cost 2 syncs per token per layer on every decode step.
+            if self._qfa_debug_left > 0:
+                self._qfa_debug(
+                    "write-decode",
+                    state=str(attn_metadata.attn_state),
+                    num_tokens=num_tokens,
+                    num_reqs=num_reqs,
+                    qsl=query_start_loc[: num_reqs + 1],
+                    seq_lens=seq_lens[:num_reqs],
+                    ctx=ctx_lens,
+                    req_ids=req_ids,
+                    pos=positions,
+                    slots=attn_metadata.slot_mapping[:num_tokens],
+                    bt0=attn_metadata.block_tables[:num_reqs, :2],
+                    # Non-finite inputs mean the hidden state reaching attention
+                    # is already broken, and the cache is not what needs fixing.
+                    k_in_nan=[int((~torch.isfinite(key[t].float())).sum()) for t in range(num_tokens)],
+                    v_in_nan=[int((~torch.isfinite(value[t].float())).sum()) for t in range(num_tokens)],
+                )
+            # Only the target's verify steps carry tokens that may be
+            # rejected. A plain decode and the drafter's own passes hand one
+            # token per request, where confirmed == valid and the split below
+            # is an identity - skip it and keep the single write.
+            spec_verify = (
+                attn_metadata.attn_state == AscendAttentionState.SpecDecoding
+                and self._qfa_decode_threshold > 1
+                and not _EXTRA_CTX.is_draft_model
             )
             self._qfa_write_value_decode(
-                value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs
+                value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs, spec_verify
             )
         else:
             self._qfa_write_value_bulk(value, attn_metadata, num_reqs)
@@ -2599,10 +2692,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
             if (
                 self.qfa_decode_enabled
                 and self.kv_sharing_target_layer_name is None
-                and not getattr(attn_metadata, "is_draft_pass", False)
-                and not _EXTRA_CTX.is_draft_model
                 and self.attn_type != AttentionType.ENCODER_DECODER
             ):
+                # Every write to an MXFP8 cache goes through here, the draft
+                # prompt pass included: that pass computes its attention on
+                # the BF16 FIA path, but the bytes it leaves behind are still
+                # read back by the paged op on the next step.
                 self._qfa_write_kv(key, value, attn_metadata)
                 return query, key, value, output
             if self.kv_sharing_target_layer_name is not None:

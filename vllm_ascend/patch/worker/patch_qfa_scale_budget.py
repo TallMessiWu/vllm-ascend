@@ -66,6 +66,36 @@ def _qfa_pool_bytes_per_block(kv_cache_groups: list[KVCacheGroupSpec]) -> int | 
     return pages.pop() * max(len(g.layer_names) for g in kv_cache_groups)
 
 
+def _log_group_layout(kv_cache_groups: list[KVCacheGroupSpec]) -> None:
+    """Print how the layers were bucketed, one line per distinct spec.
+
+    vLLM groups KV cache layers by exact spec equality and then takes the
+    smallest bucket as the group size, so a single layer that differs from the
+    rest - an MTP drafter still on BF16 next to MXFP8 attention - collapses
+    every group to one layer. Nothing downstream says that happened; what it
+    changes is the pool arithmetic below, since value planes are shared across
+    a group while scale side tables are per layer. Printing the layout makes
+    the collapse visible at startup instead of only as a capacity number, and
+    it prints for BF16 runs too, so the two can be compared directly.
+    """
+    by_spec: dict[str, list[int]] = {}
+    for group in kv_cache_groups:
+        spec = group.kv_cache_spec
+        key = (
+            f"{type(spec).__name__} block={spec.block_size} page={spec.page_size_bytes}B"
+            f" dtype={getattr(spec, 'dtype', '?')}"
+        )
+        by_spec.setdefault(key, []).append(len(group.layer_names))
+    group_size = max((len(g.layer_names) for g in kv_cache_groups), default=0)
+    logger.info(
+        "KV cache layout: %d groups, group_size %d (the pool costs one page per layer of it)",
+        len(kv_cache_groups),
+        group_size,
+    )
+    for key, sizes in by_spec.items():
+        logger.info("KV cache layout:   %s -> %d layers in %d group(s)", key, sum(sizes), len(sizes))
+
+
 def _qfa_get_kv_cache_config_from_groups(
     vllm_config: VllmConfig,
     kv_cache_groups: list[KVCacheGroupSpec],
@@ -83,6 +113,7 @@ def _qfa_get_kv_cache_config_from_groups(
     consistent - block count, capacity, the reported concurrency - instead of
     reporting a capacity the device cannot actually hold.
     """
+    _log_group_layout(kv_cache_groups)
     scale_per_block = _qfa_scale_bytes_per_block(kv_cache_groups)
     if scale_per_block:
         pool_per_block = _qfa_pool_bytes_per_block(kv_cache_groups)

@@ -1264,6 +1264,20 @@ def _validate_qfa_decode_config(vllm_config: VllmConfig) -> None:
         problems.append("KV connectors copy raw cache bytes and would corrupt the FP8 layout")
     if vllm_config.parallel_config.prefill_context_parallel_size > 1:
         problems.append("prefill context parallelism is unsupported")
+    from vllm.config.compilation import CUDAGraphMode
+
+    captures_graphs = not (vllm_config.model_config is not None and vllm_config.model_config.enforce_eager) and (
+        vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
+    )
+    if captures_graphs:
+        # Graph capture reaches the attention impl before the paged branch
+        # does, so a captured layer serves from full_graph_fia - reading the
+        # MXFP8 planes as BF16, which is wrong without being loud. Capturing
+        # the paged path is milestone C3: its metadata call is AICPU work that
+        # has to be issued outside the graph, and queued next to a replay it
+        # aborts the stream with 507018, which is how the MTP drafter's prompt
+        # pass first broke. Refuse at startup rather than serve noise.
+        problems.append("graph capture is unsupported; run with enforce_eager until the paged path can be captured")
     if vllm_config.model_config is not None:
         if vllm_config.model_config.runner_type == "pooling":
             problems.append("pooling models are unsupported")

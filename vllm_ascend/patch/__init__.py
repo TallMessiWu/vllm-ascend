@@ -1207,9 +1207,12 @@
 #       so a patch that failed to apply fails loudly instead of silently miscomputing.
 #       Because this keys off `qfa_decode_enabled` alone, that flag is the single
 #       source of truth for the cache's dtype: the impl constructor clears it for
-#       layers built under a side model's tag (the MTP drafter's "eagle_head",
-#       vision towers, Gemma's cross decoder), which serve from BF16 FIA and would
-#       read an MXFP8 page as garbage.
+#       layers built under a side model's tag (vision towers, Gemma's cross
+#       decoder, the dflash2 candidate selector), which serve from BF16 FIA and
+#       would read an MXFP8 page as garbage. The MTP drafter is the exception and
+#       keeps the flag, because a lone BF16 layer beside the MXFP8 ones becomes
+#       the smallest bucket in vLLM's grouping and collapses every KV cache group
+#       to a single layer - see patch 33.
 #    Related PR (if no, explain why):
 #       No upstream PR: this describes an Ascend-only cache layout that vLLM has no
 #       notion of. Upstreaming would need a general "quantized KV cache with external
@@ -1239,10 +1242,13 @@
 #       across the pool and every layer's tensor views the same memory, while
 #       each MXFP8 layer holds its own scale table sized to address every block.
 #       So the cost scales with how the layers were grouped. Measured on
-#       Qwen3.8-27B: 1.3 GiB (3.2% of values) without MTP, where 16 layers share
-#       a group, and 11.7 GiB (49%) with MTP, where grouping falls apart into one
-#       layer per group - enough to abort the run at the default 0.85 GPU
-#       utilization while allocating the tables.
+#       Qwen3.8-27B: 1.3 GiB (3.2% of values) where 16 layers share a group, and
+#       11.7 GiB (49%) when grouping fell apart into one layer per group - enough
+#       to abort the run at the default 0.85 GPU utilization while allocating the
+#       tables. That collapse came from the MTP drafter declaring a BF16 spec of
+#       its own; it now declares MXFP8 like the rest, so the grouping holds and
+#       the reservation is back to 1/32 of the values. The wrapper logs the
+#       layout at startup so a future spec drift is visible immediately.
 #    How:
 #       Wrap the function and subtract the tables' share from `available_memory`
 #       before the original computes the block count, so every number downstream
