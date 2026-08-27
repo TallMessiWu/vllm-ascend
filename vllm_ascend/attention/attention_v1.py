@@ -1934,8 +1934,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         sharing changes - only this layer's interpretation of its own bytes.
         """
         num_blocks, block_size, num_kv_heads, head_size = self.key_cache.shape
+        # The cache is always laid out in kernel blocks, even when the KV
+        # manager hands out larger physical blocks (hybrid GDN models split
+        # each one into blocks_per_phys_block kernel blocks).
         if block_size != self.QFA_STAGING_ROWS:
-            raise AssertionError(f"QFA decode requires block_size 128, got {block_size}")
+            raise AssertionError(
+                f"QFA decode requires a 128-token kernel block, got a cache shaped {tuple(self.key_cache.shape)}"
+            )
         values = num_blocks * block_size * num_kv_heads * head_size
         k_scale_bytes = values // 32  # one E8M0 byte per 32-element group along D
         v_scale_bytes = num_blocks * (block_size // self.QFA_V_GROUP) * num_kv_heads * head_size * 2

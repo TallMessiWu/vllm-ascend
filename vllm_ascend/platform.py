@@ -1252,8 +1252,12 @@ def _validate_qfa_decode_config(vllm_config: VllmConfig) -> None:
     if get_ascend_device_type() != AscendDeviceType.A5:
         problems.append("QuantFlashAttn is only available on A5 (ascend950)")
     cache_config = vllm_config.cache_config
-    if cache_config.block_size is not None and cache_config.block_size != 128:
-        problems.append(f"block_size must be 128, got {cache_config.block_size}")
+    # Hybrid GDN/attention models raise the KV-manager block size (1536 for
+    # Qwen3.8) so an attention page covers a mamba page, but the cache is still
+    # laid out in the 128-token kernel blocks that block_table entries and
+    # slot_mapping address, which is the granularity QuantFlashAttn reads.
+    if cache_config.block_size is not None and cache_config.block_size % 128 != 0:
+        problems.append(f"block_size must be a multiple of the 128-token kernel block, got {cache_config.block_size}")
     if cache_config.enable_prefix_caching:
         problems.append("prefix caching is unsupported (scale planes are not tracked across shared blocks)")
     if vllm_config.kv_transfer_config is not None:
