@@ -2312,15 +2312,51 @@ class AscendAttentionBackendImpl(AttentionImpl):
         windows = torch.stack([first_window, last_window], dim=1).reshape(-1)
         win_reqs = reqs.repeat_interleave(2)
 
-        rows = staging.view(-1, 2, group, num_kv_heads, head_size)[win_reqs, windows % 2]
+        raw_rows = staging.view(-1, 2, group, num_kv_heads, head_size)[win_reqs, windows % 2]
         # Zero whatever lies past the request's current length: stale ring rows
         # left by a rejected speculative token must not raise a window's scale.
         valid = (lens.repeat_interleave(2) - windows * group).clamp(0, group)
-        keep = torch.arange(group, device=value.device).unsqueeze(0) < valid.unsqueeze(1)
-        rows = rows * keep.view(-1, group, 1, 1)
+        rows = raw_rows * self._qfa_window_keep(valid, group).view(-1, group, 1, 1)
 
         blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
-        self._qfa_commit_windows(rows, blocks * 2 + (windows % 2), num_kv_heads, head_size)
+        _, scale = self._qfa_commit_windows(rows, blocks * 2 + (windows % 2), num_kv_heads, head_size)
+        if self._qfa_debug_left > 0:
+            self._qfa_scale_shift_census(raw_rows, windows, ctx_lens, group, scale)
+
+    def _qfa_window_keep(self, valid: torch.Tensor, group: int) -> torch.Tensor:
+        """Row mask zeroing everything past a window's valid token count."""
+        return torch.arange(group, device=valid.device).unsqueeze(0) < valid.unsqueeze(1)
+
+    def _qfa_scale_shift_census(
+        self,
+        raw_rows: torch.Tensor,
+        windows: torch.Tensor,
+        ctx_lens: torch.Tensor,
+        group: int,
+        scale_now: torch.Tensor,
+    ) -> None:
+        """Count the scale bytes this step's unconfirmed tokens moved.
+
+        A V window shares one E8M0 scale per (head, channel) across its 64
+        tokens, so appending a token rewrites the bytes already committed for
+        the tokens before it whenever the window's max crosses a power of two.
+        A verify step appends up to 1 + num_spec tokens before the attention
+        read, so that read can see a scale a non-speculative run would only
+        reach several steps later - the same history, quantized differently.
+        Re-quantizing from the confirmed tokens alone measures exactly that:
+        nonzero means the two paths disagree on this window's scale, which is
+        what explains a step whose logprobs move far more than the usual
+        quantization error. Debug only, and nothing here is written back.
+        """
+        confirmed = (ctx_lens.repeat_interleave(2) - windows * group).clamp(0, group)
+        _, scale_confirmed = self._qfa_quant_along_tokens(
+            raw_rows * self._qfa_window_keep(confirmed, group).view(-1, group, 1, 1)
+        )
+        self._qfa_debug(
+            "scale-shift",
+            moved=int((scale_confirmed != scale_now).sum()),
+            of=scale_now.numel(),
+        )
 
     def _qfa_write_value_bulk(
         self,
