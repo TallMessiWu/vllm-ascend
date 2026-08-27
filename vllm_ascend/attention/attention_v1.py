@@ -2040,8 +2040,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             one_qs = q_descale_tnd.view(torch.uint8)[req : req + 1].contiguous().view(torch.float8_e8m0fnu)
             single.append(bad(run(args, one_q, one_qs, attn_metadata.block_tables[req : req + 1].contiguous()), 0))
 
+        def poison(plane: torch.Tensor, req: int) -> tuple[int, int]:
+            """NaN-encoding bytes in this request's block, inside vs past its length."""
+            block = plane[int(attn_metadata.block_tables[req, 0])]
+            length = int(seq_lens[req])
+            nan = (block & 0x7F) == 0x7F  # e4m3 NaN, either sign
+            return int(nan[:length].sum()), int(nan[length:].sum())
+
         self._qfa_debug(
             "probe-decode",
+            k_nan=[poison(k_fp8, r) for r in range(num_reqs)],
+            v_nan=[poison(v_fp8, r) for r in range(num_reqs)],
             nan_n2tgd=[bad(batched, r) for r in range(num_reqs)],
             nan_tnd=[bad(tnd, r) for r in range(num_reqs)],
             nan_single_tnd=single,
@@ -2125,9 +2134,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             flat = cache.view(torch.uint8).reshape(-1)
             if flat.numel() < values + scale_bytes:
                 raise AssertionError(f"KV cache too small for MXFP8: {flat.numel()} < {values + scale_bytes}")
+            # Both planes must start at 0x00, which reads as +0.0 in e4m3 and
+            # 2^-127 in e8m0. The bytes underneath are whatever the BF16
+            # allocation happened to hold, and in e4m3 0x7F and 0xFF are NaN:
+            # the kernel reads a padded tile past seqused_kv and multiplies
+            # before masking, so a single NaN byte in the unwritten tail of a
+            # block poisons that request's whole output row. Blocks that land
+            # on freshly zeroed pages survive, which is why this only bites
+            # some requests.
+            flat[: values + scale_bytes].zero_()
             fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
             scale = flat[values : values + scale_bytes].view(*scale_shape)
-            scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
             return fp8, scale
 
         k_fp8, k_scale = carve(
