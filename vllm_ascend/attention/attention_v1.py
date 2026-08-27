@@ -1629,6 +1629,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
             attn_mask=self._get_qfa_mask(query.device),
             **common_args,
         )
+        if decode and self._qfa_debug_left > 0:
+            self._qfa_probe_rows(q_fp8, q_descale, attn_metadata, attn_output, common_args)
         output[:num_tokens] = attn_output
         return output
 
@@ -1972,6 +1974,69 @@ class AscendAttentionBackendImpl(AttentionImpl):
             else:
                 parts.append(f"{name}={val}")
         logger.info("QFA-DEBUG[L%s] %s %s", self._qfa_uid, tag, " ".join(parts))
+
+    def _qfa_probe_rows(
+        self,
+        q_fp8: torch.Tensor,
+        q_descale: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        batched: torch.Tensor,
+        common_args: dict,
+    ) -> None:
+        """Re-read every batch row on its own and diff against the batched read.
+
+        Debug only, and deliberately golden-free: same cache, same q row, same
+        arguments except that the batch holds one request. A row that matches
+        means the batched read agrees with reading it alone; a row that does
+        not means the result depends on where the request sits in the batch,
+        which no argument we log would reveal.
+        """
+        k_fp8, k_scale, v_fp8, v_scale = self._qfa_fp8_views
+        seq_lens = attn_metadata.seq_lens_dev
+        num_reqs = len(attn_metadata.actual_seq_lengths_q)
+        mask = self._get_qfa_mask(batched.device)
+        cos = []
+        for req in range(num_reqs):
+            args = dict(common_args)
+            # query_start_loc starts [0, 1, ...] on a decode step, so its first
+            # two entries are already the one-request cumulative lengths.
+            args["cu_seqlens_q"] = attn_metadata.query_start_loc[:2]
+            args["seqused_kv"] = seq_lens[req : req + 1]
+            args["max_seqlen_kv"] = int(seq_lens[req])
+            metadata = DeviceOperator.npu_quant_flash_attn_metadata(
+                num_heads_q=self.num_heads,
+                num_heads_kv=self.num_kv_heads,
+                head_dim=self.head_size,
+                v_descale=v_scale.view(torch.float8_e8m0fnu),
+                **args,
+            )
+            # Slice on the byte views: float8 has no transpose/copy kernel.
+            one_q = q_fp8.view(torch.uint8)[req : req + 1].contiguous().view(torch.float8_e4m3fn)
+            one_qs = q_descale.view(torch.uint8)[:, req : req + 1].contiguous().view(torch.float8_e8m0fnu)
+            out = DeviceOperator.npu_quant_flash_attn(
+                one_q,
+                k_fp8.view(torch.float8_e4m3fn),
+                v_fp8.view(torch.float8_e4m3fn),
+                one_qs,
+                k_scale.view(torch.float8_e8m0fnu),
+                v_scale.view(torch.float8_e8m0fnu),
+                metadata,
+                self.scale,
+                block_table=attn_metadata.block_tables[req : req + 1].contiguous(),
+                attn_mask=mask,
+                **args,
+            )
+            cos.append(
+                round(
+                    float(
+                        torch.nn.functional.cosine_similarity(
+                            out.flatten().float(), batched[req : req + 1].flatten().float(), dim=0
+                        )
+                    ),
+                    5,
+                )
+            )
+        self._qfa_debug("probe-rows", cos=cos)
 
     def _qfa_verify_bulk(self, key: torch.Tensor, attn_metadata: AscendMetadata) -> None:
         """Read the cache back and compare it to what the write believed it stored.
