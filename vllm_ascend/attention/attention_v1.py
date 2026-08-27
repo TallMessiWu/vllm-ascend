@@ -2141,9 +2141,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
 
             # Keep the tail in the ring so the next step can re-quantize it.
-            tail = min(new_len, self.QFA_STAGING_ROWS)
-            tail_positions = torch.arange(new_len - tail, new_len, device=value.device)
-            staging[req, tail_positions % self.QFA_STAGING_ROWS] = buf[tail_positions - first_window * group]
+            # Only the part the buffer actually covers: positions before the
+            # first touched window are already in the ring from earlier steps,
+            # and indexing buf for them would wrap to the wrong rows.
+            buf_start = first_window * group
+            ring_lo = max(new_len - self.QFA_STAGING_ROWS, buf_start)
+            tail_positions = torch.arange(ring_lo, new_len, device=value.device)
+            staging[req, tail_positions % self.QFA_STAGING_ROWS] = buf[tail_positions - buf_start]
             q_start = q_end
 
     def _qfa_write_kv(self, key: torch.Tensor, value: torch.Tensor, attn_metadata: AscendMetadata) -> None:
