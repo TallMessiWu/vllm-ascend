@@ -590,6 +590,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         spec_config = self.vllm_config.speculative_config
         self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
+        self._qfa_pending_check: list = []
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1966,6 +1967,48 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 parts.append(f"{name}={val}")
         logger.info("QFA-DEBUG[%s] %s %s", self._layer_name, tag, " ".join(parts))
 
+    def _qfa_verify_bulk(self, key: torch.Tensor, attn_metadata: AscendMetadata) -> None:
+        """Read the cache back and compare it to what the write believed it stored.
+
+        Debug only. Runs after every request in the batch has been written, so
+        it also catches one request clobbering another's blocks. K is checked
+        against a fresh quantization of the same tokens; V against the exact
+        bytes _qfa_commit_windows produced. Anything but all-True means the
+        fault is on the write side; all-True moves it to the read side.
+        """
+        pending, self._qfa_pending_check = self._qfa_pending_check, []
+        if not pending:
+            return
+        k_fp8, k_scale, v_fp8, v_scale = self._qfa_fp8_views
+        num_kv_heads, head_size = key.shape[1], key.shape[2]
+        block_tables = attn_metadata.block_tables
+        k_ok, v_ok, ks_ok = [], [], []
+        for req, q_start, q_end, ctx_len, new_len, window_slots, fp8, scale in pending:
+            pos = torch.arange(ctx_len, new_len, device=key.device)
+            blocks = block_tables[req, torch.div(pos, 128, rounding_mode="floor")].to(torch.int64)
+            slots = blocks * 128 + pos % 128
+            exp_k, exp_ks = torch_npu.npu_dynamic_mx_quant(
+                key[q_start:q_end].reshape(-1, head_size),
+                dst_type=torch.float8_e4m3fn,
+                scale_alg=self._qfa_scale_alg,
+            )
+            got_k = k_fp8.view(-1, num_kv_heads, head_size)[slots]
+            got_ks = k_scale.view(-1, num_kv_heads, head_size // 64, 2)[slots]
+            k_ok.append(bool(torch.equal(got_k, exp_k.reshape(got_k.shape).view(torch.uint8))))
+            ks_ok.append(bool(torch.equal(got_ks, exp_ks.view(torch.uint8).reshape(got_ks.shape))))
+            v_ok.append(
+                bool(torch.equal(v_fp8.view(-1, self.QFA_V_GROUP, num_kv_heads, head_size)[window_slots], fp8))
+                and bool(torch.equal(v_scale.view(-1, num_kv_heads, head_size, 2)[window_slots], scale))
+            )
+        self._qfa_debug(
+            "verify-bulk",
+            state=str(attn_metadata.attn_state),
+            reqs=[p[0] for p in pending],
+            k_ok=k_ok,
+            k_scale_ok=ks_ok,
+            v_ok=v_ok,
+        )
+
     def _qfa_attach_fp8_cache(self) -> None:
         """Carve k/v FP8 values and E8M0 scale planes out of the BF16 cache.
 
@@ -2064,12 +2107,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
         window_slots: torch.Tensor,
         num_kv_heads: int,
         head_size: int,
-    ) -> None:
-        """Quantize (W, 64, N, D) window rows and store them at their slots."""
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize (W, 64, N, D) window rows and store them at their slots.
+
+        Returns the bytes it stored so a debug readback can compare against
+        them without re-deriving the packing.
+        """
         _, _, v_fp8, v_scale = self._qfa_fp8_views
         fp8, scale = self._qfa_quant_along_tokens(rows)
         v_fp8.view(-1, self.QFA_V_GROUP, num_kv_heads, head_size).index_put_((window_slots,), fp8)
         v_scale.view(-1, num_kv_heads, head_size, 2).index_put_((window_slots,), scale)
+        return fp8, scale
 
     def _qfa_write_value_decode(
         self,
@@ -2177,12 +2225,14 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 buf_sum=round(float(buf.abs().sum()), 3),
                 val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
             )
-            self._qfa_commit_windows(
+            fp8, scale = self._qfa_commit_windows(
                 buf.view(num_windows, group, num_kv_heads, head_size),
                 window_slots,
                 num_kv_heads,
                 head_size,
             )
+            if self._qfa_debug_left > 0:
+                self._qfa_pending_check.append((req, q_start, q_end, ctx_len, new_len, window_slots, fp8, scale))
 
             # Keep the tail in the ring so the next step can re-quantize it.
             # Only the part the buffer actually covers: positions before the
@@ -2237,6 +2287,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
         else:
             self._qfa_write_value_bulk(value, attn_metadata, num_reqs)
+            self._qfa_verify_bulk(key[:num_tokens], attn_metadata)
         notify_kv_cache_written()
 
     def reshape_and_cache(
