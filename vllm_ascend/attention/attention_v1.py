@@ -2162,9 +2162,24 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
             windows = torch.arange(first_window, first_window + num_windows, device=value.device)
             blocks = block_tables[req, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
+            window_slots = blocks * 2 + (windows % 2)
+            self._qfa_debug(
+                "write-bulk",
+                state=str(attn_metadata.attn_state),
+                req=req,
+                q=(q_start, q_end),
+                new_len=new_len,
+                ctx=ctx_len,
+                first_w=first_window,
+                n_w=num_windows,
+                lead=lead,
+                slots=window_slots,
+                buf_sum=round(float(buf.abs().sum()), 3),
+                val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
+            )
             self._qfa_commit_windows(
                 buf.view(num_windows, group, num_kv_heads, head_size),
-                blocks * 2 + (windows % 2),
+                window_slots,
                 num_kv_heads,
                 head_size,
             )
