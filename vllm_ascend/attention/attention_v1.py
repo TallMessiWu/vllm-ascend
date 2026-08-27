@@ -2024,6 +2024,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         value: torch.Tensor,
         req_ids: torch.Tensor,
         positions: torch.Tensor,
+        ctx_lens: torch.Tensor,
         seq_lens: torch.Tensor,
         block_tables: torch.Tensor,
         num_reqs: int,
@@ -2034,9 +2035,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         invalidates the FP8 bytes already written for that window. The staging
         ring keeps the last 128 tokens of each request in BF16 so the window
         can be re-quantized from the original values instead of from lossy FP8.
-        A step of at most 1 + num_spec tokens crosses at most one boundary, so
-        rewriting the last two windows per request always suffices - a fixed
-        amount of work with static shapes, which aclgraph capture requires.
+        Only the windows that actually received a token are rewritten: with at
+        most 1 + num_spec new tokens that is one window, or two when the step
+        crosses a boundary, so the work stays a fixed two slots per request -
+        static shapes, which aclgraph capture requires. Rewriting any earlier
+        window would be wrong as well as wasteful: a rejected step can leave
+        the ring holding positions past the rolled-back tail, so a window that
+        has scrolled out of the ring must keep the bytes it was committed with.
         """
         staging = self._qfa_v_staging
         group = self.QFA_V_GROUP
@@ -2047,7 +2052,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
         reqs = torch.arange(num_reqs, device=value.device)
         lens = seq_lens[:num_reqs]
         last_window = torch.div(lens - 1, group, rounding_mode="floor").clamp(min=0)
-        windows = torch.stack([(last_window - 1).clamp(min=0), last_window], dim=1).reshape(-1)
+        # The first window holding a new token; clamped so a request with no
+        # new tokens (a padded row) degenerates to a harmless duplicate write.
+        first_window = torch.minimum(torch.div(ctx_lens, group, rounding_mode="floor"), last_window)
+        windows = torch.stack([first_window, last_window], dim=1).reshape(-1)
         win_reqs = reqs.repeat_interleave(2)
 
         rows = staging.view(-1, 2, group, num_kv_heads, head_size)[win_reqs, windows % 2]
@@ -2140,7 +2148,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
             req_ids = torch.searchsorted(query_start_loc[1 : num_reqs + 1].contiguous(), token_ids, right=True)
             ctx_lens = seq_lens[:num_reqs] - (query_start_loc[1 : num_reqs + 1] - starts)
             positions = ctx_lens[req_ids] + (token_ids - starts[req_ids])
-            self._qfa_write_value_decode(value, req_ids, positions, seq_lens, attn_metadata.block_tables, num_reqs)
+            self._qfa_write_value_decode(
+                value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs
+            )
         else:
             self._qfa_write_value_bulk(value, attn_metadata, num_reqs)
         notify_kv_cache_written()
