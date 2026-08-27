@@ -43,7 +43,7 @@ from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
-from vllm_ascend.attention.qfa_scale import qfa_scale_bytes_per_kernel_block
+from vllm_ascend.attention.qfa_scale import QFA_KERNEL_BLOCK, qfa_scale_bytes_per_kernel_block
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
     PagedAttentionGraphParam,
@@ -606,7 +606,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # from the BF16 FIA path, which _building_backbone() enforces above.
         self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
         self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
-        self._qfa_v_staging: torch.Tensor | None = None
         # Upper bound on tokens per request in a decode step, mirroring the
         # metadata builder. Passing the bound rather than the batch's actual
         # max keeps the value constant across steps, which aclgraph capture
@@ -1989,7 +1988,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
     _qfa_next_uid = 0  # layer tag for the debug log, bumped per constructed impl
 
     QFA_V_GROUP = 64  # tokens sharing one packed V scale row
-    QFA_STAGING_ROWS = 128  # two V windows: a step of <=1+num_spec may cross one boundary
 
     def _qfa_debug(self, tag: str, **fields) -> None:
         """Log the per-request bookkeeping for the first few calls on a layer."""
@@ -2179,7 +2177,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # The cache is always laid out in kernel blocks, even when the KV
         # manager hands out larger physical blocks (hybrid GDN models split
         # each one into blocks_per_phys_block kernel blocks).
-        if block_size != self.QFA_STAGING_ROWS:
+        if block_size != QFA_KERNEL_BLOCK:
             raise AssertionError(
                 f"QFA decode requires a 128-token kernel block, got a cache shaped {tuple(self.key_cache.shape)}"
             )
@@ -2232,17 +2230,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             num_blocks * block_size,
             cache_config.num_gpu_blocks,
             cache_config.block_size,
-        )
-        max_reqs = self.vllm_config.scheduler_config.max_num_seqs
-        # One spare row absorbs padding/dummy requests so they never touch a
-        # real request's staging window.
-        self._qfa_v_staging = torch.zeros(
-            max_reqs + 1,
-            self.QFA_STAGING_ROWS,
-            num_kv_heads,
-            head_size,
-            dtype=torch.bfloat16,
-            device=device,
         )
 
     def _qfa_quant_along_tokens(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -2311,25 +2298,26 @@ class AscendAttentionBackendImpl(AttentionImpl):
         block_tables: torch.Tensor,
         num_reqs: int,
     ) -> None:
-        """Stage new values, then re-quantize the affected 64-token windows.
+        """Re-quantize the 64-token windows this step appended to.
 
         A window's scale is shared by all its tokens, so appending a token
-        invalidates the FP8 bytes already written for that window. The staging
-        ring keeps the last 128 tokens of each request in BF16 so the window
-        can be re-quantized from the original values instead of from lossy FP8.
+        invalidates the FP8 bytes already written for that window and the whole
+        window has to be rewritten. The history comes back from the cache
+        itself: an E8M0 scale is a power of two, so raising it only shifts the
+        exponent and a value already in E4M3 remains exactly representable,
+        making the round trip lossless - verified byte-for-byte against
+        re-quantizing from the originals in test_qfa_requant_npu.py. An earlier
+        version kept the last 128 tokens per request in BF16 instead, which
+        bought nothing and was indexed by position in the batch, a position
+        vLLM reassigns whenever a request finishes or the builder reorders.
+
         Only the windows that actually received a token are rewritten: with at
         most 1 + num_spec new tokens that is one window, or two when the step
         crosses a boundary, so the work stays a fixed two slots per request -
-        static shapes, which aclgraph capture requires. Rewriting any earlier
-        window would be wrong as well as wasteful: a rejected step can leave
-        the ring holding positions past the rolled-back tail, so a window that
-        has scrolled out of the ring must keep the bytes it was committed with.
+        static shapes, which aclgraph capture requires.
         """
-        staging = self._qfa_v_staging
         group = self.QFA_V_GROUP
         num_kv_heads, head_size = value.shape[1], value.shape[2]
-
-        staging[req_ids, positions % self.QFA_STAGING_ROWS] = value
 
         reqs = torch.arange(num_reqs, device=value.device)
         lens = seq_lens[:num_reqs]
@@ -2340,14 +2328,32 @@ class AscendAttentionBackendImpl(AttentionImpl):
         windows = torch.stack([first_window, last_window], dim=1).reshape(-1)
         win_reqs = reqs.repeat_interleave(2)
 
-        raw_rows = staging.view(-1, 2, group, num_kv_heads, head_size)[win_reqs, windows % 2]
-        # Zero whatever lies past the request's current length: stale ring rows
-        # left by a rejected speculative token must not raise a window's scale.
+        blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
+        window_slots = blocks * 2 + (windows % 2)
+        raw_rows = self._qfa_dequant_windows(window_slots, num_kv_heads, head_size)
+        # Overlay this step's tokens. A token belongs to whichever of the two
+        # rows covers its window; the ones it does not belong to would corrupt
+        # a neighbouring window, so they are sent to a scratch row instead of
+        # being masked out, which would need a device-to-host sync to locate.
+        token_window = torch.div(positions, group, rounding_mode="floor")
+        scratch = raw_rows.new_zeros(1, group, num_kv_heads, head_size)
+        rows_ext = torch.cat([raw_rows, scratch])
+        discard = raw_rows.shape[0]
+        for pair_slot, window_of_row in ((0, first_window), (1, last_window)):
+            target = torch.where(
+                token_window == window_of_row[req_ids],
+                req_ids * 2 + pair_slot,
+                torch.full_like(req_ids, discard),
+            )
+            rows_ext[target, positions % group] = value
+        raw_rows = rows_ext[:discard]
+        # Zero whatever lies past the request's current length: a rejected
+        # speculative token leaves committed bytes past the rolled-back tail,
+        # and they must not raise this window's scale.
         valid = (lens.repeat_interleave(2) - windows * group).clamp(0, group)
         rows = raw_rows * self._qfa_window_keep(valid, group).view(-1, group, 1, 1)
 
-        blocks = block_tables[win_reqs, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
-        _, scale = self._qfa_commit_windows(rows, blocks * 2 + (windows % 2), num_kv_heads, head_size)
+        _, scale = self._qfa_commit_windows(rows, window_slots, num_kv_heads, head_size)
         if self._qfa_scale_probe_left > 0:
             self._qfa_scale_probe_left -= 1
             self._qfa_scale_shift_census(raw_rows, windows, ctx_lens, lens, group, scale)
@@ -2355,6 +2361,26 @@ class AscendAttentionBackendImpl(AttentionImpl):
     def _qfa_window_keep(self, valid: torch.Tensor, group: int) -> torch.Tensor:
         """Row mask zeroing everything past a window's valid token count."""
         return torch.arange(group, device=valid.device).unsqueeze(0) < valid.unsqueeze(1)
+
+    def _qfa_dequant_windows(self, window_slots: torch.Tensor, num_kv_heads: int, head_size: int) -> torch.Tensor:
+        """Read committed V windows back as BF16: (W, 64, N, D).
+
+        The inverse of _qfa_quant_along_tokens. An E8M0 byte b encodes
+        2^(b-127), and one covers QFA_V_GROUP // 2 tokens, so the pair packed
+        per window is expanded along the token axis before it scales the
+        values. Zeroed scale bytes are 2^-127 over zeroed values, so a window
+        the op never wrote comes back as +0.0 rather than as noise.
+
+        Indexing happens on the byte views; float8 has no gather kernel here.
+        """
+        _, _, v_fp8, v_scale = self._qfa_fp8_views
+        group = self.QFA_V_GROUP
+        fp8 = v_fp8.view(-1, group, num_kv_heads, head_size)[window_slots]
+        scale = v_scale.view(-1, num_kv_heads, head_size, 2)[window_slots]
+        vals = fp8.view(torch.float8_e4m3fn).to(torch.bfloat16)
+        factor = torch.exp2((scale.to(torch.int32) - 127).to(torch.float32)).to(torch.bfloat16)
+        factor = factor.permute(0, 3, 1, 2).repeat_interleave(group // 2, dim=1)
+        return vals * factor
 
     def _qfa_scale_shift_census(
         self,
@@ -2423,13 +2449,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
     ) -> None:
         """Whole-window value writes for prefill and chunked-prefill batches.
 
-        These batches add far more tokens than the staging ring holds, so every
-        fully covered window is quantized straight from the incoming values;
-        only a partially filled leading window borrows its earlier tokens from
-        the ring. Request lengths come from the metadata's host lists, which
+        Every fully covered window is quantized straight from the incoming
+        values; a partially filled leading window, which a chunked prefill
+        inherits from the previous chunk, reads its earlier tokens back out of
+        the cache. Request lengths come from the metadata's host lists, which
         prefill has already materialized, so this costs no extra sync.
         """
-        staging = self._qfa_v_staging
         group = self.QFA_V_GROUP
         num_kv_heads, head_size = value.shape[1], value.shape[2]
         block_tables = attn_metadata.block_tables
@@ -2449,15 +2474,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             num_windows = (new_len - 1) // group - first_window + 1
             lead = ctx_len - first_window * group  # earlier tokens sharing the first window
 
-            buf = value.new_zeros(num_windows * group, num_kv_heads, head_size)
-            if lead > 0:
-                ring_rows = torch.arange(first_window * group, ctx_len, device=value.device) % self.QFA_STAGING_ROWS
-                buf[:lead] = staging[req, ring_rows]
-            buf[lead : lead + q_len] = value[q_start:q_end]
-
             windows = torch.arange(first_window, first_window + num_windows, device=value.device)
             blocks = block_tables[req, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
             window_slots = blocks * 2 + (windows % 2)
+
+            buf = value.new_zeros(num_windows * group, num_kv_heads, head_size)
+            if lead > 0:
+                # Only the leading window carries anything from before this
+                # chunk; the rest are about to be overwritten in full.
+                head = self._qfa_dequant_windows(window_slots[:1], num_kv_heads, head_size)
+                buf[:lead] = head[0, :lead]
+            buf[lead : lead + q_len] = value[q_start:q_end]
             fp8, scale = self._qfa_commit_windows(
                 buf.view(num_windows, group, num_kv_heads, head_size),
                 window_slots,
@@ -2467,14 +2494,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             if self._qfa_debug_left > 0:
                 self._qfa_pending_check.append((req, q_start, q_end, ctx_len, new_len, window_slots, fp8, scale))
 
-            # Keep the tail in the ring so the next step can re-quantize it.
-            # Only the part the buffer actually covers: positions before the
-            # first touched window are already in the ring from earlier steps,
-            # and indexing buf for them would wrap to the wrong rows.
-            buf_start = first_window * group
-            ring_lo = max(new_len - self.QFA_STAGING_ROWS, buf_start)
-            tail_positions = torch.arange(ring_lo, new_len, device=value.device)
-            staging[req, tail_positions % self.QFA_STAGING_ROWS] = buf[tail_positions - buf_start]
             self._qfa_debug(
                 "write-bulk",
                 state=str(attn_metadata.attn_state),
@@ -2488,9 +2507,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 slots=window_slots,
                 buf_sum=round(float(buf.abs().sum()), 3),
                 val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
-                # Rows past new_len are still zero, so this equals buf_sum
-                # exactly when the ring write-back landed where it should.
-                ring_after=round(float(staging[req].abs().sum()), 3),
             )
             q_start = q_end
 
@@ -2531,9 +2547,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 pos=positions,
                 slots=attn_metadata.slot_mapping[:num_tokens],
                 bt0=attn_metadata.block_tables[:num_reqs, :2],
-                # Must still match the ring_after the bulk write reported for
-                # this request: the window rewrite below trusts these rows.
-                ring_before=self._qfa_v_staging[:num_reqs].abs().sum(dim=(1, 2, 3)),
                 # Non-finite inputs mean the hidden state reaching attention is
                 # already broken, and the cache is not what needs fixing.
                 k_in_nan=[int((~torch.isfinite(key[t].float())).sum()) for t in range(num_tokens)],
