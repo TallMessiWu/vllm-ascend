@@ -2203,13 +2203,25 @@ class AscendAttentionBackendImpl(AttentionImpl):
         k_scale = scale_plane(num_blocks, block_size, num_kv_heads, head_size // 64, 2)
         v_scale = scale_plane(num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2)
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
-        logger.info_once(
-            "QFA MXFP8 cache bound: %s blocks x %s tokens x %s heads x %s, scales %.0f MiB/layer",
+        # Per layer, not info_once: the scale tables are allocated outside
+        # vLLM's KV budget, so their total is only visible by summing what each
+        # layer takes. Their size follows this layer's block count, and on MTP
+        # runs that count has been seen at 170x the reported cache capacity -
+        # print the budget alongside it so the two can be compared directly.
+        cache_config = self.vllm_config.cache_config
+        logger.info(
+            "QFA MXFP8 cache bound[L%s]: %s blocks x %s tokens x %s heads x %s = %.0f MiB values "
+            "+ %.0f MiB scales, capacity %s tokens (num_gpu_blocks=%s, block_size=%s)",
+            self._qfa_uid,
             num_blocks,
             block_size,
             num_kv_heads,
             head_size,
+            (k_fp8.numel() + v_fp8.numel()) / 2**20,
             (k_scale.numel() + v_scale.numel()) / 2**20,
+            num_blocks * block_size,
+            cache_config.num_gpu_blocks,
+            cache_config.block_size,
         )
         max_reqs = self.vllm_config.scheduler_config.max_num_seqs
         # One spare row absorbs padding/dummy requests so they never touch a
