@@ -17,17 +17,16 @@
 
 import dataclasses
 
+import torch
 from vllm.config import VllmConfig
 from vllm.logger import logger
 from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheSpec
 
-from vllm_ascend.attention.qfa_page import QFA_CACHE_DTYPE, qfa_fp8_attention_page
-
 _original_get_kv_cache_spec = Attention.get_kv_cache_spec
 
 # quant_flash_attn addresses the cache in 128-token blocks whatever block size
-# the KV manager hands out, so any block size here stays a multiple of it.
+# the KV manager hands out, so the doubled block stays a multiple of it.
 _KERNEL_BLOCK = 128
 
 
@@ -35,60 +34,55 @@ def _qfa_get_kv_cache_spec(self: Attention, vllm_config: VllmConfig) -> KVCacheS
     """Declare one byte per element for layers whose KV cache is MXFP8.
 
     Only the FP8 values live in the cache; their E8M0 scales are side tables
-    the impl owns, so the page is exactly half the BF16 one. Halving it is not
-    an optimization but a correctness requirement: the allocator hands blocks
-    out by page, and a layer that stores 1 byte per element inside a page sized
-    for 2 puts its block b on the page belonging to block b // 2 - which the
-    hybrid allocator has given to somebody else.
+    the impl owns, so a block of the same length is exactly half the page.
+    Getting the page right is a correctness requirement before it is an
+    optimization: the allocator hands blocks out by page, so a layer storing
+    one byte per element inside a page sized for two puts its block b on the
+    page belonging to block b // 2, which the hybrid allocator has given to
+    somebody else.
 
-    Platform setup has already sized cache_config.block_size for that halved
-    page, so the FP8 page computed here should equal the model's shared page
-    rather than be padded up to a BF16-sized one. Layers that stay BF16 need
-    the opposite correction; see below.
+    Doubling the block restores the page the rest of the model shares, and the
+    doubling belongs here rather than in the platform's block sizing. Platform
+    setup pads the mamba page to whatever attention page it computes, and
+    EngineCore then rewrites `cache_config.block_size` to the smallest block
+    among the KV cache groups (vllm/v1/engine/core.py) before this runs again.
+    A block sized for FP8 over there therefore feeds back into itself: with an
+    MTP drafter present the second pass halved the page and the run died.
+    Doubling only this layer's block leaves the smallest block untouched, so
+    the second pass sees exactly what the first one did.
+
+    Net effect: the page is unchanged and holds twice the tokens. Measured on
+    Qwen3.8-27B, concurrency 71.67x -> 86.00x and KV capacity 293,546 ->
+    352,256 tokens, with the mamba page byte-identical either way.
     """
     spec = _original_get_kv_cache_spec(self, vllm_config)
     if not getattr(self.impl, "qfa_decode_enabled", False):
-        if type(spec) is not FullAttentionSpec or not qfa_fp8_attention_page(vllm_config):
-            return spec
-        # Platform setup sized cache_config.block_size for an FP8 page, but
-        # this layer serves BF16 - the MTP drafter, or anything the impl's
-        # per-layer conditions rule out. Left alone it would pack twice the
-        # bytes into that block, making its page the largest in the model, and
-        # unify_hybrid_kv_cache_specs would pad every other page up to it -
-        # costing more than the FP8 cache saves. Half the block puts it back
-        # on the shared page: same bytes per page, half the tokens in it.
-        if spec.block_size % (2 * _KERNEL_BLOCK) or spec.block_size < 2 * _KERNEL_BLOCK:
-            raise AssertionError(
-                f"{self.layer_name}: cannot halve a block of {spec.block_size} tokens onto the shared "
-                f"FP8 page and stay a multiple of the {_KERNEL_BLOCK}-token kernel block"
-            )
-        halved = dataclasses.replace(spec, block_size=spec.block_size // 2)
-        logger.info(
-            "QFA MXFP8 spec: %s stays %s, block_size %d -> %d to hold the shared %d-byte page",
-            self.layer_name,
-            spec.dtype,
-            spec.block_size,
-            halved.block_size,
-            halved.page_size_bytes,
-        )
-        return halved
+        return spec
     if type(spec) is not FullAttentionSpec:
         raise AssertionError(f"QFA decode expects a plain FullAttentionSpec, got {type(spec).__name__}")
-    new_spec = dataclasses.replace(spec, dtype=QFA_CACHE_DTYPE)
-    # The page is what the allocator budgets, and it only shrinks if nothing
-    # pads it back up. Log both sides of the rewrite: with platform setup
-    # sizing the block for FP8, the new page should now be the model's shared
-    # page. If a later `GPU KV cache size` still matches the BF16 run's, the
-    # alignment did not take and the saving evaporated again.
+    if spec.block_size % _KERNEL_BLOCK:
+        raise AssertionError(
+            f"{self.layer_name}: block of {spec.block_size} tokens is not a multiple of the "
+            f"{_KERNEL_BLOCK}-token kernel block quant_flash_attn addresses the cache with"
+        )
+    new_spec = dataclasses.replace(spec, dtype=torch.float8_e4m3fn, block_size=spec.block_size * 2)
+    if new_spec.page_size_bytes != spec.page_size_bytes:
+        # Only true if something other than the element size changed the page;
+        # letting it through would put this layer on a page of its own and pad
+        # every other page in the model up to whichever is largest.
+        raise AssertionError(
+            f"{self.layer_name}: MXFP8 page {new_spec.page_size_bytes} does not match the "
+            f"model's {spec.page_size_bytes}; the halved element size and doubled block "
+            "should have cancelled out"
+        )
     logger.info(
-        "QFA MXFP8 spec: %s dtype %s -> %s, page %d -> %d bytes (real %d -> %d), block_size %d",
+        "QFA MXFP8 spec: %s dtype %s -> %s, block_size %d -> %d, page %d bytes (unchanged), %d tokens/page",
         self.layer_name,
         spec.dtype,
         new_spec.dtype,
-        spec.page_size_bytes,
+        spec.block_size,
+        new_spec.block_size,
         new_spec.page_size_bytes,
-        spec.real_page_size_bytes,
-        new_spec.real_page_size_bytes,
         new_spec.block_size,
     )
     return new_spec

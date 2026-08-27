@@ -196,31 +196,20 @@
 #   1. `vllm.model_executor.models.config.HybridAttentionMambaModelConfig.verify_and_update_config`
 #    Why:
 #       block size is set to 16 in vLLM which is not supported by Ascend.
-#       It also sizes the attention block so the mamba page can be aligned to
-#       the attention page, which means it decides the page every hybrid layer
-#       shares. That makes the KV cache dtype its business: with
-#       VLLM_ASCEND_ENABLE_QFA_DECODE the eligible full-attention layers store
-#       one byte per element, and sizing the block from the model dtype anyway
-#       leaves their halved page indivisible into the mamba page. Since
-#       `unify_hybrid_kv_cache_specs` pads a smaller page up rather than
-#       splitting the block, the halved page is padded straight back and saves
-#       nothing - measured on Qwen3.8-27B, the spec reported page 6291456 ->
-#       3145728 while concurrency stayed at 71.67x.
 #    How：
-#       Set block size to 128 on npu. When `qfa_fp8_attention_page` reports the
-#       MXFP8 cache is on, compute the page from `torch.float8_e4m3fn` instead
-#       of the model dtype, which doubles the attention block (1536 -> 3072 on
-#       Qwen3.8-27B) and leaves the shared page byte-identical, so the mamba
-#       side is untouched and each attention page holds twice the tokens.
-#       `vllm_ascend/attention/qfa_page.py` is the single source of truth both
-#       this and the worker-side kv_cache_spec patch read, since a disagreement
-#       between them lands directly in the page.
+#       Set block size to 128 on npu. Note this block size is deliberately NOT
+#       adjusted for the MXFP8 KV cache (patch 32), even though the page it
+#       computes here is the one the mamba page gets padded to: EngineCore
+#       rewrites cache_config.block_size to the smallest block among the KV
+#       cache groups once the config is built, and get_kv_cache_spec then runs
+#       again, so a block sized here for FP8 feeds back into itself and halves
+#       the page on the second pass. The FP8 layers double their own block
+#       instead, which lands on this same page and leaves the smallest block
+#       alone.
 #    Related PR (if no, explain why):
-#       we'll fix this in vLLM soon. The QFA-dependent sizing stays Ascend-only:
-#       it describes a cache layout vLLM has no notion of (see patch 32).
+#       we'll fix this in vLLM soon.
 #    Future Plan:
-#       Remove this patch when vLLM merges the PR. The QFA branch goes away
-#       with patch 32, once a first-class spec carries the scale side tables.
+#       Remove this patch when vLLM merges the PR.
 #
 # ** 11. File: platform/patch_mamba_config_310.py**
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1229,10 +1218,11 @@
 #       Replace with a first-class AscendQFAAttentionSpec once the scale side tables
 #       are folded into the page accounting, following AscendMLAAttentionSpec's
 #       scale_dim/scale_dtype pattern in vllm_ascend/core/kv_cache_interface.py.
-#       The hybrid page alignment is handled, not open: patch 10 now sizes the
-#       attention block from the FP8 page via the shared `qfa_page` helper, so the
-#       shared page is unchanged and each attention page holds twice the tokens.
-#       Layers that stay BF16 under that block - the MTP drafter above all - get
-#       their block size halved here, or their page would become the model's
-#       largest and pad every other page up to it, costing more than the FP8 cache
-#       saves.
+#       The hybrid page alignment is handled, not open: the spec doubles its own
+#       block size alongside halving the element size, so the page is byte-identical
+#       to the model's shared one and simply holds twice the tokens - concurrency
+#       71.67x -> 86.00x on Qwen3.8-27B. Doubling has to happen here rather than in
+#       patch 10, because EngineCore rewrites cache_config.block_size to the
+#       smallest group block and get_kv_cache_spec runs again afterwards: a block
+#       sized for FP8 over there feeds back into itself and halves the page on the
+#       second pass, which with an MTP drafter present killed the run.

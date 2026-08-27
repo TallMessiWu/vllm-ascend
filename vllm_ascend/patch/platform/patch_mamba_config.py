@@ -8,8 +8,6 @@ from vllm.model_executor.models.config import MambaModelConfig
 from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE, get_dtype_size
 
-from vllm_ascend.attention.qfa_page import QFA_CACHE_DTYPE, qfa_fp8_attention_page
-
 
 def _using_kv_store(vllm_config) -> bool:
     """
@@ -56,19 +54,13 @@ def verify_and_update_config(cls, vllm_config) -> None:
         kv_cache_dtype = model_config.dtype
     else:
         kv_cache_dtype = STR_DTYPE_TO_TORCH_DTYPE[cache_config.cache_dtype]
-    # QFA-eligible full-attention layers hold MXFP8 bytes, so their page is
-    # half of what the model dtype implies, and the block has to be sized for
-    # that here: everything below aligns the mamba page to the attention page,
-    # and `unify_hybrid_kv_cache_specs` later pads a smaller page up instead of
-    # splitting the block. Size for BF16 while the layers store FP8 and the
-    # halved page is padded right back - measured on Qwen3.8-27B, the spec
-    # reported page 6291456 -> 3145728 with concurrency stuck at 71.67x.
-    if qfa_fp8_attention_page(vllm_config):
-        kv_cache_dtype = QFA_CACHE_DTYPE
-        logger.info(
-            "QFA MXFP8 decode is enabled: sizing the attention page for %s (one byte per element).",
-            kv_cache_dtype,
-        )
+    # The MXFP8 cache deliberately does NOT change this. The page computed
+    # here is what the mamba page gets padded to, and EngineCore later rewrites
+    # cache_config.block_size to the smallest block among the KV cache groups -
+    # so a block sized here for FP8 feeds back into itself on the second
+    # get_kv_cache_spec pass and halves the page. The FP8 layers double their
+    # own block size instead, in patch_qfa_kv_cache_spec, which lands on this
+    # same page while leaving the smallest block where it was.
 
     kernel_block_size = 128
     model_cls, _ = ModelRegistry.resolve_model_cls(
