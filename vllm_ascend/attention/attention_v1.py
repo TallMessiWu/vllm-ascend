@@ -1976,16 +1976,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 parts.append(f"{name}={val}")
         logger.info("QFA-DEBUG[L%s] %s %s", self._qfa_uid, tag, " ".join(parts))
 
-    def _qfa_nan_census(self, plane: torch.Tensor, block: int, length: int) -> tuple[int, int]:
-        """NaN-encoding e4m3 bytes in one block, inside vs past `length`.
+    def _qfa_nan_census(self, plane: torch.Tensor, block: int, length: int, ctx: int = 0) -> tuple[int, int, int]:
+        """NaN-encoding e4m3 bytes in one block: history, this step, past the end.
 
-        0x7F and 0xFF are the only NaN encodings in e4m3, so a nonzero count is
-        unambiguous: either the quantizer emitted them or something else wrote
-        into these bytes.
+        0x7F and 0xFF are the only NaN encodings in e4m3. Splitting at ctx
+        matters: the write-time and read-time probes otherwise cover different
+        ranges, and "clean when written, NaN at decode" can just mean the token
+        this step appended is itself NaN rather than that memory was clobbered.
         """
         rows = plane[block]
         nan = (rows & 0x7F) == 0x7F
-        return int(nan[:length].sum()), int(nan[length:].sum())
+        return int(nan[:ctx].sum()), int(nan[ctx:length].sum()), int(nan[length:].sum())
 
     def _qfa_probe_decode(
         self,
@@ -2051,8 +2052,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             one_qs = q_descale_tnd.view(torch.uint8)[req : req + 1].contiguous().view(torch.float8_e8m0fnu)
             single.append(bad(run(args, one_q, one_qs, attn_metadata.block_tables[req : req + 1].contiguous()), 0))
 
-        def poison(plane: torch.Tensor, req: int) -> tuple[int, int]:
-            return self._qfa_nan_census(plane, int(attn_metadata.block_tables[req, 0]), int(seq_lens[req]))
+        ctx_lens = seq_lens[:num_reqs] - (
+            attn_metadata.query_start_loc[1 : num_reqs + 1] - attn_metadata.query_start_loc[:num_reqs]
+        )
+
+        def poison(plane: torch.Tensor, req: int) -> tuple[int, int, int]:
+            return self._qfa_nan_census(
+                plane,
+                int(attn_metadata.block_tables[req, 0]),
+                int(seq_lens[req]),
+                int(ctx_lens[req]),
+            )
 
         self._qfa_debug(
             "probe-decode",
@@ -2409,6 +2419,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 # Must still match the ring_after the bulk write reported for
                 # this request: the window rewrite below trusts these rows.
                 ring_before=self._qfa_v_staging[:num_reqs].abs().sum(dim=(1, 2, 3)),
+                # Non-finite inputs mean the hidden state reaching attention is
+                # already broken, and the cache is not what needs fixing.
+                k_in_nan=[int((~torch.isfinite(key[t].float())).sum()) for t in range(num_tokens)],
+                v_in_nan=[int((~torch.isfinite(value[t].float())).sum()) for t in range(num_tokens)],
             )
             self._qfa_write_value_decode(
                 value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs
