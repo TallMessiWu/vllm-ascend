@@ -200,6 +200,11 @@ class AscendMetadata:
     seq_lens_cpu: torch.Tensor = None
     seq_lens_list: list[int] = None  # type: ignore
     actual_seq_lengths_q: list[int] = None  # type: ignore
+    # Device-resident KV lengths. The fields above are host tensors/lists,
+    # which the QFA paged path cannot use: it hands seqused_kv straight to the
+    # kernel, and async scheduling makes the host copies optimistic until the
+    # sampler catches up. Points at the runner's persistent buffer.
+    seq_lens_dev: torch.Tensor = None
 
     query_start_loc: torch.Tensor = None
     # Maximum query length in the batch (None for decoding).
@@ -410,6 +415,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             seq_lens=seq_lens,
             seq_lens_cpu=seq_lens,
             seq_lens_list=seq_lens_list,
+            seq_lens_dev=common_attn_metadata.seq_lens[:num_reqs],
             max_query_len=common_attn_metadata.max_query_len,
             actual_seq_lengths_q=actual_seq_lengths_q,
             slot_mapping=slot_mapping,
@@ -572,6 +578,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
         self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
         self._qfa_v_staging: torch.Tensor | None = None
+        # Upper bound on tokens per request in a decode step, mirroring the
+        # metadata builder. Passing the bound rather than the batch's actual
+        # max keeps the value constant across steps, which aclgraph capture
+        # needs - the kernels still clip their work to the real seqused/cu
+        # values they read from device memory.
+        spec_config = self.vllm_config.speculative_config
+        self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1512,6 +1525,81 @@ class AscendAttentionBackendImpl(AttentionImpl):
         output[:num_tokens] = attn_output
         return output
 
+    def _qfa_paged_common_args(self, attn_metadata: AscendMetadata, decode: bool) -> dict:
+        """Single source of truth for the paged QFA argument set.
+
+        The AICPU metadata op and the main op derive their work split from the
+        same inputs; if the two disagree on even one of them the kernels walk
+        different grids and silently produce wrong numbers instead of failing.
+        Both calls therefore take exactly this dict.
+        """
+        return dict(
+            cu_seqlens_q=attn_metadata.query_start_loc[: len(attn_metadata.actual_seq_lengths_q) + 1],
+            seqused_kv=attn_metadata.seq_lens_dev,
+            # Right-down causal covers both shapes: with q_len == 1 the single
+            # row sees the whole history, and with a verify batch each draft
+            # token sees exactly its own prefix.
+            mask_mode=3,
+            max_seqlen_q=self._qfa_decode_threshold if decode else attn_metadata.max_query_len,
+            max_seqlen_kv=max(attn_metadata.seq_lens_list),
+            layout_q="TND",
+            # N2TGD merges the GQA group into the M axis, which fills the cube
+            # tile when q_len * group is small; long chunked-prefill queries
+            # fill it on their own and keep the plain TND descale.
+            layout_q_descale="N2TGD" if decode else "TND",
+            layout_kv="PA_BBND",
+            layout_out="TND",
+        )
+
+    def _forward_qfa_paged(
+        self,
+        query: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor,
+        decode: bool,
+    ) -> torch.Tensor:
+        """Decode, MTP verify and chunked prefill against the MXFP8 KV cache."""
+        logger.info_once(
+            "QFA MXFP8 paged path engaged (num_heads=%s, num_kv_heads=%s, head_size=%s)",
+            self.num_heads,
+            self.num_kv_heads,
+            self.head_size,
+        )
+        k_fp8, k_scale, v_fp8, v_scale = self._qfa_fp8_views
+        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+        q_fp8, q_descale = self._qfa_quant_query_key(query[:num_tokens])
+        if decode:
+            group = self.num_heads // self.num_kv_heads
+            q_descale = (
+                q_descale.reshape(num_tokens, self.num_kv_heads, group, self.head_size // 64, 2)
+                .permute(1, 0, 2, 3, 4)
+                .contiguous()
+            )
+
+        common_args = self._qfa_paged_common_args(attn_metadata, decode)
+        metadata = DeviceOperator.npu_quant_flash_attn_metadata(
+            num_heads_q=self.num_heads,
+            num_heads_kv=self.num_kv_heads,
+            head_dim=self.head_size,
+            v_descale=v_scale.view(torch.float8_e8m0fnu),
+            **common_args,
+        )
+        attn_output = DeviceOperator.npu_quant_flash_attn(
+            q_fp8,
+            k_fp8.view(torch.float8_e4m3fn),
+            v_fp8.view(torch.float8_e4m3fn),
+            q_descale,
+            k_scale.view(torch.float8_e8m0fnu),
+            v_scale.view(torch.float8_e8m0fnu),
+            metadata,
+            self.scale,
+            block_table=attn_metadata.block_tables,
+            attn_mask=self._get_qfa_mask(query.device),
+            **common_args,
+        )
+        output[:num_tokens] = attn_output
+        return output
+
     def forward_fused_infer_attention(
         self,
         query: torch.Tensor,
@@ -1545,14 +1633,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and not getattr(attn_metadata, "is_draft_pass", False)
         ):
             return self._forward_qfa_prefill(query, key, value, attn_metadata, output)
-        if self._qfa_fp8_views is not None:
-            # This layer's cache now holds MXFP8 bytes, which the BF16
-            # fused-infer-attention path would read as garbage. The paged QFA
-            # read path lands in milestone C2; fail loudly until then rather
-            # than serving silently wrong results.
+        if (
+            self.qfa_decode_enabled
+            and not getattr(attn_metadata, "is_draft_pass", False)
+            and not _EXTRA_CTX.is_draft_model
+        ):
+            # This layer's cache holds MXFP8 bytes, which the BF16
+            # fused-infer-attention path would read as garbage, so every state
+            # that reads the cache has to go through the paged QFA op. An
+            # unhandled state must fail loudly rather than serve wrong numbers.
+            if attn_metadata.attn_state in (
+                AscendAttentionState.DecodeOnly,
+                AscendAttentionState.SpecDecoding,
+            ):
+                return self._forward_qfa_paged(query, attn_metadata, output, decode=True)
+            if attn_metadata.attn_state in (
+                AscendAttentionState.ChunkedPrefill,
+                AscendAttentionState.PrefillCacheHit,
+            ):
+                return self._forward_qfa_paged(query, attn_metadata, output, decode=False)
             raise NotImplementedError(
-                f"QFA MXFP8 KV cache has no read path for attn_state={attn_metadata.attn_state} yet "
-                "(milestone C2). Unset VLLM_ASCEND_ENABLE_QFA_DECODE to keep the BF16 path."
+                f"QFA MXFP8 KV cache has no read path for attn_state={attn_metadata.attn_state}. "
+                "Unset VLLM_ASCEND_ENABLE_QFA_DECODE to keep the BF16 path."
             )
         passed_value = value
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
