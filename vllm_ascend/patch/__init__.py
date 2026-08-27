@@ -1197,6 +1197,11 @@
 #       the original spec, so this is per-layer rather than a global cache_dtype
 #       change. The impl asserts the one-byte element size when it binds the cache,
 #       so a patch that failed to apply fails loudly instead of silently miscomputing.
+#       Because this keys off `qfa_decode_enabled` alone, that flag is the single
+#       source of truth for the cache's dtype: the impl constructor clears it for
+#       layers built under a side model's tag (the MTP drafter's "eagle_head",
+#       vision towers, Gemma's cross decoder), which serve from BF16 FIA and would
+#       read an MXFP8 page as garbage.
 #    Related PR (if no, explain why):
 #       No upstream PR: this describes an Ascend-only cache layout that vLLM has no
 #       notion of. Upstreaming would need a general "quantized KV cache with external
@@ -1205,3 +1210,10 @@
 #       Replace with a first-class AscendQFAAttentionSpec once the scale side tables
 #       are folded into the page accounting, following AscendMLAAttentionSpec's
 #       scale_dim/scale_dtype pattern in vllm_ascend/core/kv_cache_interface.py.
+#       Still open: on hybrid GDN models the halved page is padded straight back up.
+#       patch_mamba_config sizes the mamba page from a BF16 attention page during
+#       platform setup, before this patch runs, and the FP8 page does not divide it,
+#       so unify_hybrid_kv_cache_specs pads rather than doubling the block size -
+#       measured on Qwen3.8-27B, page 6291456 -> 3145728 in the spec but concurrency
+#       stayed at 71.67x. The cache is correct, it just saves nothing yet; the fix is
+#       to teach the mamba alignment about the FP8 page so block_size doubles.

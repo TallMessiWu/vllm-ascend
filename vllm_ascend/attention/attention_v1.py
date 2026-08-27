@@ -508,6 +508,27 @@ class AscendAttentionPCPMetadataBuilder(AscendAttentionMetadataBuilder):
         return metadata
 
 
+def _building_backbone() -> bool:
+    """Whether the layer under construction belongs to the backbone model.
+
+    QFA owns its layers' KV cache format, so only the backbone may opt in.
+    vLLM builds side models under their own model tag - the MTP drafter under
+    "eagle_head", Gemma's cross decoder and the vision towers under theirs -
+    and those layers serve from the BF16 FIA path. A side layer that still
+    declared MXFP8 would be handed a one-byte-per-element cache that FIA reads
+    as garbage, because the kv_cache_spec patch keys off qfa_decode_enabled
+    alone. The tag decides, not the layer name, which differs per drafter.
+
+    Read through the module so the current value is seen: `model_tag` is a
+    module-level global that set_model_tag() rebinds, so a from-import would
+    freeze it at "backbone". Anything but the backbone falls back to BF16 -
+    over-excluding costs speed, under-excluding costs correctness.
+    """
+    from vllm.compilation import backends as compilation_backends
+
+    return getattr(compilation_backends, "model_tag", "backbone") == "backbone"
+
+
 class AscendAttentionBackendImpl(AttentionImpl):
     def __init__(
         self,
@@ -568,6 +589,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and self.sliding_window is None
             and self.sinks is None
             and self.attn_type == AttentionType.DECODER
+            and _building_backbone()
         )
         # get_dynamic_mx_quant_scale_alg() falls back to get_current_vllm_config(),
         # which only holds a value while the model is being built. Resolve it here
@@ -575,10 +597,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._qfa_scale_alg = get_dynamic_mx_quant_scale_alg(self.vllm_config)
         self._qfa_mask: torch.Tensor | None = None
         # Milestone C: MXFP8 KV cache + QuantFlashAttn paged decode. The FP8
-        # values and E8M0 scale planes live inside this layer's own BF16 cache
-        # allocation (byte reinterpretation), so the kv_cache_spec, block
-        # accounting and the hybrid GDN/attention page sharing stay untouched.
-        # Draft-model impls never attach, keeping the draft on BF16 + FIA.
+        # values are this layer's own cache, which a worker patch declares as
+        # float8_e4m3fn so the allocator sizes the page for one byte per
+        # element; the E8M0 scales are side tables the impl allocates itself.
+        # That patch keys off this flag alone, so this flag is what decides
+        # the cache's dtype - it must stay false for any layer that serves
+        # from the BF16 FIA path, which _building_backbone() enforces above.
         self.qfa_decode_enabled = self.qfa_prefill_enabled and envs_ascend.VLLM_ASCEND_ENABLE_QFA_DECODE
         self._qfa_fp8_views: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
         self._qfa_v_staging: torch.Tensor | None = None
