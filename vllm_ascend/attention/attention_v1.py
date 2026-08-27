@@ -591,6 +591,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
         self._qfa_pending_check: list = []
+        # Impls are constructed in layer order, so this doubles as a layer tag
+        # for the debug log; _layer_name is not populated on the write path.
+        self._qfa_uid = AscendAttentionBackendImpl._qfa_next_uid
+        AscendAttentionBackendImpl._qfa_next_uid += 1
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1948,6 +1952,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
     # Milestone C: MXFP8 KV cache (values + E8M0 scale planes carved out of
     # this layer's own BF16 cache allocation)
     # ------------------------------------------------------------------
+    _qfa_next_uid = 0  # layer tag for the debug log, bumped per constructed impl
+
     QFA_V_GROUP = 64  # tokens sharing one packed V scale row
     QFA_STAGING_ROWS = 128  # two V windows: a step of <=1+num_spec may cross one boundary
 
@@ -1965,7 +1971,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 parts.append(f"{name}{tuple(val.shape)}={shown}{suffix}")
             else:
                 parts.append(f"{name}={val}")
-        logger.info("QFA-DEBUG[%s] %s %s", self._layer_name, tag, " ".join(parts))
+        logger.info("QFA-DEBUG[L%s] %s %s", self._qfa_uid, tag, " ".join(parts))
 
     def _qfa_verify_bulk(self, key: torch.Tensor, attn_metadata: AscendMetadata) -> None:
         """Read the cache back and compare it to what the write believed it stored.
@@ -2211,20 +2217,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             windows = torch.arange(first_window, first_window + num_windows, device=value.device)
             blocks = block_tables[req, torch.div(windows, 2, rounding_mode="floor")].to(torch.int64)
             window_slots = blocks * 2 + (windows % 2)
-            self._qfa_debug(
-                "write-bulk",
-                state=str(attn_metadata.attn_state),
-                req=req,
-                q=(q_start, q_end),
-                new_len=new_len,
-                ctx=ctx_len,
-                first_w=first_window,
-                n_w=num_windows,
-                lead=lead,
-                slots=window_slots,
-                buf_sum=round(float(buf.abs().sum()), 3),
-                val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
-            )
             fp8, scale = self._qfa_commit_windows(
                 buf.view(num_windows, group, num_kv_heads, head_size),
                 window_slots,
@@ -2242,6 +2234,23 @@ class AscendAttentionBackendImpl(AttentionImpl):
             ring_lo = max(new_len - self.QFA_STAGING_ROWS, buf_start)
             tail_positions = torch.arange(ring_lo, new_len, device=value.device)
             staging[req, tail_positions % self.QFA_STAGING_ROWS] = buf[tail_positions - buf_start]
+            self._qfa_debug(
+                "write-bulk",
+                state=str(attn_metadata.attn_state),
+                req=req,
+                q=(q_start, q_end),
+                new_len=new_len,
+                ctx=ctx_len,
+                first_w=first_window,
+                n_w=num_windows,
+                lead=lead,
+                slots=window_slots,
+                buf_sum=round(float(buf.abs().sum()), 3),
+                val_sum=round(float(value[q_start:q_end].abs().sum()), 3),
+                # Rows past new_len are still zero, so this equals buf_sum
+                # exactly when the ring write-back landed where it should.
+                ring_after=round(float(staging[req].abs().sum()), 3),
+            )
             q_start = q_end
 
     def _qfa_write_kv(self, key: torch.Tensor, value: torch.Tensor, attn_metadata: AscendMetadata) -> None:
@@ -2281,6 +2290,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 pos=positions,
                 slots=attn_metadata.slot_mapping[:num_tokens],
                 bt0=attn_metadata.block_tables[:num_reqs, :2],
+                # Must still match the ring_after the bulk write reported for
+                # this request: the window rewrite below trusts these rows.
+                ring_before=self._qfa_v_staging[:num_reqs].abs().sum(dim=(1, 2, 3)),
             )
             self._qfa_write_value_decode(
                 value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs
