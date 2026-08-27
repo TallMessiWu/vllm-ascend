@@ -2351,24 +2351,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
         A verify step appends up to 1 + num_spec tokens before the attention
         read, so that read can see a scale a non-speculative run would only
         reach several steps later - the same history, quantized differently.
-        Re-quantizing from the confirmed tokens alone measures exactly that:
-        nonzero means the two paths disagree on this window's scale, which is
-        what explains a step whose logprobs move far more than the usual
-        quantization error. Debug only, and nothing here is written back.
+        Re-quantizing from the confirmed tokens alone measures how far THIS
+        step's newly written tokens moved the scale. Read it as speculation's
+        cost only against the same table at NUM_SPEC=0, which is not zero
+        either - there the step still appends one token. The ratio between the
+        two is speculation's share; a single run's numbers are not.
 
-        Measured on Qwen3.8-27B, num_spec=3, first window of a 5-token prompt:
-        410 of 4096 scale bytes moved on the first verify (ctx 5 -> 9), 244 on
-        the second (ctx 7 -> 11). A moved byte is one E8M0 step, halving that
-        channel's V precision, and that was enough to shift one step's chosen
-        logprob by 0.88 where the ordinary quantization error is around 0.02.
-        The count falls as a window fills - four more tokens rarely raise the
-        max of a nearly full one - but a window restarts empty every `group`
-        tokens, so it recurs on that period rather than fading once. What does
-        fade with sequence length is its weight: only the current window can
-        move, and that is a shrinking share of the KV a query reads. All of it
-        is inherent to sharing a scale along the token axis, not a defect: a
-        verify batch must write every candidate's KV before the read that
-        decides which of them survive.
+        Debug only, and nothing here is written back.
+
+        Measured on Qwen3.8-27B, num_spec=3, 512 tokens, 146 steps. The count
+        tracks how full the CURRENT 32-token scale group is, and the op packs
+        two of them per window, so it peaks twice per window rather than once:
+        mean 1591/4096 at fill 0-7, 418 at 8-15, 107 at 24-31, then 1332 again
+        at 32-39 as the second group opens. A group's first step tops out at
+        exactly 2048 - that group's every byte - because it had no confirmed
+        token to be quantized from. A moved byte is one E8M0 step, halving
+        that channel's V precision; on one step that was enough to shift the
+        chosen logprob by 0.88 where the ordinary quantization error is 0.02.
+        What fades with sequence length is the weight, not the count: only the
+        current group can move, and it is a shrinking share of the KV a query
+        reads. All of this is inherent to sharing a scale along the token
+        axis, not a defect - a verify batch must write every candidate's KV
+        before the read that decides which of them survive.
         """
         confirmed = (ctx_lens.repeat_interleave(2) - windows * group).clamp(0, group)
         _, scale_confirmed = self._qfa_quant_along_tokens(
