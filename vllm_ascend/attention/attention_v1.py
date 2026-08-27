@@ -589,6 +589,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # values they read from device memory.
         spec_config = self.vllm_config.speculative_config
         self._qfa_decode_threshold = 1 + (spec_config.num_speculative_tokens if spec_config else 0)
+        self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
 
     def _graph_metadata_layer_name(self, layer: AttentionLayer | None = None) -> str | None:
         layer_name = layer.layer_name if layer is not None else self._layer_name
@@ -1591,6 +1592,18 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
 
         common_args = self._qfa_paged_common_args(attn_metadata, decode)
+        self._qfa_debug(
+            "read-paged",
+            decode=decode,
+            state=str(attn_metadata.attn_state),
+            num_tokens=num_tokens,
+            cu_q=common_args["cu_seqlens_q"],
+            seqused=common_args["seqused_kv"],
+            max_q=common_args["max_seqlen_q"],
+            max_kv=common_args["max_seqlen_kv"],
+            bt_shape=tuple(attn_metadata.block_tables.shape),
+            bt0=attn_metadata.block_tables[: len(attn_metadata.actual_seq_lengths_q), :2],
+        )
         metadata = DeviceOperator.npu_quant_flash_attn_metadata(
             num_heads_q=self.num_heads,
             num_heads_kv=self.num_kv_heads,
@@ -1937,6 +1950,22 @@ class AscendAttentionBackendImpl(AttentionImpl):
     QFA_V_GROUP = 64  # tokens sharing one packed V scale row
     QFA_STAGING_ROWS = 128  # two V windows: a step of <=1+num_spec may cross one boundary
 
+    def _qfa_debug(self, tag: str, **fields) -> None:
+        """Log the per-request bookkeeping for the first few calls on a layer."""
+        if self._qfa_debug_left <= 0:
+            return
+        self._qfa_debug_left -= 1
+        parts = []
+        for name, val in fields.items():
+            if isinstance(val, torch.Tensor):
+                flat = val.detach().flatten()
+                shown = flat[:24].cpu().tolist()
+                suffix = "..." if flat.numel() > 24 else ""
+                parts.append(f"{name}{tuple(val.shape)}={shown}{suffix}")
+            else:
+                parts.append(f"{name}={val}")
+        logger.info("QFA-DEBUG[%s] %s %s", self._layer_name, tag, " ".join(parts))
+
     def _qfa_attach_fp8_cache(self) -> None:
         """Carve k/v FP8 values and E8M0 scale planes out of the BF16 cache.
 
@@ -2175,6 +2204,19 @@ class AscendAttentionBackendImpl(AttentionImpl):
             req_ids = torch.searchsorted(query_start_loc[1 : num_reqs + 1].contiguous(), token_ids, right=True)
             ctx_lens = seq_lens[:num_reqs] - (query_start_loc[1 : num_reqs + 1] - starts)
             positions = ctx_lens[req_ids] + (token_ids - starts[req_ids])
+            self._qfa_debug(
+                "write-decode",
+                state=str(attn_metadata.attn_state),
+                num_tokens=num_tokens,
+                num_reqs=num_reqs,
+                qsl=query_start_loc[: num_reqs + 1],
+                seq_lens=seq_lens[:num_reqs],
+                ctx=ctx_lens,
+                req_ids=req_ids,
+                pos=positions,
+                slots=attn_metadata.slot_mapping[:num_tokens],
+                bt0=attn_metadata.block_tables[:num_reqs, :2],
+            )
             self._qfa_write_value_decode(
                 value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs
             )

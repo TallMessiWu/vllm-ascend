@@ -118,6 +118,10 @@ env_variables: dict[str, Callable[[], Any]] = {
     # 0 (default): decode stays on the BF16 fused-infer-attention path.
     # 1: FP8 KV cache + QuantFlashAttn decode for eligible layers.
     "VLLM_ASCEND_ENABLE_QFA_DECODE": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_DECODE", "0"))),
+    # Debug aid for the QFA paged path: dump the per-request bookkeeping
+    # (request ids, context lengths, staging positions, block/window slots)
+    # for this many attention calls per layer, then go quiet. 0 disables.
+    "VLLM_ASCEND_QFA_DEBUG_STEPS": lambda: int(os.getenv("VLLM_ASCEND_QFA_DEBUG_STEPS", "0")),
 }
 
 # end-env-vars-definition
