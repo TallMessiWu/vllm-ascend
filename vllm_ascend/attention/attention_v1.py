@@ -2116,14 +2116,26 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
 
     def _qfa_attach_fp8_cache(self) -> None:
-        """Carve k/v FP8 values and E8M0 scale planes out of the BF16 cache.
+        """Allocate this layer's MXFP8 K/V value and E8M0 scale planes.
 
-        A BF16 cache holds 2 bytes per element while MXFP8 needs 1 byte per
-        element plus 1/32 byte of scale, so both planes fit inside the existing
-        allocation with room to spare. Taking them as flat byte prefixes keeps
-        every view contiguous, which the custom op requires. Nothing about the
-        kv_cache_spec, the block accounting or the hybrid GDN/attention page
-        sharing changes - only this layer's interpretation of its own bytes.
+        These used to be carved as flat byte prefixes of the layer's own BF16
+        cache, which is unsound: block b of a BF16 cache starts at byte
+        b * block_size * heads * dim * 2, but a 1-byte-per-element plane puts
+        block b at half that offset, so every block silently lands on the page
+        the allocator assigned to block b // 2. That is invisible when a layer
+        owns its buffer outright, and fatal under the hybrid allocator, which
+        hands attention and mamba layers the *same* buffer and relies on their
+        block ids being disjoint to keep them apart. Re-indexing the blocks
+        breaks that isolation: on Qwen3.8-27B the requests holding blocks 60
+        and 108 landed on the GDN state at pages 30 and 54 and had their K
+        bytes overwritten between the write and the next decode read, while
+        the request on block 12 (page 6, unused) was untouched.
+
+        Owning the planes outright keeps block ids mapping 1:1 to byte offsets
+        and keeps every view contiguous, which the custom op requires. It costs
+        roughly half the BF16 cache again per layer; the BF16 allocation then
+        goes unused, so the follow-up is to shrink this layer's kv_cache_spec
+        instead of leaving it stranded.
         """
         num_blocks, block_size, num_kv_heads, head_size = self.key_cache.shape
         # The cache is always laid out in kernel blocks, even when the KV
@@ -2133,30 +2145,26 @@ class AscendAttentionBackendImpl(AttentionImpl):
             raise AssertionError(
                 f"QFA decode requires a 128-token kernel block, got a cache shaped {tuple(self.key_cache.shape)}"
             )
-        values = num_blocks * block_size * num_kv_heads * head_size
-        k_scale_bytes = values // 32  # one E8M0 byte per 32-element group along D
-        v_scale_bytes = num_blocks * (block_size // self.QFA_V_GROUP) * num_kv_heads * head_size * 2
+        device = self.key_cache.device
 
-        def carve(cache: torch.Tensor, scale_bytes: int, scale_shape: tuple[int, ...]):
-            if not cache.is_contiguous():
-                raise AssertionError("QFA decode needs a contiguous KV cache; got a strided view")
-            flat = cache.view(torch.uint8).reshape(-1)
-            if flat.numel() < values + scale_bytes:
-                raise AssertionError(f"KV cache too small for MXFP8: {flat.numel()} < {values + scale_bytes}")
-            fp8 = flat[:values].view(num_blocks, block_size, num_kv_heads, head_size)
-            scale = flat[values : values + scale_bytes].view(*scale_shape)
-            scale.zero_()  # byte 0x00 is e8m0 2^-127: a safe, non-NaN "unwritten" scale
-            return fp8, scale
+        def plane(*shape: int) -> torch.Tensor:
+            # Zeroed: 0x00 is +0.0 in e4m3 and 2^-127 in e8m0, so an unwritten
+            # block reads as harmless zeros rather than as e4m3 NaN (0x7F/0xFF).
+            return torch.zeros(*shape, dtype=torch.uint8, device=device)
 
-        k_fp8, k_scale = carve(
-            self.key_cache, k_scale_bytes, (num_blocks, block_size, num_kv_heads, head_size // 64, 2)
-        )
-        v_fp8, v_scale = carve(
-            self.value_cache,
-            v_scale_bytes,
-            (num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2),
-        )
+        k_fp8 = plane(num_blocks, block_size, num_kv_heads, head_size)
+        k_scale = plane(num_blocks, block_size, num_kv_heads, head_size // 64, 2)
+        v_fp8 = plane(num_blocks, block_size, num_kv_heads, head_size)
+        v_scale = plane(num_blocks, block_size // self.QFA_V_GROUP, num_kv_heads, head_size, 2)
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
+        logger.info_once(
+            "QFA MXFP8 planes allocated per layer: %.2f GiB (%s blocks x %s tokens x %s heads x %s)",
+            sum(t.numel() for t in self._qfa_fp8_views) / 2**30,
+            num_blocks,
+            block_size,
+            num_kv_heads,
+            head_size,
+        )
         max_reqs = self.vllm_config.scheduler_config.max_num_seqs
         # One spare row absorbs padding/dummy requests so they never touch a
         # real request's staging window.
@@ -2166,7 +2174,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             num_kv_heads,
             head_size,
             dtype=self.value_cache.dtype,
-            device=self.value_cache.device,
+            device=device,
         )
 
     def _qfa_quant_along_tokens(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
