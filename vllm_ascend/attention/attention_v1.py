@@ -200,10 +200,9 @@ class AscendMetadata:
     seq_lens_cpu: torch.Tensor = None
     seq_lens_list: list[int] = None  # type: ignore
     actual_seq_lengths_q: list[int] = None  # type: ignore
-    # Device-resident KV lengths. The fields above are host tensors/lists,
-    # which the QFA paged path cannot use: it hands seqused_kv straight to the
-    # kernel, and async scheduling makes the host copies optimistic until the
-    # sampler catches up. Points at the runner's persistent buffer.
+    # Device copy of the corrected seq_lens above, for kernels that take the
+    # KV lengths as a device tensor (the QFA paged path hands it straight to
+    # the op as seqused_kv). Mirrors seq_lens_list exactly, padding included.
     seq_lens_dev: torch.Tensor = None
 
     query_start_loc: torch.Tensor = None
@@ -415,7 +414,12 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             seq_lens=seq_lens,
             seq_lens_cpu=seq_lens,
             seq_lens_list=seq_lens_list,
-            seq_lens_dev=common_attn_metadata.seq_lens[:num_reqs],
+            # Same corrected lengths the FIA path consumes as seq_lens_list,
+            # not common_attn_metadata.seq_lens: that one is optimistic under
+            # speculative decoding (it assumes every draft token was accepted),
+            # and feeding it to the kernel as seqused_kv would read rejected
+            # tokens back as if they were real history.
+            seq_lens_dev=seq_lens.to(query_start_loc.device, non_blocking=True),
             max_query_len=common_attn_metadata.max_query_len,
             actual_seq_lengths_q=actual_seq_lengths_q,
             slot_mapping=slot_mapping,
@@ -2156,10 +2160,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             AscendAttentionState.SpecDecoding,
         ):
             query_start_loc = attn_metadata.query_start_loc
-            # TODO(milestone C2): read the runner's persistent device seq_lens
-            # instead; the builder hands out a CPU tensor today, making this an
-            # H2D copy per layer per step.
-            seq_lens = attn_metadata.seq_lens.to(value.device, non_blocking=True)
+            # Same device tensor the read path passes as seqused_kv: the two
+            # must agree on how much history exists, or writes land outside
+            # what attention will read back.
+            seq_lens = attn_metadata.seq_lens_dev
             token_ids = torch.arange(num_tokens, device=value.device)
             # Map each token back to its request on device: async scheduling
             # makes the host-side lengths optimistic, so they cannot be trusted.
