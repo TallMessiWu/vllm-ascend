@@ -537,7 +537,10 @@ def _qfa_layer_eligible(vllm_config) -> bool:
     are per layer, so that collapse took the tables from 3% of the values to
     49% and left MTP + QFA at 18.59x concurrency against BF16's 24.67x. On the
     same spec the drafter merges back into the attention group and the layout
-    is the BF16 one again.
+    is the BF16 one again: measured on Qwen3.8-27B, 4 groups of 17 either way,
+    tables back to 3.1%, and 25.64x against the same 24.67x. The margin is
+    thin because with MTP a request needs 15 blocks of which 12 are GDN, and
+    halving the attention page saves exactly one of them.
 
     Every other side model stays on BF16: Gemma's cross decoder, the vision
     towers, the dflash2 candidate selector, and the non-MTP drafters, whose
@@ -2428,6 +2431,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # otherwise enter history at a value it never had - and the confirmed
         # maximum computed from it could never climb back. Simulated at 3x
         # worse than changing nothing (sim_qfa_spec_scale_policies.py).
+        #
+        # Measured on Qwen3.8-27B, num_spec=3, the step where this first showed
+        # up: the token that displaced the baseline's pick sat at -1.0326 with
+        # the drafts in the scale and -1.5360 with the split, against -1.6126
+        # in the same run without speculation. Speculation's own share of the
+        # drift went from 0.580 to 0.0766.
         self._qfa_pending_restore = (rows, window_slots, num_kv_heads, head_size)
         if self._qfa_scale_probe_left > 0:
             self._qfa_scale_probe_left -= 1
