@@ -1828,6 +1828,18 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 v_descale=v_scale.view(torch.float8_e8m0fnu),
                 **common_args,
             )
+            # The AICPU task is not reliably ordered ahead of the AICORE
+            # copy_ that moves its output into the resident buffer: on the
+            # serve warmup the buffer was observed holding the blob's header
+            # plus zeros while a fresh recompute of the same arguments
+            # returned a full plan, and the main op walked that half-written
+            # plan into an MTE trap (507014). The first call's window is
+            # huge - ~500 ms of AICPU so-load - and the steady-state window
+            # small but real, which also fits the eager smoke's intermittent
+            # slow steps and drifting numbers. One host sync per step pins
+            # every consumer after the write; the plan is on the critical
+            # path anyway. Never reached under capture (the caller asserts).
+            torch.npu.synchronize()
             attn_metadata.qfa_metadata[key] = blob
         return blob
 
@@ -1927,9 +1939,22 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 v_descale=self._qfa_fp8_views[3].view(torch.float8_e8m0fnu),
                 **common_args,
             )
+            fresh2 = DeviceOperator.npu_quant_flash_attn_metadata(
+                num_heads_q=self.num_heads,
+                num_heads_kv=self.num_kv_heads,
+                head_dim=self.head_size,
+                v_descale=self._qfa_fp8_views[3].view(torch.float8_e8m0fnu),
+                **common_args,
+            )
+            torch.npu.synchronize()
+            # fresh-vs-fresh2 maps the ints the AICPU never writes (their
+            # garbage differs per allocation); buf-vs-fresh differences at
+            # positions the two fresh blobs AGREE on are real plan divergence.
+            unwritten = fresh != fresh2
+            buf_diff = metadata != fresh
             logger.info(
                 "QFA read args[L%s]: decode=%s state=%s cu=%s seqused=%s max_q=%s max_kv=%s mask_mode=%s "
-                "blob-vs-fresh diffs=%s blob head=%s",
+                "buf-vs-fresh diffs=%s (in written region %s, unwritten region spans %s ints) blob head=%s",
                 self._qfa_uid,
                 decode,
                 attn_metadata.attn_state,
@@ -1938,7 +1963,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 common_args["max_seqlen_q"],
                 common_args["max_seqlen_kv"],
                 common_args["mask_mode"],
-                int((metadata != fresh).sum()),
+                int(buf_diff.sum()),
+                int((buf_diff & ~unwritten).sum()),
+                int(unwritten.sum()),
                 metadata[:16].cpu().tolist(),
             )
         timing_read = self._qfa_time_reads_left > 0
