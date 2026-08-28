@@ -762,6 +762,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             1 if self._qfa_is_draft_layer else 1 + (spec_config.num_speculative_tokens if spec_config else 0)
         )
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
+        self._qfa_bounds_checked = False
         self._qfa_time_reads_left = envs_ascend.VLLM_ASCEND_QFA_TIME_READS if self.qfa_decode_enabled else 0
         self._qfa_time_fast_left = 3  # log this many sub-threshold calls as the timing baseline
         self._qfa_slow_dumps = 0
@@ -1881,6 +1882,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             self.head_size,
         )
         k_fp8, k_scale, v_fp8, v_scale = self._qfa_fp8_views
+        self._qfa_check_paged_bounds(attn_metadata)
         num_tokens = attn_metadata.actual_seq_lengths_q[-1]
         q_fp8, q_descale = self._qfa_quant_query_key(query[:num_tokens])
         q_descale_tnd = q_descale
@@ -1939,6 +1941,57 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._qfa_flush_restore()
         output[:num_tokens] = attn_output
         return output
+
+    def _qfa_check_paged_bounds(self, attn_metadata: AscendMetadata) -> None:
+        """One eager pass per layer: do the ids this batch carries fit the planes?
+
+        The capture-warmup 507014 died with MTE error bits set - wild
+        addresses, not a deadlock. Block tables and slot mapping come from the
+        KV manager's page geometry, the planes from this layer's bound cache,
+        and the QFA spec patch doubles the page's tokens along a path that is
+        evaluated more than once (platform sizing, EngineCore's block_size
+        rewrite, the worker's input-batch rebuild). If any consumer ends up
+        one generation apart, the kernel walks off the plane and the device
+        times out nine minutes later. This raises with the numbers instead.
+
+        Runs once per layer, outside capture only, so the device readbacks
+        stay off the graphed path and off the steady state.
+        """
+        if self._qfa_bounds_checked or _EXTRA_CTX.capturing:
+            return
+        self._qfa_bounds_checked = True
+        num_blocks = self._qfa_fp8_views[0].shape[0]
+        bt = attn_metadata.block_tables
+        slots = attn_metadata.slot_mapping
+        bt_max = int(bt.max()) if bt is not None and bt.numel() else -1
+        slot_max = int(slots.max()) if slots is not None and slots.numel() else -1
+        seqused = attn_metadata.seq_lens_dev
+        seq_min = int(seqused.min()) if seqused is not None and seqused.numel() else -1
+        seq_max = int(seqused.max()) if seqused is not None and seqused.numel() else -1
+        cache_config = self.vllm_config.cache_config
+        logger.info(
+            "QFA paged bounds[L%s]: planes hold %s kernel blocks (%s tokens); batch block_table max id %s, "
+            "slot_mapping max %s (kernel block %s); seqused min/max %s/%s over %s rows; "
+            "num_gpu_blocks=%s, manager block_size=%s",
+            self._qfa_uid,
+            num_blocks,
+            num_blocks * QFA_KERNEL_BLOCK,
+            bt_max,
+            slot_max,
+            slot_max // QFA_KERNEL_BLOCK if slot_max >= 0 else -1,
+            seq_min,
+            seq_max,
+            len(attn_metadata.actual_seq_lengths_q),
+            cache_config.num_gpu_blocks,
+            cache_config.block_size,
+        )
+        if bt_max >= num_blocks or slot_max >= num_blocks * QFA_KERNEL_BLOCK:
+            raise AssertionError(
+                f"QFA[L{self._qfa_uid}]: the batch addresses kernel block "
+                f"{max(bt_max, slot_max // QFA_KERNEL_BLOCK)} but this layer's planes hold {num_blocks}; "
+                "the KV-manager page geometry and the bound cache disagree - executing this would be the "
+                "wild access behind the 507014 aicore timeout"
+            )
 
     def _qfa_report_read_time(
         self, dt: float, attn_metadata: AscendMetadata, common_args: dict, blob: torch.Tensor, decode: bool
@@ -2938,6 +2991,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     "QFA: the MXFP8 planes were still unallocated when graph capture reached this layer"
                 )
             self._qfa_attach_fp8_cache()
+        # Before the first byte is scattered: a batch whose ids overrun the
+        # planes must fail here, not corrupt a neighbor allocation.
+        self._qfa_check_paged_bounds(attn_metadata)
         num_tokens = attn_metadata.num_actual_tokens
         self._qfa_write_key(key[:num_tokens], attn_metadata.slot_mapping[:num_tokens])
 
