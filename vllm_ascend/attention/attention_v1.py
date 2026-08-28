@@ -763,6 +763,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
         self._qfa_bounds_checked = False
+        self._qfa_trace_left = 4  # eager passes that sync-and-log each QFA sub-step
         self._qfa_time_reads_left = envs_ascend.VLLM_ASCEND_QFA_TIME_READS if self.qfa_decode_enabled else 0
         self._qfa_time_fast_left = 3  # log this many sub-threshold calls as the timing baseline
         self._qfa_slow_dumps = 0
@@ -1913,6 +1914,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             bt0=attn_metadata.block_tables[: len(attn_metadata.actual_seq_lengths_q), :2],
         )
         metadata = self._qfa_metadata_for(attn_metadata, common_args)
+        self._qfa_trace("metadata")
         timing_read = self._qfa_time_reads_left > 0
         if timing_read:
             self._qfa_time_reads_left -= 1
@@ -1934,11 +1936,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         if timing_read:
             torch.npu.synchronize()
             self._qfa_report_read_time(time.perf_counter() - read_t0, attn_metadata, common_args, metadata, decode)
+        self._qfa_trace("main-fa")
         if decode and self._qfa_debug_left > 0:
             self._qfa_probe_decode(q_fp8, q_descale_tnd, attn_metadata, attn_output, common_args)
         # The read is over, so the confirmed-scale view of the V windows has
         # served its purpose and must not outlive it.
         self._qfa_flush_restore()
+        self._qfa_trace("flush-restore")
         output[:num_tokens] = attn_output
         return output
 
@@ -1992,6 +1996,25 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 "the KV-manager page geometry and the bound cache disagree - executing this would be the "
                 "wild access behind the 507014 aicore timeout"
             )
+
+    def _qfa_trace(self, tag: str) -> None:
+        """Breadcrumb syncs for the first eager passes of a QFA layer.
+
+        The capture-warmup hang enqueues its poison asynchronously: the host
+        finishes the whole layer and blocks only at the next sync, so stacks
+        name the victim, not the culprit. Syncing after each QFA sub-step on
+        the first few eager passes makes the last printed line name the op
+        whose kernels never came back. Capture never records this: the
+        counter is spent by the eager warmup that precedes it, and the
+        capturing check keeps the sync out of any recorded graph either way.
+        """
+        if self._qfa_trace_left <= 0 or _EXTRA_CTX.capturing:
+            return
+        t0 = time.perf_counter()
+        torch.npu.synchronize()
+        logger.info(
+            "QFA warmup trace[L%s]: %s done (sync %.1f ms)", self._qfa_uid, tag, (time.perf_counter() - t0) * 1e3
+        )
 
     def _qfa_report_read_time(
         self, dt: float, attn_metadata: AscendMetadata, common_args: dict, blob: torch.Tensor, decode: bool
@@ -2996,6 +3019,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._qfa_check_paged_bounds(attn_metadata)
         num_tokens = attn_metadata.num_actual_tokens
         self._qfa_write_key(key[:num_tokens], attn_metadata.slot_mapping[:num_tokens])
+        self._qfa_trace("write-key")
 
         num_reqs = len(attn_metadata.actual_seq_lengths_q)
         value = value[:num_tokens]
@@ -3051,9 +3075,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
             self._qfa_write_value_decode(
                 value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs, spec_verify
             )
+            self._qfa_trace("write-value-decode")
         else:
             self._qfa_write_value_bulk(value, attn_metadata, num_reqs)
             self._qfa_verify_bulk(key[:num_tokens], attn_metadata)
+            self._qfa_trace("write-value-bulk")
+        if self._qfa_trace_left > 0:
+            self._qfa_trace_left -= 1
         notify_kv_cache_written()
 
     def reshape_and_cache(
