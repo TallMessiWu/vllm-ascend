@@ -15,7 +15,7 @@
 # This file is a part of the vllm-ascend project.
 #
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -226,6 +226,12 @@ class AscendMetadata:
     model_runner_type: str = ""
     # prefill reshape_and_cache event
     reshape_cache_event: torch.npu.Event = None
+
+    # Milestone C: the QuantFlashAttn work-split blob, shared by every layer
+    # this batch runs. See _qfa_step_metadata for why one blob serves them all.
+    # A fresh dict per metadata object, and every AscendMetadata is built from
+    # scratch by the builder, so this is a per-step cache and nothing else.
+    qfa_metadata: dict[tuple, torch.Tensor] = field(default_factory=dict)
 
 
 @dataclass
@@ -1637,6 +1643,53 @@ class AscendAttentionBackendImpl(AttentionImpl):
             layout_out="TND",
         )
 
+    def _qfa_step_metadata(
+        self, attn_metadata: AscendMetadata, common_args: dict, v_scale: torch.Tensor
+    ) -> torch.Tensor:
+        """The QuantFlashAttn work-split plan for this batch, computed once.
+
+        The AICPU op derives the whole 4096-int32 blob from the batch shape:
+        cu_seqlens_q and seqused_kv, the head counts, head_dim, mask_mode and
+        the two max_seqlen attrs. It takes v_descale too, but only ever reads
+        its dim0, and only under layout_kv=TND - which the paged path is not
+        (quant_flash_attn_metadata_aicpu.cpp:229). So all 17 attention layers
+        of a step get the same answer, and computing it inside the layer was
+        17 AICPU launches for one plan. It also has to move: an AICPU task
+        cannot be captured, so C3 needs this outside the graph entirely.
+
+        The key carries everything that could still differ between layers
+        sharing one metadata object, down to the storage the two input tensors
+        point at: a metadata object that was shallow-copied and re-pointed
+        recomputes rather than quietly serving another batch's plan. It is
+        their storage rather than their object identity because cu_seqlens_q
+        is a fresh slice on every call - keying on `id` would miss every time
+        and cost the launches this exists to save.
+        """
+        cu_q, seqused = common_args["cu_seqlens_q"], common_args["seqused_kv"]
+        key = (
+            self.num_heads,
+            self.num_kv_heads,
+            self.head_size,
+            common_args["max_seqlen_q"],
+            common_args["max_seqlen_kv"],
+            common_args["layout_q_descale"],
+            cu_q.data_ptr(),
+            cu_q.numel(),
+            seqused.data_ptr(),
+            seqused.numel(),
+        )
+        blob = attn_metadata.qfa_metadata.get(key)
+        if blob is None:
+            blob = DeviceOperator.npu_quant_flash_attn_metadata(
+                num_heads_q=self.num_heads,
+                num_heads_kv=self.num_kv_heads,
+                head_dim=self.head_size,
+                v_descale=v_scale.view(torch.float8_e8m0fnu),
+                **common_args,
+            )
+            attn_metadata.qfa_metadata[key] = blob
+        return blob
+
     def _forward_qfa_paged(
         self,
         query: torch.Tensor,
@@ -1681,13 +1734,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             bt_shape=tuple(attn_metadata.block_tables.shape),
             bt0=attn_metadata.block_tables[: len(attn_metadata.actual_seq_lengths_q), :2],
         )
-        metadata = DeviceOperator.npu_quant_flash_attn_metadata(
-            num_heads_q=self.num_heads,
-            num_heads_kv=self.num_kv_heads,
-            head_dim=self.head_size,
-            v_descale=v_scale.view(torch.float8_e8m0fnu),
-            **common_args,
-        )
+        metadata = self._qfa_step_metadata(attn_metadata, common_args, v_scale)
         attn_output = DeviceOperator.npu_quant_flash_attn(
             q_fp8,
             k_fp8.view(torch.float8_e4m3fn),
