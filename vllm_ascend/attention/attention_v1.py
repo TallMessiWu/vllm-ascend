@@ -15,6 +15,7 @@
 # This file is a part of the vllm-ascend project.
 #
 
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -761,6 +762,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
             1 if self._qfa_is_draft_layer else 1 + (spec_config.num_speculative_tokens if spec_config else 0)
         )
         self._qfa_debug_left = envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS if self.qfa_decode_enabled else 0
+        self._qfa_time_reads_left = envs_ascend.VLLM_ASCEND_QFA_TIME_READS if self.qfa_decode_enabled else 0
+        self._qfa_time_fast_left = 3  # log this many sub-threshold calls as the timing baseline
+        self._qfa_slow_dumps = 0
         self._qfa_pending_check: list = []
         # Set by _qfa_write_value_decode on a verify step and consumed by
         # _qfa_flush_restore once the attention read is done. See there.
@@ -1907,6 +1911,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
             bt0=attn_metadata.block_tables[: len(attn_metadata.actual_seq_lengths_q), :2],
         )
         metadata = self._qfa_metadata_for(attn_metadata, common_args)
+        timing_read = self._qfa_time_reads_left > 0
+        if timing_read:
+            self._qfa_time_reads_left -= 1
+            torch.npu.synchronize()
+            read_t0 = time.perf_counter()
         attn_output = DeviceOperator.npu_quant_flash_attn(
             q_fp8,
             k_fp8.view(torch.float8_e4m3fn),
@@ -1920,6 +1929,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
             attn_mask=self._get_qfa_mask(query.device),
             **common_args,
         )
+        if timing_read:
+            torch.npu.synchronize()
+            self._qfa_report_read_time(time.perf_counter() - read_t0, attn_metadata, common_args, metadata, decode)
         if decode and self._qfa_debug_left > 0:
             self._qfa_probe_decode(q_fp8, q_descale_tnd, attn_metadata, attn_output, common_args)
         # The read is over, so the confirmed-scale view of the V windows has
@@ -1927,6 +1939,72 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._qfa_flush_restore()
         output[:num_tokens] = attn_output
         return output
+
+    def _qfa_report_read_time(
+        self, dt: float, attn_metadata: AscendMetadata, common_args: dict, blob: torch.Tensor, decode: bool
+    ) -> None:
+        """One timed main-op call, synced on both sides - VLLM_ASCEND_QFA_TIME_READS.
+
+        Stage P of the C3 triage probe ran this exact call at 1.4 ms/step on
+        engine-sized planes with a dirty neighborhood, so a slow call here can
+        only come from what isolation could not copy: the argument values and
+        the work-split blob of that very moment. Both are logged, and the blob
+        is diffed against a fresh AICPU recompute from the same arguments - a
+        mismatch convicts the blob chain (cache key, owner identity, resident
+        copy), a match convicts the argument values the kernel planned from.
+        """
+        rows = len(attn_metadata.actual_seq_lengths_q)
+        if dt < 0.05:
+            if self._qfa_time_fast_left > 0:
+                self._qfa_time_fast_left -= 1
+                logger.info("QFA timed read[L%s]: %.2f ms (decode=%s, rows=%s)", self._qfa_uid, dt * 1e3, decode, rows)
+            return
+        fresh = DeviceOperator.npu_quant_flash_attn_metadata(
+            num_heads_q=self.num_heads,
+            num_heads_kv=self.num_kv_heads,
+            head_dim=self.head_size,
+            v_descale=self._qfa_fp8_views[3].view(torch.float8_e8m0fnu),
+            **common_args,
+        )
+        diff = (blob != fresh).nonzero().flatten()
+        logger.warning(
+            "QFA SLOW read[L%s]: %.0f ms decode=%s state=%s rows=%s cu=%s seqused=%s max_q=%s max_kv=%s "
+            "bt[:,:4]=%s blob-vs-fresh diffs=%s blob head=%s fresh head=%s",
+            self._qfa_uid,
+            dt * 1e3,
+            decode,
+            attn_metadata.attn_state,
+            rows,
+            common_args["cu_seqlens_q"].cpu().tolist(),
+            common_args["seqused_kv"].cpu().tolist(),
+            common_args["max_seqlen_q"],
+            common_args["max_seqlen_kv"],
+            attn_metadata.block_tables[:rows, :4].cpu().tolist(),
+            int(diff.numel()),
+            blob[:16].cpu().tolist(),
+            fresh[:16].cpu().tolist(),
+        )
+        if self._qfa_slow_dumps < 2:
+            # Written next to the process cwd on purpose: the server's /tmp is
+            # off-limits, and a relative path lands with the run's other logs.
+            path = f"qfa_slow_read_L{self._qfa_uid}_{self._qfa_slow_dumps}.pt"
+            torch.save(
+                {
+                    "dt": dt,
+                    "decode": decode,
+                    "state": str(attn_metadata.attn_state),
+                    "blob": blob.cpu(),
+                    "fresh": fresh.cpu(),
+                    "cu": common_args["cu_seqlens_q"].cpu(),
+                    "seqused": common_args["seqused_kv"].cpu(),
+                    "max_q": common_args["max_seqlen_q"],
+                    "max_kv": common_args["max_seqlen_kv"],
+                    "block_tables": attn_metadata.block_tables[:rows].cpu(),
+                },
+                path,
+            )
+            self._qfa_slow_dumps += 1
+            logger.warning("QFA SLOW read evidence saved to ./%s", path)
 
     def forward_fused_infer_attention(
         self,

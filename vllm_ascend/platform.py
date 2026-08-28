@@ -1280,13 +1280,18 @@ def _validate_qfa_decode_config(vllm_config: VllmConfig) -> None:
             f"cudagraph_mode={cudagraph_mode.name} is unsupported; only FULL_DECODE_ONLY has a "
             "captured QFA path. Use it, or run with enforce_eager"
         )
-    if captures_graphs and (envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS or envs_ascend.VLLM_ASCEND_QFA_SCALE_PROBE):
-        # Both probes branch on a counter and read device tensors back to the
-        # host. Under capture the branch is frozen into the graph and the reads
-        # are recorded, so what they report describes the capture step forever.
+    if captures_graphs and (
+        envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS
+        or envs_ascend.VLLM_ASCEND_QFA_SCALE_PROBE
+        or envs_ascend.VLLM_ASCEND_QFA_TIME_READS
+    ):
+        # All three probes branch on a counter and read device tensors back to
+        # the host (the read timer also synchronizes the stream). Under capture
+        # the branch is frozen into the graph and the reads are recorded, so
+        # what they report describes the capture step forever.
         problems.append(
-            "the QFA debug probes cannot run under graph capture; set VLLM_ASCEND_QFA_DEBUG_STEPS "
-            "and VLLM_ASCEND_QFA_SCALE_PROBE to 0, or add enforce_eager"
+            "the QFA debug probes cannot run under graph capture; set VLLM_ASCEND_QFA_DEBUG_STEPS, "
+            "VLLM_ASCEND_QFA_SCALE_PROBE and VLLM_ASCEND_QFA_TIME_READS to 0, or add enforce_eager"
         )
     if vllm_config.model_config is not None:
         if vllm_config.model_config.runner_type == "pooling":

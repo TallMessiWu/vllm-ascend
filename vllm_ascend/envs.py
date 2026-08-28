@@ -138,6 +138,16 @@ env_variables: dict[str, Callable[[], Any]] = {
     # windows needs hundreds of steps, which every other probe on every layer
     # would drown out. 0 disables. Refused alongside graph capture, as above.
     "VLLM_ASCEND_QFA_SCALE_PROBE": lambda: int(os.getenv("VLLM_ASCEND_QFA_SCALE_PROBE", "0")),
+    # Debug aid for the C3 slowdown: wall-clock this many paged QFA main-op
+    # calls per layer with a device sync on both sides, then go quiet. A call
+    # over 50 ms logs its complete argument values, recomputes the work-split
+    # blob from those same arguments and diffs it against the resident buffer
+    # the kernel just consumed - a mismatch convicts the blob chain, a match
+    # convicts the argument values - and saves the first few such calls per
+    # layer to ./qfa_slow_read_*.pt. The two syncs per call defeat the async
+    # scheduler, so this is for diagnosis runs only. 0 disables. Refused
+    # alongside graph capture, as above.
+    "VLLM_ASCEND_QFA_TIME_READS": lambda: int(os.getenv("VLLM_ASCEND_QFA_TIME_READS", "0")),
 }
 
 # end-env-vars-definition
