@@ -36,6 +36,11 @@ import torch
 # pairs - so a V window spans 64 tokens and yields one packed row.
 QFA_KERNEL_BLOCK = 128
 QFA_V_GROUP = 64
+# Ints in the work-split blob the AICPU metadata op writes. Fixed on that side
+# (quant_flash_attn_metadata_torch_adpt.h: METADATA_SIZE), and named here
+# because the graph path has to allocate a resident buffer of exactly that size
+# before the op ever runs.
+QFA_METADATA_INTS = 4096
 
 
 def qfa_scale_bytes_per_kernel_block(num_kv_heads: int, head_size: int) -> int:

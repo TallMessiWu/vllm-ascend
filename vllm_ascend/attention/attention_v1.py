@@ -44,7 +44,12 @@ from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
-from vllm_ascend.attention.qfa_scale import QFA_KERNEL_BLOCK, plan_v_windows, qfa_scale_bytes_per_kernel_block
+from vllm_ascend.attention.qfa_scale import (
+    QFA_KERNEL_BLOCK,
+    QFA_METADATA_INTS,
+    plan_v_windows,
+    qfa_scale_bytes_per_kernel_block,
+)
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
     PagedAttentionGraphParam,
@@ -721,6 +726,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # Set by _qfa_write_value_decode on a verify step and consumed by
         # _qfa_flush_restore once the attention read is done. See there.
         self._qfa_pending_restore: tuple | None = None
+        # C3: the work-split blob lives at a fixed address so a captured graph
+        # can read it, and `owner` records which batch last filled it. Holding
+        # the metadata object rather than its id is deliberate - a freed id can
+        # be handed to the next object, and this comparison deciding wrong is a
+        # replay reading another batch's plan.
+        self._qfa_metadata_buf: torch.Tensor | None = None
+        self._qfa_metadata_owner: AscendMetadata | None = None
         # Impls are constructed in layer order, so this doubles as a layer tag
         # for the debug log; _layer_name is not populated on the write path.
         self._qfa_uid = AscendAttentionBackendImpl._qfa_next_uid
@@ -1702,7 +1714,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             layout_out="TND",
         )
 
-    def _qfa_decode_batch(self, attn_metadata: AscendMetadata) -> bool:
+    def _qfa_decode_batch(self, attn_metadata: AscendMetadata, for_graph: bool = False) -> bool:
         """Is this batch the decode shape, for both the QFA read and write?
 
         attn_state cannot answer this during graph capture: _dummy_run gives a
@@ -1713,10 +1725,16 @@ class AscendAttentionBackendImpl(AttentionImpl):
         descriptor is what says which shape the graph is being built for.
 
         The read and the write have to agree, so both go through here.
+
+        `for_graph` is for prime_qfa_metadata, which runs one step ahead of the
+        layer: the wrapper primes before it sets forward_context.capturing, so
+        asking the flag there would answer for the wrong moment and leave the
+        buffer unprimed for the capture that follows. Only a caller already
+        inside the graph wrapper may pass it.
         """
         if attn_metadata.attn_state in (AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding):
             return True
-        if not _EXTRA_CTX.capturing:
+        if not (for_graph or _EXTRA_CTX.capturing):
             return False
         descriptor = getattr(get_forward_context(), "batch_descriptor", None)
         return bool(descriptor is not None and getattr(descriptor, "uniform_decode", False))
@@ -1768,6 +1786,43 @@ class AscendAttentionBackendImpl(AttentionImpl):
             attn_metadata.qfa_metadata[key] = blob
         return blob
 
+    def _qfa_metadata_for(self, attn_metadata: AscendMetadata, common_args: dict) -> torch.Tensor:
+        """This layer's resident work-split buffer, filled if this batch has not.
+
+        A captured graph reads whatever address the operator was given at
+        capture time, and the AICPU op returns a fresh allocation every call,
+        so the blob has to be copied into a buffer that never moves. Filling
+        it is what prime_qfa_metadata does before the graph runs; when nothing
+        primed it - eager, or a prefill batch, which is never captured - this
+        fills it inline instead, which is the same work in a different place.
+        """
+        if self._qfa_metadata_owner is not attn_metadata:
+            if _EXTRA_CTX.capturing:
+                raise AssertionError(
+                    "QFA: the work-split buffer was not primed before capture. Its metadata op is "
+                    "AICPU work that cannot be captured and aborts a stream when queued next to a "
+                    "replay, so prime_qfa_metadata has to run outside the graph."
+                )
+            blob = self._qfa_step_metadata(attn_metadata, common_args, self._qfa_fp8_views[3])
+            self._qfa_metadata_buf.copy_(blob)
+            self._qfa_metadata_owner = attn_metadata
+        return self._qfa_metadata_buf
+
+    def prime_qfa_metadata(self, attn_metadata: AscendMetadata | None) -> None:
+        """Fill this layer's work-split buffer for the capture or replay to come.
+
+        Called from ACLGraphWrapper, on the main stream, before the graph is
+        touched - see the note there for why that is the one place both the
+        target model and every MTP draft step pass through.
+        """
+        if not self.qfa_decode_enabled or self._qfa_fp8_views is None or attn_metadata is None:
+            return
+        if not self._qfa_decode_batch(attn_metadata, for_graph=True):
+            # Only decode-shaped batches are ever captured; a prefill batch
+            # fills the buffer inline on the path that needs it.
+            return
+        self._qfa_metadata_for(attn_metadata, self._qfa_paged_common_args(attn_metadata, decode=True))
+
     def _forward_qfa_paged(
         self,
         query: torch.Tensor,
@@ -1812,7 +1867,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             bt_shape=tuple(attn_metadata.block_tables.shape),
             bt0=attn_metadata.block_tables[: len(attn_metadata.actual_seq_lengths_q), :2],
         )
-        metadata = self._qfa_step_metadata(attn_metadata, common_args, v_scale)
+        metadata = self._qfa_metadata_for(attn_metadata, common_args)
         attn_output = DeviceOperator.npu_quant_flash_attn(
             q_fp8,
             k_fp8.view(torch.float8_e4m3fn),
@@ -1846,7 +1901,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
-        if _EXTRA_CTX.capturing:
+        if _EXTRA_CTX.capturing and not self.qfa_decode_enabled:
+            # A QFA layer must not take this branch: full_graph_fia reads the
+            # MXFP8 planes as BF16, which is wrong without being loud. It runs
+            # its own paged path below, capture or not - everything dynamic in
+            # it lives in resident buffers the builder and prime_qfa_metadata
+            # refresh outside the graph.
             if self.sinks is not None:
                 attn_output, num_tokens = self.full_graph_fia_v2(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
@@ -2389,10 +2449,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 f"reservation sized them at {expected}; keep both in qfa_scale.py"
             )
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
-        # Built here rather than on first read: the read can happen inside a
-        # captured graph, and building it there would record 4 MiB of triu into
-        # every replay. This runs on the warmup step, before any capture.
+        # Both of these are built here rather than on first use: first use can
+        # be inside a captured graph, where the mask would record 4 MiB of triu
+        # into every replay and the work-split buffer would be allocated from
+        # the graph pool. This runs on the warmup step, before any capture.
         self._get_qfa_mask(device)
+        self._qfa_metadata_buf = torch.empty(QFA_METADATA_INTS, dtype=torch.int32, device=device)
         # Per layer, not info_once: the scale tables are allocated outside
         # vLLM's KV budget, so their total is only visible by summing what each
         # layer takes. Their size follows this layer's block count, and on MTP

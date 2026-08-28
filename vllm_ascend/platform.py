@@ -1266,18 +1266,28 @@ def _validate_qfa_decode_config(vllm_config: VllmConfig) -> None:
         problems.append("prefill context parallelism is unsupported")
     from vllm.config.compilation import CUDAGraphMode
 
-    captures_graphs = not (vllm_config.model_config is not None and vllm_config.model_config.enforce_eager) and (
-        vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
-    )
-    if captures_graphs:
-        # Graph capture reaches the attention impl before the paged branch
-        # does, so a captured layer serves from full_graph_fia - reading the
-        # MXFP8 planes as BF16, which is wrong without being loud. Capturing
-        # the paged path is milestone C3: its metadata call is AICPU work that
-        # has to be issued outside the graph, and queued next to a replay it
-        # aborts the stream with 507018, which is how the MTP drafter's prompt
-        # pass first broke. Refuse at startup rather than serve noise.
-        problems.append("graph capture is unsupported; run with enforce_eager until the paged path can be captured")
+    cudagraph_mode = vllm_config.compilation_config.cudagraph_mode
+    enforce_eager = vllm_config.model_config is not None and vllm_config.model_config.enforce_eager
+    captures_graphs = not enforce_eager and cudagraph_mode != CUDAGraphMode.NONE
+    if captures_graphs and cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY:
+        # C3 captures the paged path, but only the decode shape of it: the
+        # work-split buffers are primed for decode-shaped batches, and a
+        # captured prefill graph would reach the AICPU metadata op inside the
+        # graph, which cannot be captured and aborts the stream when queued
+        # next to a replay (507018). The impl raises rather than record that,
+        # so this is the readable version of the same refusal.
+        problems.append(
+            f"cudagraph_mode={cudagraph_mode.name} is unsupported; only FULL_DECODE_ONLY has a "
+            "captured QFA path. Use it, or run with enforce_eager"
+        )
+    if captures_graphs and (envs_ascend.VLLM_ASCEND_QFA_DEBUG_STEPS or envs_ascend.VLLM_ASCEND_QFA_SCALE_PROBE):
+        # Both probes branch on a counter and read device tensors back to the
+        # host. Under capture the branch is frozen into the graph and the reads
+        # are recorded, so what they report describes the capture step forever.
+        problems.append(
+            "the QFA debug probes cannot run under graph capture; set VLLM_ASCEND_QFA_DEBUG_STEPS "
+            "and VLLM_ASCEND_QFA_SCALE_PROBE to 0, or add enforce_eager"
+        )
     if vllm_config.model_config is not None:
         if vllm_config.model_config.runner_type == "pooling":
             problems.append("pooling models are unsupported")

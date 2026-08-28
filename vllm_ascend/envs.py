@@ -115,14 +115,19 @@ env_variables: dict[str, Callable[[], Any]] = {
     # quantized cache), A5 hardware, block_size 128, and is mutually
     # exclusive with prefix caching / KV connectors (validated at startup).
     # With MTP the draft layer takes the same MXFP8 cache, which is what keeps
-    # the KV cache groups from collapsing to one layer each; that combination
-    # additionally requires enforce_eager until the paged path can be captured.
+    # the KV cache groups from collapsing to one layer each.
+    # Graph capture is supported at cudagraph_mode=FULL_DECODE_ONLY only: the
+    # decode shape is the one whose work-split buffers are filled ahead of the
+    # graph, and any other mode would reach the AICPU metadata op inside it.
     # 0 (default): decode stays on the BF16 fused-infer-attention path.
     # 1: FP8 KV cache + QuantFlashAttn decode for eligible layers.
     "VLLM_ASCEND_ENABLE_QFA_DECODE": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA_DECODE", "0"))),
     # Debug aid for the QFA paged path: dump the per-request bookkeeping
     # (request ids, context lengths, staging positions, block/window slots)
     # for this many attention calls per layer, then go quiet. 0 disables.
+    # Refused at startup alongside graph capture: the branch it is guarded by
+    # would be frozen into the graph and its readbacks recorded, so every
+    # replay would report the capture step.
     "VLLM_ASCEND_QFA_DEBUG_STEPS": lambda: int(os.getenv("VLLM_ASCEND_QFA_DEBUG_STEPS", "0")),
     # Debug aid for the V window scale: report, for this many verify steps on
     # the first eligible layer only, how many scale bytes separate what the
@@ -131,7 +136,7 @@ env_variables: dict[str, Callable[[], Any]] = {
     # quantize, and only speculative steps have anything to report. Separate
     # from QFA_DEBUG_STEPS because tracing the decay across whole 64-token
     # windows needs hundreds of steps, which every other probe on every layer
-    # would drown out. 0 disables.
+    # would drown out. 0 disables. Refused alongside graph capture, as above.
     "VLLM_ASCEND_QFA_SCALE_PROBE": lambda: int(os.getenv("VLLM_ASCEND_QFA_SCALE_PROBE", "0")),
 }
 

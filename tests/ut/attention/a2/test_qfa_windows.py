@@ -127,3 +127,17 @@ def test_confirmed_never_exceeds_valid():
         p = plan([ctx], [seq], columns=64)  # room for a 4k sequence
         assert all(c <= v for c, v in zip(p["confirmed"], p["valid"]))
         assert all(0 <= v <= QFA_V_GROUP for v in p["valid"])
+
+
+def test_one_token_step_confirms_everything_at_every_boundary():
+    # What makes the static spec_verify safe. The split write is now taken on
+    # every target step, not only the ones attn_state calls SpecDecoding,
+    # because attn_state is ChunkedPrefill during graph capture and a captured
+    # single write would lose the split for every replay. That is only free if
+    # a one-token step has nothing to hold back: confirmed == valid, so the
+    # clamp bound is the window's own scale and both writes land on the same
+    # bytes. Swept across window and kernel-block edges, where the two counts
+    # are derived from different windows and could disagree.
+    for ctx in (0, 1, 31, 32, 62, 63, 64, 126, 127, 128, 191, 4094, 4095):
+        p = plan([ctx], [ctx + 1], columns=64)
+        assert p["confirmed"] == p["valid"], f"ctx={ctx}: {p['confirmed']} != {p['valid']}"

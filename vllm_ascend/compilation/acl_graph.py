@@ -46,6 +46,33 @@ def _is_old_hdk_capture_error(exc: RuntimeError) -> bool:
     return any(marker in message for marker in _OLD_HDK_CAPTURE_ERROR_MARKERS)
 
 
+def prime_qfa_metadata(forward_context) -> None:
+    """Fill the QuantFlashAttn work-split buffers before capture or replay.
+
+    The operator that produces them runs on AICPU. It cannot be captured, and
+    queued next to a graph replay it aborted the stream with 507018 once
+    already - that is how the MTP drafter's prompt pass first broke. So it runs
+    here instead: on the main stream, before the graph is captured or replayed,
+    which makes the ordering the stream's own and needs no event handshake.
+
+    This lives in the wrapper rather than in the model runner because the
+    wrapper is the single place both roles pass through. The target model calls
+    it once a step; the MTP drafter calls it again for every draft step, each
+    time with that step's metadata already installed on the forward context
+    (llm_base_proposer sets forward_context.attn_metadata immediately before
+    calling the model). Reached by duck typing so this module keeps no import
+    on the attention backend, which imports this one.
+    """
+    attn_metadata = getattr(forward_context, "attn_metadata", None)
+    if not isinstance(attn_metadata, dict):
+        return
+    layers = getattr(forward_context, "no_compile_layers", None) or {}
+    for layer_name, metadata in attn_metadata.items():
+        prime = getattr(getattr(layers.get(layer_name), "impl", None), "prime_qfa_metadata", None)
+        if prime is not None:
+            prime(metadata)
+
+
 @dataclasses.dataclass
 class ACLGraphEntry:
     batch_descriptor: BatchDescriptor
@@ -143,6 +170,9 @@ class ACLGraphWrapper:
             # CUDAGraphWrapper when nesting multiple instances with different
             # runtime modes.
             return self.runnable(*args, **kwargs)
+
+        # Before anything touches the graph: see prime_qfa_metadata.
+        prime_qfa_metadata(forward_context)
 
         if batch_descriptor not in self.concrete_aclgraph_entries:
             # create a new entry for this batch descriptor
