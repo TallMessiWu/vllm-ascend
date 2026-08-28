@@ -23,6 +23,7 @@ import torch
 import torch_npu
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
+from vllm.forward_context import get_forward_context
 from vllm.logger import logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
@@ -288,6 +289,51 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         self.chunked_prefill_enabled = scheduler_config.enable_chunked_prefill
         self.attn_mask_builder = AttentionMaskBuilder(self.device)
 
+        # Milestone C: this group's cache is MXFP8, so its layers hand three of
+        # these tensors straight to the QuantFlashAttn op. aclgraph captures the
+        # address an operator reads, and build() otherwise returns a fresh
+        # allocation every step - the caching allocator usually hands back the
+        # same block, which makes a stale-address bug intermittent rather than
+        # immediate. Pin them instead. One set per builder, so the target model
+        # and the MTP drafter, which own separate builders, never share one.
+        self.qfa_group = getattr(kv_cache_spec, "dtype", None) == torch.float8_e4m3fn
+        # +2 mirrors the runner's own query_start_loc sizing: a full batch can
+        # carry one padding request on top of max_num_seqs.
+        self.qfa_capacity = scheduler_config.max_num_seqs + 2
+        self._qfa_query_start_loc: torch.Tensor | None = None
+        self._qfa_seq_lens_dev: torch.Tensor | None = None
+        self._qfa_block_tables: torch.Tensor | None = None
+        if self.qfa_group:
+            # The spec patch is what turns this on, and a smoke run that shows
+            # no such line is one where it did not take - which would leave the
+            # addresses unstable without changing a single number.
+            logger.info(
+                "QFA resident metadata buffers: %d layers, capacity %d requests",
+                len(layer_names),
+                self.qfa_capacity,
+            )
+
+    def _qfa_pin(self, attr: str, src: torch.Tensor) -> torch.Tensor:
+        """Copy `src` into this builder's resident buffer and return that view.
+
+        Slicing from index 0 keeps the address identical whatever the batch
+        size does, so one buffer serves every captured graph size. Growing it
+        would move it and silently invalidate an already captured graph, hence
+        the assertion rather than a realloc.
+        """
+        buf = getattr(self, attr)
+        if buf is None:
+            buf = torch.empty((self.qfa_capacity, *src.shape[1:]), dtype=src.dtype, device=self.device)
+            setattr(self, attr, buf)
+        if src.shape[0] > buf.shape[0] or tuple(src.shape[1:]) != tuple(buf.shape[1:]) or src.dtype != buf.dtype:
+            raise AssertionError(
+                f"QFA resident buffer {attr} is {tuple(buf.shape)} but this step needs "
+                f"{tuple(src.shape)}; it is sized once from the scheduler limits and cannot move"
+            )
+        out = buf[: src.shape[0]]
+        out.copy_(src, non_blocking=True)
+        return out
+
     @classmethod
     def get_cudagraph_support(
         cls: type["AscendAttentionMetadataBuilder"],
@@ -367,7 +413,11 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         attn_mask = self.attn_mask_builder.get_attention_mask(common_attn_metadata.causal, self.model_config)
 
         # TODO: Yet another unnecessary H2D while we already have a query_start_loc on device
-        query_start_loc = query_start_loc_cpu.pin_memory().to(self.device, non_blocking=True)
+        pinned_qsl = query_start_loc_cpu.pin_memory()
+        if self.qfa_group:
+            query_start_loc = self._qfa_pin("_qfa_query_start_loc", pinned_qsl)
+        else:
+            query_start_loc = pinned_qsl.to(self.device, non_blocking=True)
 
         actual_seq_lengths_q = query_start_loc_cpu[1:].tolist()
         seq_lens_list = seq_lens.tolist()
@@ -404,6 +454,11 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
                 ],
                 dim=0,
             )
+        if self.qfa_group and block_table is not None:
+            # Pinned unconditionally, not just on the padding branch above: a
+            # captured graph bakes one address, so the table it reads has to be
+            # the same buffer whether or not that step needed a padding row.
+            block_table = self._qfa_pin("_qfa_block_tables", block_table)
 
         backend_metadata = self._build_backend_metadata(
             common_attn_metadata,
@@ -426,7 +481,11 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             # speculative decoding (it assumes every draft token was accepted),
             # and feeding it to the kernel as seqused_kv would read rejected
             # tokens back as if they were real history.
-            seq_lens_dev=seq_lens.to(query_start_loc.device, non_blocking=True),
+            seq_lens_dev=(
+                self._qfa_pin("_qfa_seq_lens_dev", seq_lens)
+                if self.qfa_group
+                else seq_lens.to(query_start_loc.device, non_blocking=True)
+            ),
             max_query_len=common_attn_metadata.max_query_len,
             actual_seq_lengths_q=actual_seq_lengths_q,
             slot_mapping=slot_mapping,
@@ -1643,6 +1702,25 @@ class AscendAttentionBackendImpl(AttentionImpl):
             layout_out="TND",
         )
 
+    def _qfa_decode_batch(self, attn_metadata: AscendMetadata) -> bool:
+        """Is this batch the decode shape, for both the QFA read and write?
+
+        attn_state cannot answer this during graph capture: _dummy_run gives a
+        non-MLA MTP model ChunkedPrefill (model_runner_v1.py:3277), so a path
+        that branches on attn_state alone captures the chunked-prefill write
+        and a TND q descale, then replays that for every decode step - wrong
+        on every replay, and quiet about it. Under capture the batch
+        descriptor is what says which shape the graph is being built for.
+
+        The read and the write have to agree, so both go through here.
+        """
+        if attn_metadata.attn_state in (AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding):
+            return True
+        if not _EXTRA_CTX.capturing:
+            return False
+        descriptor = getattr(get_forward_context(), "batch_descriptor", None)
+        return bool(descriptor is not None and getattr(descriptor, "uniform_decode", False))
+
     def _qfa_step_metadata(
         self, attn_metadata: AscendMetadata, common_args: dict, v_scale: torch.Tensor
     ) -> torch.Tensor:
@@ -1809,10 +1887,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             # non-causal prefill, and the draft prompt pass, which is kept out
             # of it so its AICPU metadata task does not land next to the
             # drafter's graph replays - is served correctly by BF16 FIA.
-            if attn_metadata.attn_state in (
-                AscendAttentionState.DecodeOnly,
-                AscendAttentionState.SpecDecoding,
-            ):
+            if self._qfa_decode_batch(attn_metadata):
                 return self._forward_qfa_paged(query, attn_metadata, output, decode=True)
             if attn_metadata.attn_state in (
                 AscendAttentionState.ChunkedPrefill,
@@ -2314,6 +2389,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 f"reservation sized them at {expected}; keep both in qfa_scale.py"
             )
         self._qfa_fp8_views = (k_fp8, k_scale, v_fp8, v_scale)
+        # Built here rather than on first read: the read can happen inside a
+        # captured graph, and building it there would record 4 MiB of triu into
+        # every replay. This runs on the warmup step, before any capture.
+        self._get_qfa_mask(device)
         # Per layer, not info_once: the scale tables are allocated outside
         # vLLM's KV budget, so their total is only visible by summing what each
         # layer takes. Their size follows this layer's block count, and on MTP
@@ -2672,16 +2751,20 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 "reshape_and_cache and the paged read must stay paired inside one forward()."
             )
         if self._qfa_fp8_views is None:
+            if _EXTRA_CTX.capturing:
+                # Attaching zeroes both value planes - gigabytes - and would
+                # record that into the graph to be replayed every step. The
+                # warmup run before capture is what has to have done it.
+                raise AssertionError(
+                    "QFA: the MXFP8 planes were still unallocated when graph capture reached this layer"
+                )
             self._qfa_attach_fp8_cache()
         num_tokens = attn_metadata.num_actual_tokens
         self._qfa_write_key(key[:num_tokens], attn_metadata.slot_mapping[:num_tokens])
 
         num_reqs = len(attn_metadata.actual_seq_lengths_q)
         value = value[:num_tokens]
-        if attn_metadata.attn_state in (
-            AscendAttentionState.DecodeOnly,
-            AscendAttentionState.SpecDecoding,
-        ):
+        if self._qfa_decode_batch(attn_metadata):
             query_start_loc = attn_metadata.query_start_loc
             # Same device tensor the read path passes as seqused_kv: the two
             # must agree on how much history exists, or writes land outside
@@ -2716,15 +2799,20 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     k_in_nan=[int((~torch.isfinite(key[t].float())).sum()) for t in range(num_tokens)],
                     v_in_nan=[int((~torch.isfinite(value[t].float())).sum()) for t in range(num_tokens)],
                 )
-            # Only the target's verify steps carry tokens that may be
-            # rejected. A plain decode and the drafter's own passes hand one
-            # token per request, where confirmed == valid and the split below
-            # is an identity - skip it and keep the single write.
-            spec_verify = (
-                attn_metadata.attn_state == AscendAttentionState.SpecDecoding
-                and self._qfa_decode_threshold > 1
-                and not _EXTRA_CTX.is_draft_model
-            )
+            # Only the target model can carry tokens that may be rejected.
+            # The drafter hands one token per request, where confirmed == valid
+            # and the split below is an identity - skip it and keep the single
+            # write.
+            #
+            # Deliberately not conditioned on attn_state == SpecDecoding: that
+            # is ChunkedPrefill during capture, so a captured graph would
+            # record the single write and lose the split for every replay,
+            # silently undoing the drift fix. On a target step that really
+            # does carry one token per request the split costs an extra
+            # quantize and changes nothing - confirmed == valid there, so the
+            # clamp bound is the same +-448 * 2^(b-127) the operator saturates
+            # to itself, and both writes land on identical bytes.
+            spec_verify = self._qfa_decode_threshold > 1 and not _EXTRA_CTX.is_draft_model
             self._qfa_write_value_decode(
                 value, req_ids, positions, ctx_lens, seq_lens, attn_metadata.block_tables, num_reqs, spec_verify
             )
