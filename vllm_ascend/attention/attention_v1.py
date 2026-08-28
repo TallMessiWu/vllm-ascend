@@ -1915,6 +1915,32 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         metadata = self._qfa_metadata_for(attn_metadata, common_args)
         self._qfa_trace("metadata")
+        if self._qfa_trace_left > 0 and not _EXTRA_CTX.capturing:
+            # The probe clears this call at the assumed argument values, so
+            # if the very next FA hangs, the delta is in what only the engine
+            # knows: the actual scalar args and the resident blob. Print both
+            # while the stream is provably empty (the trace above synced).
+            fresh = DeviceOperator.npu_quant_flash_attn_metadata(
+                num_heads_q=self.num_heads,
+                num_heads_kv=self.num_kv_heads,
+                head_dim=self.head_size,
+                v_descale=self._qfa_fp8_views[3].view(torch.float8_e8m0fnu),
+                **common_args,
+            )
+            logger.info(
+                "QFA read args[L%s]: decode=%s state=%s cu=%s seqused=%s max_q=%s max_kv=%s mask_mode=%s "
+                "blob-vs-fresh diffs=%s blob head=%s",
+                self._qfa_uid,
+                decode,
+                attn_metadata.attn_state,
+                common_args["cu_seqlens_q"].cpu().tolist(),
+                common_args["seqused_kv"].cpu().tolist(),
+                common_args["max_seqlen_q"],
+                common_args["max_seqlen_kv"],
+                common_args["mask_mode"],
+                int((metadata != fresh).sum()),
+                metadata[:16].cpu().tolist(),
+            )
         timing_read = self._qfa_time_reads_left > 0
         if timing_read:
             self._qfa_time_reads_left -= 1
