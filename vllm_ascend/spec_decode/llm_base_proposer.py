@@ -659,13 +659,20 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                         assert self.block_table_tensor_clone is not None, "block_table_tensor_clone is not init"
                         common_attn_metadata.block_table_tensor = self.block_table_tensor_clone[:num_reqs]
                     if not self.use_compress or draft_index == 0:
-                        attn_metadata_eagle = builder.build_for_graph_capture(
-                            common_attn_metadata,
-                            AscendAttentionState.SpecDecoding
-                            if self.method == "mtp"
-                            else AscendAttentionState.ChunkedPrefill,
-                            **extra_attn_metadata_args,
-                        )
+                        # A QFA builder keeps one resident-buffer slot per
+                        # draft step (see _qfa_use_slot); capturing through the
+                        # same slot the real builds refresh is what makes each
+                        # step's graph read a live address. Other builders have
+                        # no such hook and capture as before.
+                        qfa_slot = getattr(builder, "_qfa_use_slot", None)
+                        with qfa_slot(draft_index) if qfa_slot is not None else nullcontext():
+                            attn_metadata_eagle = builder.build_for_graph_capture(
+                                common_attn_metadata,
+                                AscendAttentionState.SpecDecoding
+                                if self.method == "mtp"
+                                else AscendAttentionState.ChunkedPrefill,
+                                **extra_attn_metadata_args,
+                            )
                     else:
                         attn_metadata_eagle = builder.build_for_drafting(
                             common_attn_metadata,

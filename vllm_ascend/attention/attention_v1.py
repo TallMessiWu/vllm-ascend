@@ -15,6 +15,7 @@
 # This file is a part of the vllm-ascend project.
 #
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -305,9 +306,18 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         # +2 mirrors the runner's own query_start_loc sizing: a full batch can
         # carry one padding request on top of max_num_seqs.
         self.qfa_capacity = scheduler_config.max_num_seqs + 2
-        self._qfa_query_start_loc: torch.Tensor | None = None
-        self._qfa_seq_lens_dev: torch.Tensor | None = None
-        self._qfa_block_tables: torch.Tensor | None = None
+        # One buffer set per draft step, keyed by draft_index (0 for the
+        # target model and the first draft pass). The MTP proposer builds
+        # every draft step's metadata up front, before the first one runs, so
+        # a single shared set would be overwritten K times and every step's
+        # device tensors would hold the last step's values while their
+        # host-side lists keep their own - a mismatch the AICPU metadata op
+        # aborts on (507018). Slots restore the per-step isolation the
+        # proposer's own *_group buffers provide, and the slot a step maps to
+        # is the same on capture and replay, so each captured graph still
+        # reads one fixed address.
+        self._qfa_slot = 0
+        self._qfa_slots: dict[int, dict[str, torch.Tensor]] = {}
         if self.qfa_group:
             # The spec patch is what turns this on, and a smoke run that shows
             # no such line is one where it did not take - which would leave the
@@ -319,25 +329,45 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             )
 
     def _qfa_pin(self, attr: str, src: torch.Tensor) -> torch.Tensor:
-        """Copy `src` into this builder's resident buffer and return that view.
+        """Copy `src` into the current slot's resident buffer, return that view.
 
         Slicing from index 0 keeps the address identical whatever the batch
         size does, so one buffer serves every captured graph size. Growing it
         would move it and silently invalidate an already captured graph, hence
-        the assertion rather than a realloc.
+        the assertion rather than a realloc. Slots are allocated on first use
+        and never freed, so a slot's address is fixed from the step that first
+        touches it - warmup runs every draft step before any capture does.
         """
-        buf = getattr(self, attr)
+        slot = self._qfa_slots.setdefault(self._qfa_slot, {})
+        buf = slot.get(attr)
         if buf is None:
             buf = torch.empty((self.qfa_capacity, *src.shape[1:]), dtype=src.dtype, device=self.device)
-            setattr(self, attr, buf)
+            slot[attr] = buf
         if src.shape[0] > buf.shape[0] or tuple(src.shape[1:]) != tuple(buf.shape[1:]) or src.dtype != buf.dtype:
             raise AssertionError(
-                f"QFA resident buffer {attr} is {tuple(buf.shape)} but this step needs "
-                f"{tuple(src.shape)}; it is sized once from the scheduler limits and cannot move"
+                f"QFA resident buffer {attr}[slot {self._qfa_slot}] is {tuple(buf.shape)} but this step "
+                f"needs {tuple(src.shape)}; it is sized once from the scheduler limits and cannot move"
             )
         out = buf[: src.shape[0]]
         out.copy_(src, non_blocking=True)
         return out
+
+    @contextmanager
+    def _qfa_use_slot(self, draft_index: int):
+        """Route this build's resident buffers to `draft_index`'s own slot.
+
+        The proposer pre-builds every draft step's metadata before the first
+        draft forward runs (build_draft_attn_metadata, then
+        attn_update_stack_num_spec_norm per further step), so the builds of
+        one engine step must not share a buffer set - see _qfa_slots in
+        __init__. Restoring 0 afterwards keeps the plain build() path - the
+        target model, and the drafter's own first pass - on slot 0.
+        """
+        self._qfa_slot = draft_index
+        try:
+            yield
+        finally:
+            self._qfa_slot = 0
 
     @classmethod
     def get_cudagraph_support(
@@ -503,6 +533,15 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             **backend_metadata,
         )
         return attn_metadata
+
+    def build_for_drafting(
+        self,
+        common_attn_metadata: AscendCommonAttentionMetadata,
+        draft_index: int,
+        **kwargs,
+    ) -> AscendMetadata:
+        with self._qfa_use_slot(draft_index):
+            return super().build_for_drafting(common_attn_metadata, draft_index, **kwargs)
 
     def build_for_graph_capture(
         self,
