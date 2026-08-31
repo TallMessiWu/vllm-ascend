@@ -314,11 +314,6 @@ class AscendAttentionState(Enum):
     SpecDecoding = 4
 
 
-# The states a decode graph is captured for. They are also the only ones that
-# may use a constant max_seqlen_kv -- see _attach_qfa_inputs.
-_QFA_CAPTURED_STATES = (AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding)
-
-
 @dataclass
 class AscendMetadata:
     """
@@ -511,17 +506,14 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         # step's plan. Capture takes its own copies instead (full_graph_qfa).
         cu_seqlens_q = torch.tensor([0] + list(cum_q), dtype=torch.int32, device=self.device)
         seqused_kv = torch.tensor(attn_metadata.seq_lens_list, dtype=torch.int32, device=self.device)
-        # Only decode gets captured, and only a captured op needs a constant
-        # here. Prefill must keep the batch's own maximum: the AICPU floors
-        # kvSeqSize at this value and sizes the split plan from it together with
-        # max_seqlen_q, so a prompt-sized q against a max_model_len kv produces
-        # far more sections than a decode does -- past the op's fixed
-        # 4096-int32 output, which surfaces as an AI Core invalid GM address.
-        max_seqlen_kv = (
-            self._qfa_max_seqlen_kv
-            if attn_metadata.attn_state in _QFA_CAPTURED_STATES
-            else max(attn_metadata.seq_lens_list)
-        )
+        # Constant for every paged step, not just the ones that look like
+        # decode. A captured op bakes this scalar, and which steps get captured
+        # is not readable from attn_state: the target's decode graph is captured
+        # under ChunkedPrefill. Prefill-length q against this bound is measured
+        # safe (PREFILL-MAXKV in test_qfa_graph_capture_npu.py), so the tight
+        # per-batch value buys nothing worth the capture/replay mismatch.
+        # PrefillNoCache never reaches here -- it returns at the top.
+        max_seqlen_kv = self._qfa_max_seqlen_kv
         op_kwargs: dict[str, Any] = {
             "cu_seqlens_q": cu_seqlens_q,
             "seqused_kv": seqused_kv,
@@ -1745,7 +1737,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
         serves = (
             self.enable_qfa
             and not _EXTRA_CTX.is_draft_model
-            and attn_metadata.attn_state in _QFA_CAPTURED_STATES
             and self.sinks is None
             and self.sliding_window is None
             and attn_metadata.causal
