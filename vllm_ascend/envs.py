@@ -71,6 +71,12 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Control the aclrtMemcpyBatchAsync compile path for KV cache offloading.
     # "1": force enable, "0": force disable, None: auto-detect from CANN headers.
     "VLLM_ASCEND_ENABLE_BATCH_MEMCPY": lambda: os.getenv("VLLM_ASCEND_ENABLE_BATCH_MEMCPY", None),
+    # Whether the causal full-attention path runs on the vendored
+    # QuantFlashAttn (MXFP8 q/k/v) instead of npu_fused_infer_attention_score.
+    # "1" enables it, "0" (default) keeps the FIA baseline. QFA is still an
+    # experiment: the KV cache stays bf16 and is quantized on every step, so
+    # this currently costs throughput and saves no memory.
+    "VLLM_ASCEND_ENABLE_QFA": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA", "0"))),
 }
 
 # end-env-vars-definition

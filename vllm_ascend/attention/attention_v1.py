@@ -39,6 +39,7 @@ from vllm.v1.attention.backends.registry import (  # type: ignore
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 
+import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.utils import (
@@ -68,6 +69,43 @@ if vllm_version_is("0.27.1"):
     from vllm.model_executor.layers.attention.pcp import _gather_prefill_cache_inputs  # type: ignore[import-not-found]
 else:
     from vllm.v1.attention.ops.pcp import _gather_prefill_cache_inputs  # type: ignore[import-not-found]
+
+
+def _qfa_quant(x: torch.Tensor, d: int):
+    """bf16 -> fp8 plus its e8m0 scale, grouped along D. For q and k."""
+    fp8, scale = torch_npu.npu_dynamic_mx_quant(x.reshape(-1, d), dst_type=torch.float8_e4m3fn, scale_alg=0)
+    return (
+        fp8.reshape(x.shape),
+        scale.view(torch.uint8).reshape(*x.shape[:-1], d // 64, 2).view(torch.float8_e8m0fnu),
+    )
+
+
+def _qfa_quant_v(v: torch.Tensor, seq_lens=None):
+    """Same, but V's scales are grouped down the sequence, as QFA requires:
+    (sum(ceil64(s)), N, D, 2) for TND, (Bn, Bs//64, N, D, 2) for PA_BBND."""
+    fp8_dtype, e8m0 = torch.float8_e4m3fn, torch.float8_e8m0fnu
+    if seq_lens is None:  # PA_BBND: (Bn, Bs, N, D)
+        nb, bs, n, d = v.shape
+        cols = v.permute(0, 2, 3, 1).contiguous().reshape(nb * n * d, bs)
+        fp8, scale = torch_npu.npu_dynamic_mx_quant(cols, dst_type=fp8_dtype, scale_alg=0)
+        return (
+            fp8.view(torch.uint8).reshape(nb, n, d, bs).permute(0, 3, 1, 2).contiguous().view(fp8_dtype),
+            scale.view(torch.uint8).reshape(nb, n, d, bs // 64, 2).permute(0, 3, 1, 2, 4).contiguous().view(e8m0),
+        )
+    n, d = v.shape[1], v.shape[2]  # TND: (T, N, D)
+    fp8_parts, scale_parts, start = [], [], 0
+    for s in seq_lens:
+        chunk = v[start : start + s]
+        start += s
+        s_pad = (s + 63) // 64 * 64
+        if s_pad != s:
+            chunk = torch.nn.functional.pad(chunk, (0, 0, 0, 0, 0, s_pad - s))
+        cols = chunk.permute(1, 2, 0).contiguous().reshape(n * d, s_pad)
+        fp8, scale = torch_npu.npu_dynamic_mx_quant(cols, dst_type=fp8_dtype, scale_alg=0)
+        fp8_parts.append(fp8.view(torch.uint8).reshape(n, d, s_pad).permute(2, 0, 1).contiguous()[:s])
+        scale_parts.append(scale.view(torch.uint8).reshape(n, d, s_pad // 64, 2).permute(2, 0, 1, 3).contiguous())
+    return torch.cat(fp8_parts).view(fp8_dtype), torch.cat(scale_parts).view(e8m0)
+
 
 # default max value of sliding window size
 SWA_INT_MAX = 2147483647
@@ -532,6 +570,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         self._use_layer_aware_fia_graph_replay = needs_layer_aware_fia_graph_replay()
         self._use_max_workspace_for_fia_graph = self._use_layer_aware_fia_graph_replay
+        # Read once: the causal path hits this every layer of every step.
+        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA
         self.sinks = sinks
         self.layerIndex = 0
         # Some mixed-attention models cannot rely on the iteration order of
@@ -1450,32 +1490,105 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     return self._forward_fia_chunked_prefill_split(
                         query, key, value, key, passed_value, block_size, block_table, attn_metadata, output
                     )
-                attn_output, _ = DeviceOperator.npu_fused_infer_attention_score(
-                    query=query,
-                    key=key,
-                    value=value,
-                    atten_mask=attn_metadata.attn_mask,
-                    block_table=block_table,
-                    input_layout="TND",
-                    block_size=block_size,
-                    actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
-                    actual_seq_lengths_kv=actual_seq_lengths_kv,
-                    num_key_value_heads=self.num_kv_heads,
-                    num_heads=self.num_heads,
-                    head_size=self.head_size,
-                    scale=self.scale,
-                    key_cache=self.key_cache,
-                    value_cache=self.value_cache,
-                    current_key=key,
-                    current_value=passed_value,
-                    attn_metadata=attn_metadata,
-                    is_prefill_no_cache=attn_metadata.attn_state == AscendAttentionState.PrefillNoCache,
-                    sparse_mode=3,
-                )
+                if self.enable_qfa:
+                    attn_output = self._forward_qfa(
+                        query, key, value, block_table, actual_seq_lengths_kv, attn_metadata
+                    )
+                else:
+                    attn_output, _ = DeviceOperator.npu_fused_infer_attention_score(
+                        query=query,
+                        key=key,
+                        value=value,
+                        atten_mask=attn_metadata.attn_mask,
+                        block_table=block_table,
+                        input_layout="TND",
+                        block_size=block_size,
+                        actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
+                        actual_seq_lengths_kv=actual_seq_lengths_kv,
+                        num_key_value_heads=self.num_kv_heads,
+                        num_heads=self.num_heads,
+                        head_size=self.head_size,
+                        scale=self.scale,
+                        key_cache=self.key_cache,
+                        value_cache=self.value_cache,
+                        current_key=key,
+                        current_value=passed_value,
+                        attn_metadata=attn_metadata,
+                        is_prefill_no_cache=attn_metadata.attn_state == AscendAttentionState.PrefillNoCache,
+                        sparse_mode=3,
+                    )
 
             attn_output = attn_output.view(num_tokens, self.num_heads, self.head_size)
         output[:num_tokens] = attn_output[:num_tokens]
         return output
+
+    def _forward_qfa(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        block_table: torch.Tensor | None,
+        actual_seq_lengths_kv: list[int],
+        attn_metadata: AscendMetadata,
+    ) -> torch.Tensor:
+        """QuantFlashAttn in place of FIA: metadata first, then the op.
+
+        Behind VLLM_ASCEND_ENABLE_QFA because it is still a probe. The op only
+        takes MXFP8 while the KV cache is bf16, so q/k/v are quantized on every
+        call: nothing is saved yet and the extra work is not free.
+        """
+        d = self.head_size
+        cum_q = list(attn_metadata.actual_seq_lengths_q)
+        q_fp8, q_descale = _qfa_quant(query, d)
+        if block_table is None:
+            # PrefillNoCache hands over this batch's own K/V. Here
+            # actual_seq_lengths_kv is cumulative, and the op wants
+            # cu_seqlens_kv rather than seqused_kv for TND.
+            cum_kv = list(actual_seq_lengths_kv)
+            kv_lens = [b - a for a, b in zip([0] + cum_kv, cum_kv)]
+            k_fp8, k_descale = _qfa_quant(key, d)
+            v_fp8, v_descale = _qfa_quant_v(value, kv_lens)
+            kv_args = {"cu_seqlens_kv": torch.tensor([0] + cum_kv, dtype=torch.int32, device=query.device)}
+            layout_kv = "TND"
+        else:
+            # Every other state hands over the cache as
+            # (num_blocks, block_size, N * D); QFA wants the heads split
+            # out, and seqused_kv is per-sequence here.
+            nb, bs = key.shape[0], key.shape[1]
+            kv_lens = list(actual_seq_lengths_kv)
+            k_fp8, k_descale = _qfa_quant(key.reshape(nb, bs, self.num_kv_heads, d), d)
+            v_fp8, v_descale = _qfa_quant_v(value.reshape(nb, bs, self.num_kv_heads, d))
+            kv_args = {"seqused_kv": torch.tensor(kv_lens, dtype=torch.int32, device=query.device)}
+            layout_kv = "PA_BBND"
+        qfa_args = {
+            "cu_seqlens_q": torch.tensor([0] + cum_q, dtype=torch.int32, device=query.device),
+            "mask_mode": 3,
+            "max_seqlen_q": max(cum_q),
+            "max_seqlen_kv": max(kv_lens),
+            "layout_q": "TND",
+            "layout_q_descale": "TND",
+            "layout_kv": layout_kv,
+            "layout_out": "TND",
+            **kv_args,
+        }
+        metadata = torch.ops._C_ascend.npu_quant_flash_attn_metadata(
+            self.num_heads, self.num_kv_heads, d, 1, v_descale=v_descale, **qfa_args
+        )
+        attn_output, _ = torch.ops._C_ascend.npu_quant_flash_attn(
+            q_fp8,
+            k_fp8,
+            v_fp8,
+            q_descale,
+            k_descale,
+            v_descale,
+            1,
+            block_table=block_table,
+            attn_mask=attn_metadata.attn_mask,
+            metadata=metadata,
+            softmax_scale=self.scale,
+            **qfa_args,
+        )
+        return attn_output
 
     def _forward_fia_chunked_prefill_split(
         self,
