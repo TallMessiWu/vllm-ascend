@@ -5,7 +5,7 @@ import dataclasses
 import weakref
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import patch
 
@@ -319,6 +319,13 @@ class GraphParams:
     workspaces: dict[int, torch.Tensor]
     handles: dict[int, list[torch_npu._C._NPUTaskGroupHandle]]
     attn_params: dict[int, list[tuple]]
+    # QuantFlashAttn captures need neither a workspace nor a task-group handle:
+    # replay only has to refresh buffer contents, so one set of capture-owned
+    # buffers per graph size serves every layer, and the events gate the graph
+    # until they are filled. Defaulted so the positional constructions below
+    # stay as they are.
+    qfa_buffers: dict[int, Any] = field(default_factory=dict)
+    qfa_events: dict[int, list[torch.npu.ExternalEvent]] = field(default_factory=dict)
 
 
 _graph_params: GraphParams | None = None

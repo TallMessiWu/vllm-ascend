@@ -107,6 +107,100 @@ def _qfa_quant_v(v: torch.Tensor, seq_lens=None):
     return torch.cat(fp8_parts).view(fp8_dtype), torch.cat(scale_parts).view(e8m0)
 
 
+@dataclass
+class QFAStepInputs:
+    """One step's QuantFlashAttn arguments, shared by every attention layer.
+
+    Under PA_BBND nothing reads `v_descale` -- not the aclnn rank check, which
+    only covers TND/PA_BNBD/PA_NZ, and not the AICPU, whose dim0 check is
+    guarded on TND -- so one plan serves every full-attention layer of a step,
+    and it can be built before any layer has quantized anything. It still has to
+    be non-null; the builder passes a placeholder.
+
+    Paged states only. Prefill (TND) is never captured and still builds its own
+    arguments per call, where `v_descale` really is checked.
+    """
+
+    metadata: torch.Tensor
+    op_kwargs: dict[str, Any]
+
+
+@dataclass
+class QFAGraphBuffers:
+    """The tensors a captured QFA op reads, owned by the capture.
+
+    FIA rebinds its parameters at replay through graph_task_update because the
+    tensors it saw at capture can be different objects next step -- the MTP
+    proposer, for one, builds dummy_run metadata off query_start_loc_group but
+    the real path off arange. QFA sidesteps the rebinding: it reads these, and
+    replay only refreshes their contents.
+
+    One set per graph size covers every layer, because all of a step's
+    full-attention layers share a single metadata object and therefore a single
+    plan, block table and set of lengths.
+    """
+
+    cu_seqlens_q: torch.Tensor
+    seqused_kv: torch.Tensor
+    metadata: torch.Tensor
+    block_table: torch.Tensor
+
+    @classmethod
+    def like(cls, step: QFAStepInputs, block_table: torch.Tensor) -> "QFAGraphBuffers":
+        return cls(
+            cu_seqlens_q=torch.empty_like(step.op_kwargs["cu_seqlens_q"]),
+            seqused_kv=torch.empty_like(step.op_kwargs["seqused_kv"]),
+            metadata=torch.empty_like(step.metadata),
+            block_table=torch.empty_like(block_table),
+        )
+
+    def refresh(self, step: QFAStepInputs, block_table: torch.Tensor) -> None:
+        self.cu_seqlens_q.copy_(step.op_kwargs["cu_seqlens_q"])
+        self.seqused_kv.copy_(step.op_kwargs["seqused_kv"])
+        self.metadata.copy_(step.metadata)
+        self.block_table.copy_(block_table)
+
+
+def _update_qfa_graph_buffers(update_stream, forward_context, num_tokens: int) -> None:
+    """Refresh what a captured QFA op reads, then release the graph.
+
+    Contents only: the addresses were fixed at capture. Returns quietly when
+    this graph size captured no QFA op -- QFA off, the layer fell back to FIA,
+    or this is the draft model, whose steps share one graph and so keep the FIA
+    capture path.
+    """
+    if _EXTRA_CTX.is_draft_model:
+        return
+    graph_params = get_graph_params()
+    if graph_params is None:
+        return
+    events = graph_params.qfa_events.get(num_tokens)
+    buffers = graph_params.qfa_buffers.get(num_tokens)
+    if not events or buffers is None:
+        return
+    for metadata in forward_context.attn_metadata.values():
+        step = getattr(metadata, "qfa", None)
+        if step is None:
+            continue
+        with torch.npu.stream(update_stream):
+            buffers.refresh(step, metadata.block_tables)
+            for event in events:
+                event.record(update_stream)
+        return
+    # Nothing to refresh, but this graph size did capture QFA ops -- they are
+    # about to replay against buffers nobody has written since capture. That
+    # reads as garbage plan and block-table entries, which the device reports as
+    # an AI Core invalid GM address rather than anything traceable to here.
+    # It means a state that leaves attn_metadata.qfa unset (PrefillNoCache) is
+    # replaying a graph captured for a state that sets it; _qfa_serves is
+    # supposed to make that impossible.
+    raise RuntimeError(
+        f"QFA graph for num_tokens={num_tokens} has no step inputs to refresh: "
+        f"attn_metadata carries no .qfa (states: "
+        f"{[getattr(m, 'attn_state', None) for m in forward_context.attn_metadata.values()]})"
+    )
+
+
 # default max value of sliding window size
 SWA_INT_MAX = 2147483647
 _ATTN_KEYS_BUFFER = None
@@ -199,6 +293,11 @@ class AscendAttentionState(Enum):
     SpecDecoding = 4
 
 
+# The states a decode graph is captured for. They are also the only ones that
+# may use a constant max_seqlen_kv -- see _attach_qfa_inputs.
+_QFA_CAPTURED_STATES = (AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding)
+
+
 @dataclass
 class AscendMetadata:
     """
@@ -251,6 +350,10 @@ class AscendMetadata:
     model_runner_type: str = ""
     # prefill reshape_and_cache event
     reshape_cache_event: torch.npu.Event = None
+
+    # This step's shared QuantFlashAttn arguments, or None when QFA is off or
+    # the state is PrefillNoCache. See QFAStepInputs.
+    qfa: QFAStepInputs | None = None
 
 
 @dataclass
@@ -307,6 +410,27 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         self.chunked_prefill_enabled = scheduler_config.enable_chunked_prefill
         self.attn_mask_builder = AttentionMaskBuilder(self.device)
 
+        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA
+        if self.enable_qfa:
+            self._qfa_num_heads = self.model_config.get_num_attention_heads(vllm_config.parallel_config)
+            self._qfa_num_kv_heads = kv_cache_spec.num_kv_heads
+            self._qfa_head_size = kv_cache_spec.head_size
+            # quantMode=1 refuses a null v_descale at the aclnn entry
+            # (quant_flash_attn_metadata_check.h:217), but under PA_BBND nothing
+            # reads it: the rank check there covers only TND/PA_BNBD/PA_NZ, and
+            # the AICPU's dim0 check is guarded on TND. So a placeholder does --
+            # given PA_BBND's rank in case a later CANN starts checking it. This
+            # is what lets the plan be built out here at all: the real, per-layer
+            # v_descale does not exist until the layer quantizes its cache.
+            self._qfa_v_descale_stub = torch.zeros(1, 1, 1, 1, 2, dtype=torch.uint8, device=self.device).view(
+                torch.float8_e8m0fnu
+            )
+            # Baked into the captured op, so it cannot follow the batch: use the
+            # one bound that always holds. It also feeds the metadata op's
+            # tiling and both calls have to agree on it, so the eager paged path
+            # takes the same constant rather than the batch's tight maximum.
+            self._qfa_max_seqlen_kv = self.model_config.max_model_len
+
     @classmethod
     def get_cudagraph_support(
         cls: type["AscendAttentionMetadataBuilder"],
@@ -346,6 +470,59 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         metadata here.
         """
         return {}
+
+    def _attach_qfa_inputs(self, attn_metadata: AscendMetadata) -> None:
+        """Build this step's QuantFlashAttn arguments once for all layers.
+
+        Every full-attention layer of one step feeds the op the same values, so
+        running the AICPU metadata op per layer was pure repetition. Hoisting it
+        here is also what lets the main op be captured: the tensors below keep
+        their addresses, and this refills them before each replay.
+        """
+        if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
+            # Prefill reads this batch's own K/V under TND and is never
+            # captured; _forward_qfa still builds those arguments per call.
+            return
+        cum_q = attn_metadata.actual_seq_lengths_q
+        # Freshly allocated rather than written into one builder-owned buffer:
+        # the MTP proposer builds every draft step's metadata before running any
+        # of them, so a shared buffer would leave all of them reading the last
+        # step's plan. Capture takes its own copies instead (full_graph_qfa).
+        cu_seqlens_q = torch.tensor([0] + list(cum_q), dtype=torch.int32, device=self.device)
+        seqused_kv = torch.tensor(attn_metadata.seq_lens_list, dtype=torch.int32, device=self.device)
+        # Only decode gets captured, and only a captured op needs a constant
+        # here. Prefill must keep the batch's own maximum: the AICPU floors
+        # kvSeqSize at this value and sizes the split plan from it together with
+        # max_seqlen_q, so a prompt-sized q against a max_model_len kv produces
+        # far more sections than a decode does -- past the op's fixed
+        # 4096-int32 output, which surfaces as an AI Core invalid GM address.
+        max_seqlen_kv = (
+            self._qfa_max_seqlen_kv
+            if attn_metadata.attn_state in _QFA_CAPTURED_STATES
+            else max(attn_metadata.seq_lens_list)
+        )
+        op_kwargs: dict[str, Any] = {
+            "cu_seqlens_q": cu_seqlens_q,
+            "seqused_kv": seqused_kv,
+            "mask_mode": 3,
+            # actual_seq_lengths_q is cumulative, so its last entry is the token
+            # count -- which is the graph size on captured steps, hence constant.
+            "max_seqlen_q": cum_q[-1],
+            "max_seqlen_kv": max_seqlen_kv,
+            "layout_q": "TND",
+            "layout_q_descale": "TND",
+            "layout_kv": "PA_BBND",
+            "layout_out": "TND",
+        }
+        metadata = torch.ops._C_ascend.npu_quant_flash_attn_metadata(
+            self._qfa_num_heads,
+            self._qfa_num_kv_heads,
+            self._qfa_head_size,
+            1,
+            v_descale=self._qfa_v_descale_stub,
+            **op_kwargs,
+        )
+        attn_metadata.qfa = QFAStepInputs(metadata=metadata, op_kwargs=op_kwargs)
 
     def build(
         self,
@@ -451,6 +628,8 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             model_runner_type=self.model_config.runner_type,
             **backend_metadata,
         )
+        if self.enable_qfa:
+            self._attach_qfa_inputs(attn_metadata)
         return attn_metadata
 
     def build_for_graph_capture(
@@ -595,6 +774,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         draft_attn_metadatas=None,
     ):
         use_layer_aware_replay = needs_layer_aware_fia_graph_replay()
+        # No-op unless this graph size captured a QFA op. The branches below
+        # then find no captured params of their own and return.
+        _update_qfa_graph_buffers(update_stream, forward_context, num_tokens)
         if using_paged_attention(num_tokens, vllm_config):
             # Paged Attention update logic
             if _EXTRA_CTX.is_draft_model:
@@ -1396,7 +1578,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
+        # Layers QFA cannot serve -- sinks, sliding window, non-causal -- and
+        # the draft model still capture an FIA graph. The draft is excluded on
+        # purpose: its steps are merged into one graph, so a captured op cannot
+        # tell which step's lengths to read.
         if _EXTRA_CTX.capturing:
+            if self._qfa_serves(attn_metadata):
+                attn_output, num_tokens = self.full_graph_qfa(query, key, value, attn_metadata)
+                output[:num_tokens] = attn_output[:num_tokens]
+                return output
             if self.sinks is not None:
                 attn_output, num_tokens = self.full_graph_fia_v2(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
@@ -1522,6 +1712,25 @@ class AscendAttentionBackendImpl(AttentionImpl):
         output[:num_tokens] = attn_output[:num_tokens]
         return output
 
+    def _qfa_serves(self, attn_metadata: AscendMetadata) -> bool:
+        """Whether this layer and step land on the QFA causal main path.
+
+        Only consulted to decide whether a capture goes to QFA or to FIA. Every
+        full-attention layer of a model answers this the same way, which is what
+        keeps update_graph_params' captured-op-to-layer mapping intact: with QFA
+        on there are no FIA handles left to replay, with it off there are only
+        FIA handles.
+        """
+        return (
+            self.enable_qfa
+            and not _EXTRA_CTX.is_draft_model
+            and attn_metadata.attn_state in _QFA_CAPTURED_STATES
+            and self.sinks is None
+            and self.sliding_window is None
+            and attn_metadata.causal
+            and attn_metadata.qfa is not None
+        )
+
     def _forward_qfa(
         self,
         query: torch.Tensor,
@@ -1531,45 +1740,42 @@ class AscendAttentionBackendImpl(AttentionImpl):
         actual_seq_lengths_kv: list[int],
         attn_metadata: AscendMetadata,
     ) -> torch.Tensor:
-        """QuantFlashAttn in place of FIA: metadata first, then the op.
+        """QuantFlashAttn in place of FIA.
 
         Behind VLLM_ASCEND_ENABLE_QFA because it is still a probe. The op only
         takes MXFP8 while the KV cache is bf16, so q/k/v are quantized on every
         call: nothing is saved yet and the extra work is not free.
         """
+        if block_table is not None:
+            # Everything that varies per step was built once for the whole step
+            # by the metadata builder.
+            step = attn_metadata.qfa
+            assert step is not None, "paged QFA needs the builder's per-step inputs"
+            return self._qfa_paged_call(
+                query, key, value, block_table, step.metadata, step.op_kwargs, attn_metadata.attn_mask
+            )
+        # PrefillNoCache hands over this batch's own K/V. Here
+        # actual_seq_lengths_kv is cumulative, and the op wants cu_seqlens_kv
+        # rather than seqused_kv for TND. This path is never captured, so it
+        # builds its arguments per call -- and it is the one place the metadata
+        # op looks at v_descale.
         d = self.head_size
         cum_q = list(attn_metadata.actual_seq_lengths_q)
+        cum_kv = list(actual_seq_lengths_kv)
+        kv_lens = [b - a for a, b in zip([0] + cum_kv, cum_kv)]
         q_fp8, q_descale = _qfa_quant(query, d)
-        if block_table is None:
-            # PrefillNoCache hands over this batch's own K/V. Here
-            # actual_seq_lengths_kv is cumulative, and the op wants
-            # cu_seqlens_kv rather than seqused_kv for TND.
-            cum_kv = list(actual_seq_lengths_kv)
-            kv_lens = [b - a for a, b in zip([0] + cum_kv, cum_kv)]
-            k_fp8, k_descale = _qfa_quant(key, d)
-            v_fp8, v_descale = _qfa_quant_v(value, kv_lens)
-            kv_args = {"cu_seqlens_kv": torch.tensor([0] + cum_kv, dtype=torch.int32, device=query.device)}
-            layout_kv = "TND"
-        else:
-            # Every other state hands over the cache as
-            # (num_blocks, block_size, N * D); QFA wants the heads split
-            # out, and seqused_kv is per-sequence here.
-            nb, bs = key.shape[0], key.shape[1]
-            kv_lens = list(actual_seq_lengths_kv)
-            k_fp8, k_descale = _qfa_quant(key.reshape(nb, bs, self.num_kv_heads, d), d)
-            v_fp8, v_descale = _qfa_quant_v(value.reshape(nb, bs, self.num_kv_heads, d))
-            kv_args = {"seqused_kv": torch.tensor(kv_lens, dtype=torch.int32, device=query.device)}
-            layout_kv = "PA_BBND"
+        k_fp8, k_descale = _qfa_quant(key, d)
+        v_fp8, v_descale = _qfa_quant_v(value, kv_lens)
         qfa_args = {
             "cu_seqlens_q": torch.tensor([0] + cum_q, dtype=torch.int32, device=query.device),
+            "cu_seqlens_kv": torch.tensor([0] + cum_kv, dtype=torch.int32, device=query.device),
             "mask_mode": 3,
             "max_seqlen_q": max(cum_q),
             "max_seqlen_kv": max(kv_lens),
             "layout_q": "TND",
             "layout_q_descale": "TND",
-            "layout_kv": layout_kv,
+            "layout_kv": "TND",
             "layout_out": "TND",
-            **kv_args,
         }
         metadata = torch.ops._C_ascend.npu_quant_flash_attn_metadata(
             self.num_heads, self.num_kv_heads, d, 1, v_descale=v_descale, **qfa_args
@@ -1582,13 +1788,97 @@ class AscendAttentionBackendImpl(AttentionImpl):
             k_descale,
             v_descale,
             1,
-            block_table=block_table,
+            block_table=None,
             attn_mask=attn_metadata.attn_mask,
             metadata=metadata,
             softmax_scale=self.scale,
             **qfa_args,
         )
         return attn_output
+
+    def _qfa_paged_call(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        block_table: torch.Tensor,
+        metadata: torch.Tensor,
+        qfa_args: dict[str, Any],
+        attn_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Quantize q/k/v and run QFA against a paged cache.
+
+        The cache arrives as (num_blocks, block_size, N * D); QFA wants the
+        heads split out. Quantizing the whole cache every step is what makes
+        this cost more than it saves today -- it goes away once the cache is
+        stored as MXFP8.
+        """
+        d = self.head_size
+        q_fp8, q_descale = _qfa_quant(query, d)
+        nb, bs = key.shape[0], key.shape[1]
+        k_fp8, k_descale = _qfa_quant(key.reshape(nb, bs, self.num_kv_heads, d), d)
+        v_fp8, v_descale = _qfa_quant_v(value.reshape(nb, bs, self.num_kv_heads, d))
+        attn_output, _ = torch.ops._C_ascend.npu_quant_flash_attn(
+            q_fp8,
+            k_fp8,
+            v_fp8,
+            q_descale,
+            k_descale,
+            v_descale,
+            1,
+            block_table=block_table,
+            attn_mask=attn_mask,
+            metadata=metadata,
+            softmax_scale=self.scale,
+            **qfa_args,
+        )
+        return attn_output
+
+    def full_graph_qfa(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AscendMetadata,
+    ) -> tuple[torch.Tensor, int]:
+        """Capture the QFA causal path.
+
+        No workspace, no `.out()` variant and no task-group handle: those are
+        FIA's requirements. QFA reads a plan the AICPU metadata op writes to a
+        buffer outside the graph, so all replay owes it is fresh buffer contents
+        before the event is released -- see _update_qfa_graph_buffers.
+        """
+        key, value, _, block_table, _ = self._get_fia_params(key, value, attn_metadata)
+        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+        query = query[:num_tokens]
+        step = attn_metadata.qfa
+        assert step is not None, "captured QFA needs the builder's per-step inputs"
+
+        graph_params = get_graph_params()
+        buffers = graph_params.qfa_buffers.get(num_tokens)
+        if buffers is None:
+            # Allocated inside the capture, the way FIA allocates its workspace:
+            # the graph pool owns the memory and it outlives this call.
+            buffers = QFAGraphBuffers.like(step, block_table)
+            graph_params.qfa_buffers[num_tokens] = buffers
+        # Left empty on purpose: filling them here would record the copies into
+        # the graph, and at replay they would read capture-time sources that are
+        # long gone. Capture does not execute, and _update_qfa_graph_buffers
+        # fills them before every replay.
+
+        stream = torch_npu.npu.current_stream()
+        event = torch.npu.ExternalEvent()
+        event.wait(stream)
+        event.reset(stream)
+        graph_params.qfa_events.setdefault(num_tokens, []).append(event)
+
+        qfa_args = dict(step.op_kwargs)
+        qfa_args["cu_seqlens_q"] = buffers.cu_seqlens_q
+        qfa_args["seqused_kv"] = buffers.seqused_kv
+        attn_output = self._qfa_paged_call(
+            query, key, value, buffers.block_table, buffers.metadata, qfa_args, attn_metadata.attn_mask
+        )
+        return attn_output.view(num_tokens, self.num_heads, self.head_size), num_tokens
 
     def _forward_fia_chunked_prefill_split(
         self,
