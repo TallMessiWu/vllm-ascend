@@ -109,6 +109,44 @@ def _qfa_quant_v(v: torch.Tensor, seq_lens=None):
 
 
 _QFA_SEEN: set = set()
+# How many times each (batch, max_seqlen_q) has had its plan header printed.
+# Reading the header is an NPU->CPU sync, so it is capped rather than done
+# every step.
+_QFA_PLAN_HITS: dict = {}
+_QFA_PLAN_LOGS_PER_SHAPE = 3
+
+
+def _trace_qfa_plan(op_kwargs: dict, metadata: torch.Tensor, block_table: torch.Tensor | None) -> None:
+    """Print the AICPU plan's header for the first few steps of each shape.
+
+    Header layout is quant_flash_attn_metadata.h: [0] sectionNum, [1] isFd,
+    [2] mBaseSize, [3] s2BaseSize. The last two come out of
+    AdjustSinnerAndSouter(head_dim, max_seqlen_q, max_seqlen_kv, mask_mode, ...)
+    -- the same tiling the main op resolves on the host and therefore bakes into
+    the graph when captured. Replay refreshes the plan but not the baked tiling,
+    so the two agree only while this header does. _attach_qfa_inputs asserts it
+    is constant ("hence constant"); nothing has ever measured that. This does.
+    Capture-phase lines land before vLLM's graph-capture-finished log, replay
+    lines after, so comparing them needs nothing but the log order.
+    """
+    key = (op_kwargs["cu_seqlens_q"].numel() - 1, op_kwargs["max_seqlen_q"])
+    hits = _QFA_PLAN_HITS.get(key, 0)
+    if hits >= _QFA_PLAN_LOGS_PER_SHAPE:
+        return
+    _QFA_PLAN_HITS[key] = hits + 1
+    logger.info(
+        "[qfa] plan #%s batch=%s max_q=%s max_kv=%s header(sections,is_fd,m_base,s2_base)=%s "
+        "shapes cu=%s seq=%s meta=%s bt=%s",
+        hits,
+        key[0],
+        key[1],
+        op_kwargs["max_seqlen_kv"],
+        tuple(metadata[:4].tolist()),
+        tuple(op_kwargs["cu_seqlens_q"].shape),
+        tuple(op_kwargs["seqused_kv"].shape),
+        tuple(metadata.shape),
+        None if block_table is None else tuple(block_table.shape),
+    )
 
 
 @dataclass
@@ -198,11 +236,22 @@ def _update_qfa_graph_buffers(update_stream, forward_context, num_tokens: int) -
             captured_sizes=sorted(graph_params.qfa_buffers),
         )
         return
-    _trace("refreshing", events=len(events))
     for metadata in forward_context.attn_metadata.values():
         step = getattr(metadata, "qfa", None)
         if step is None:
             continue
+        # (buffer, source) per copy_. A batch that replays at a different
+        # request count than it was captured at shows up here as a pair that
+        # does not match -- copy_ would then raise rather than corrupt, but
+        # the shapes are worth having in the log either way.
+        _trace(
+            "refreshing",
+            events=len(events),
+            cu=(tuple(buffers.cu_seqlens_q.shape), tuple(step.op_kwargs["cu_seqlens_q"].shape)),
+            seq=(tuple(buffers.seqused_kv.shape), tuple(step.op_kwargs["seqused_kv"].shape)),
+            meta=(tuple(buffers.metadata.shape), tuple(step.metadata.shape)),
+            bt=(tuple(buffers.block_table.shape), tuple(metadata.block_tables.shape)),
+        )
         with torch.npu.stream(update_stream):
             buffers.refresh(step, metadata.block_tables)
             for event in events:
@@ -535,6 +584,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             v_descale=self._qfa_v_descale_stub,
             **op_kwargs,
         )
+        _trace_qfa_plan(op_kwargs, metadata, attn_metadata.block_tables)
         attn_metadata.qfa = QFAStepInputs(metadata=metadata, op_kwargs=op_kwargs)
 
     def build(
