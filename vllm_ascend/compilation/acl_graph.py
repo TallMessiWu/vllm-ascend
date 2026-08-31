@@ -318,7 +318,7 @@ class GraphParams:
     events: dict[int, list[torch.npu.ExternalEvent]]
     workspaces: dict[int, torch.Tensor]
     handles: dict[int, list[torch_npu._C._NPUTaskGroupHandle]]
-    attn_params: dict[int, list[tuple]]
+    attn_params: dict[int, list[Any]]
     # QuantFlashAttn captures need neither a workspace nor a task-group handle:
     # replay only has to refresh buffer contents, so one set of capture-owned
     # buffers per graph size serves every layer, and the events gate the graph
