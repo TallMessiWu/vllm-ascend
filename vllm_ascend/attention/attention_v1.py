@@ -23,6 +23,7 @@ import torch
 import torch_npu
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
+from vllm.logger import logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
     AttentionBackend,
@@ -107,6 +108,9 @@ def _qfa_quant_v(v: torch.Tensor, seq_lens=None):
     return torch.cat(fp8_parts).view(fp8_dtype), torch.cat(scale_parts).view(e8m0)
 
 
+_QFA_SEEN: set = set()
+
+
 @dataclass
 class QFAStepInputs:
     """One step's QuantFlashAttn arguments, shared by every attention layer.
@@ -169,15 +173,32 @@ def _update_qfa_graph_buffers(update_stream, forward_context, num_tokens: int) -
     or this is the draft model, whose steps share one graph and so keep the FIA
     capture path.
     """
+
+    def _trace(where: str, **extra) -> None:
+        key = ("update", num_tokens, where)
+        if key in _QFA_SEEN:
+            return
+        _QFA_SEEN.add(key)
+        logger.info("[qfa] update tokens=%s -> %s %s", num_tokens, where, extra)
+
     if _EXTRA_CTX.is_draft_model:
+        _trace("skip: draft model")
         return
     graph_params = get_graph_params()
     if graph_params is None:
+        _trace("skip: no graph params")
         return
     events = graph_params.qfa_events.get(num_tokens)
     buffers = graph_params.qfa_buffers.get(num_tokens)
     if not events or buffers is None:
+        _trace(
+            "skip: nothing captured at this size",
+            events=len(events) if events else 0,
+            buffers=buffers is not None,
+            captured_sizes=sorted(graph_params.qfa_buffers),
+        )
         return
+    _trace("refreshing", events=len(events))
     for metadata in forward_context.attn_metadata.values():
         step = getattr(metadata, "qfa", None)
         if step is None:
@@ -1721,7 +1742,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         on there are no FIA handles left to replay, with it off there are only
         FIA handles.
         """
-        return (
+        serves = (
             self.enable_qfa
             and not _EXTRA_CTX.is_draft_model
             and attn_metadata.attn_state in _QFA_CAPTURED_STATES
@@ -1730,6 +1751,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and attn_metadata.causal
             and attn_metadata.qfa is not None
         )
+        key = ("capture", attn_metadata.attn_state, serves)
+        if key not in _QFA_SEEN:
+            _QFA_SEEN.add(key)
+            logger.info(
+                "[qfa] capture state=%s serves=%s draft=%s tokens=%s",
+                attn_metadata.attn_state,
+                serves,
+                _EXTRA_CTX.is_draft_model,
+                attn_metadata.actual_seq_lengths_q[-1] if attn_metadata.actual_seq_lengths_q else None,
+            )
+        return serves
 
     def _forward_qfa(
         self,
