@@ -4829,10 +4829,13 @@ class NPUModelRunner(GPUModelRunner):
                     if current_sparse_sfa_c8:
                         kv_caches[layer_name] = (k_cache,)
                     elif self._is_c8_mxfp_kv_cache(current_kv_cache_spec):
-                        k_scale_cache_shape = (k_shape[0], k_shape[2], k_shape[1], k_shape[3] // 64, 2)
-                        v_scale_cache_shape = (v_shape[0], v_shape[2], v_shape[1] // 64, v_shape[3], 2)
-                        k_scale_cache = raw_k_scale_tensor.view(torch.uint8).view(k_scale_cache_shape)
-                        v_scale_cache = raw_v_scale_tensor.view(torch.uint8).view(v_scale_cache_shape)
+                        c8_blocks, c8_block_size, c8_kv_heads, _ = k_shape
+                        k_scale_cache = raw_k_scale_tensor.view(torch.uint8).view(
+                            mxfp_k_scale_cache_shape(c8_blocks, c8_block_size, c8_kv_heads, k_shape[3])
+                        )
+                        v_scale_cache = raw_v_scale_tensor.view(torch.uint8).view(
+                            mxfp_v_scale_cache_shape(c8_blocks, c8_block_size, c8_kv_heads, v_shape[3])
+                        )
                         kv_caches[layer_name] = (k_cache, v_cache, k_scale_cache, v_scale_cache)
                     else:
                         assert v_cache is not None

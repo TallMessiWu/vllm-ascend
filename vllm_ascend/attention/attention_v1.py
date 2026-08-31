@@ -64,9 +64,9 @@ from vllm_ascend.compilation.acl_graph import (
     update_graph_params_workspaces,
 )
 from vllm_ascend.device.device_op import DeviceOperator
-from vllm_ascend.device.mxfp_kv_cache import scatter_mxfp_k_scale_cache
+from vllm_ascend.device.mxfp_kv_cache import MXFP8_GROUP_SIZE, scatter_mxfp_k_scale_cache
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
-from vllm_ascend.utils import is_950, vllm_version_is, weak_ref_tensors
+from vllm_ascend.utils import is_950, is_c8_mxfp_kv_quant, vllm_version_is, weak_ref_tensors
 
 if vllm_version_is("0.27.1"):
     from vllm.model_executor.layers.attention.pcp import _gather_prefill_cache_inputs  # type: ignore[import-not-found]
@@ -81,33 +81,6 @@ def _qfa_quant(x: torch.Tensor, d: int):
         fp8.reshape(x.shape),
         scale.view(torch.uint8).reshape(*x.shape[:-1], d // 64, 2).view(torch.float8_e8m0fnu),
     )
-
-
-def _qfa_quant_v(v: torch.Tensor, seq_lens=None):
-    """Same, but V's scales are grouped down the sequence, as QFA requires:
-    (sum(ceil64(s)), N, D, 2) for TND, (Bn, Bs//64, N, D, 2) for PA_BBND."""
-    fp8_dtype, e8m0 = torch.float8_e4m3fn, torch.float8_e8m0fnu
-    if seq_lens is None:  # PA_BBND: (Bn, Bs, N, D)
-        nb, bs, n, d = v.shape
-        cols = v.permute(0, 2, 3, 1).contiguous().reshape(nb * n * d, bs)
-        fp8, scale = torch_npu.npu_dynamic_mx_quant(cols, dst_type=fp8_dtype, scale_alg=0)
-        return (
-            fp8.view(torch.uint8).reshape(nb, n, d, bs).permute(0, 3, 1, 2).contiguous().view(fp8_dtype),
-            scale.view(torch.uint8).reshape(nb, n, d, bs // 64, 2).permute(0, 3, 1, 2, 4).contiguous().view(e8m0),
-        )
-    n, d = v.shape[1], v.shape[2]  # TND: (T, N, D)
-    fp8_parts, scale_parts, start = [], [], 0
-    for s in seq_lens:
-        chunk = v[start : start + s]
-        start += s
-        s_pad = (s + 63) // 64 * 64
-        if s_pad != s:
-            chunk = torch.nn.functional.pad(chunk, (0, 0, 0, 0, 0, s_pad - s))
-        cols = chunk.permute(1, 2, 0).contiguous().reshape(n * d, s_pad)
-        fp8, scale = torch_npu.npu_dynamic_mx_quant(cols, dst_type=fp8_dtype, scale_alg=0)
-        fp8_parts.append(fp8.view(torch.uint8).reshape(n, d, s_pad).permute(2, 0, 1).contiguous()[:s])
-        scale_parts.append(scale.view(torch.uint8).reshape(n, d, s_pad // 64, 2).permute(2, 0, 1, 3).contiguous())
-    return torch.cat(fp8_parts).view(fp8_dtype), torch.cat(scale_parts).view(e8m0)
 
 
 _QFA_SEEN: set = set()
@@ -158,11 +131,9 @@ class QFAStepInputs:
     Under PA_BBND nothing reads `v_descale` -- not the aclnn rank check, which
     only covers TND/PA_BNBD/PA_NZ, and not the AICPU, whose dim0 check is
     guarded on TND -- so one plan serves every full-attention layer of a step,
-    and it can be built before any layer has quantized anything. It still has to
-    be non-null; the builder passes a placeholder.
-
-    Paged states only. Prefill (TND) is never captured and still builds its own
-    arguments per call, where `v_descale` really is checked.
+    and it can be built before any layer runs. It still has to be non-null;
+    the builder passes a placeholder. The main op does read v_descale -- it
+    gets the real V scale cache.
     """
 
     metadata: torch.Tensor
@@ -554,11 +525,16 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         self.chunked_prefill_enabled = scheduler_config.enable_chunked_prefill
         self.attn_mask_builder = AttentionMaskBuilder(self.device)
 
-        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA
+        # QFA reads the cache as MXFP8; without a C8-MXFP cache there is
+        # nothing for it to read, so the env var alone no longer enables it.
+        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA and is_c8_mxfp_kv_quant(vllm_config)
         if self.enable_qfa:
             self._qfa_num_heads = self.model_config.get_num_attention_heads(vllm_config.parallel_config)
             self._qfa_num_kv_heads = kv_cache_spec.num_kv_heads
-            self._qfa_head_size = kv_cache_spec.head_size
+            # The C8-MXFP spec inflates head_size by one scale byte per 32
+            # elements so vLLM's block budget covers the scale caches. Undo
+            # it the way _allocate_kv_cache_tensors does to get the real one.
+            self._qfa_head_size = kv_cache_spec.head_size // (1 + MXFP8_GROUP_SIZE) * MXFP8_GROUP_SIZE
             # quantMode=1 refuses a null v_descale at the aclnn entry
             # (quant_flash_attn_metadata_check.h:217), but under PA_BBND nothing
             # reads it: the rank check there covers only TND/PA_BNBD/PA_NZ, and
@@ -623,10 +599,9 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         here is also what lets the main op be captured: the tensors below keep
         their addresses, and this refills them before each replay.
         """
-        if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
-            # Prefill reads this batch's own K/V under TND and is never
-            # captured; _forward_qfa still builds those arguments per call.
-            return
+        # Every state reads the paged MXFP8 cache -- PrefillNoCache included,
+        # since reshape_and_cache has already written this step's K/V by the
+        # time attention runs -- so every state gets a plan.
         cum_q = attn_metadata.actual_seq_lengths_q
         # Freshly allocated rather than written into one builder-owned buffer:
         # the MTP proposer builds every draft step's metadata before running any
@@ -892,7 +867,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self._use_layer_aware_fia_graph_replay = needs_layer_aware_fia_graph_replay()
         self._use_max_workspace_for_fia_graph = self._use_layer_aware_fia_graph_replay
         # Read once: the causal path hits this every layer of every step.
-        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA
+        self.enable_qfa = envs_ascend.VLLM_ASCEND_ENABLE_QFA and is_c8_mxfp_kv_quant(self.vllm_config)
         self.sinks = sinks
         self.layerIndex = 0
         # Some mixed-attention models cannot rely on the iteration order of
@@ -1764,15 +1739,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
-        # Layers QFA cannot serve -- sinks, sliding window, non-causal -- and
-        # the draft model still capture an FIA graph. The draft is excluded on
-        # purpose: its steps are merged into one graph, so a captured op cannot
-        # tell which step's lengths to read.
         if _EXTRA_CTX.capturing:
-            if self._qfa_serves(attn_metadata):
-                attn_output, num_tokens = self.full_graph_qfa(query, key, value, attn_metadata)
-                output[:num_tokens] = attn_output[:num_tokens]
-                return output
             if self.sinks is not None:
                 attn_output, num_tokens = self.full_graph_fia_v2(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
@@ -1866,33 +1833,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     return self._forward_fia_chunked_prefill_split(
                         query, key, value, key, passed_value, block_size, block_table, attn_metadata, output
                     )
-                if self.enable_qfa:
-                    attn_output = self._forward_qfa(
-                        query, key, value, block_table, actual_seq_lengths_kv, attn_metadata
-                    )
-                else:
-                    attn_output, _ = DeviceOperator.npu_fused_infer_attention_score(
-                        query=query,
-                        key=key,
-                        value=value,
-                        atten_mask=attn_metadata.attn_mask,
-                        block_table=block_table,
-                        input_layout="TND",
-                        block_size=block_size,
-                        actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
-                        actual_seq_lengths_kv=actual_seq_lengths_kv,
-                        num_key_value_heads=self.num_kv_heads,
-                        num_heads=self.num_heads,
-                        head_size=self.head_size,
-                        scale=self.scale,
-                        key_cache=self.key_cache,
-                        value_cache=self.value_cache,
-                        current_key=key,
-                        current_value=passed_value,
-                        attn_metadata=attn_metadata,
-                        is_prefill_no_cache=attn_metadata.attn_state == AscendAttentionState.PrefillNoCache,
-                        sparse_mode=3,
-                    )
+                attn_output, _ = DeviceOperator.npu_fused_infer_attention_score(
+                    query=query,
+                    key=key,
+                    value=value,
+                    atten_mask=attn_metadata.attn_mask,
+                    block_table=block_table,
+                    input_layout="TND",
+                    block_size=block_size,
+                    actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
+                    actual_seq_lengths_kv=actual_seq_lengths_kv,
+                    num_key_value_heads=self.num_kv_heads,
+                    num_heads=self.num_heads,
+                    head_size=self.head_size,
+                    scale=self.scale,
+                    key_cache=self.key_cache,
+                    value_cache=self.value_cache,
+                    current_key=key,
+                    current_value=passed_value,
+                    attn_metadata=attn_metadata,
+                    is_prefill_no_cache=attn_metadata.attn_state == AscendAttentionState.PrefillNoCache,
+                    sparse_mode=3,
+                )
 
             attn_output = attn_output.view(num_tokens, self.num_heads, self.head_size)
         output[:num_tokens] = attn_output[:num_tokens]
@@ -1901,11 +1863,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
     def _qfa_serves(self, attn_metadata: AscendMetadata) -> bool:
         """Whether this layer and step land on the QFA causal main path.
 
-        Only consulted to decide whether a capture goes to QFA or to FIA. Every
-        full-attention layer of a model answers this the same way, which is what
-        keeps update_graph_params' captured-op-to-layer mapping intact: with QFA
-        on there are no FIA handles left to replay, with it off there are only
-        FIA handles.
+        Every full-attention layer of a model answers this the same way, which
+        is what keeps update_graph_params' captured-op-to-layer mapping intact:
+        with QFA on there are no FIA handles left to replay, with it off there
+        are only FIA handles. The draft model is excluded on purpose -- its
+        steps are merged into one graph, so a captured op cannot tell which
+        step's lengths to read.
         """
         serves = (
             self.enable_qfa
@@ -1927,100 +1890,35 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
         return serves
 
-    def _forward_qfa(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        block_table: torch.Tensor | None,
-        actual_seq_lengths_kv: list[int],
-        attn_metadata: AscendMetadata,
-    ) -> torch.Tensor:
-        """QuantFlashAttn in place of FIA.
-
-        Behind VLLM_ASCEND_ENABLE_QFA because it is still a probe. The op only
-        takes MXFP8 while the KV cache is bf16, so q/k/v are quantized on every
-        call: nothing is saved yet and the extra work is not free.
-        """
-        if block_table is not None:
-            # Everything that varies per step was built once for the whole step
-            # by the metadata builder.
-            step = attn_metadata.qfa
-            assert step is not None, "paged QFA needs the builder's per-step inputs"
-            return self._qfa_paged_call(
-                query, key, value, block_table, step.metadata, step.op_kwargs, attn_metadata.attn_mask
-            )
-        # PrefillNoCache hands over this batch's own K/V. Here
-        # actual_seq_lengths_kv is cumulative, and the op wants cu_seqlens_kv
-        # rather than seqused_kv for TND. This path is never captured, so it
-        # builds its arguments per call -- and it is the one place the metadata
-        # op looks at v_descale.
-        d = self.head_size
-        cum_q = list(attn_metadata.actual_seq_lengths_q)
-        cum_kv = list(actual_seq_lengths_kv)
-        kv_lens = [b - a for a, b in zip([0] + cum_kv, cum_kv)]
-        q_fp8, q_descale = _qfa_quant(query, d)
-        k_fp8, k_descale = _qfa_quant(key, d)
-        v_fp8, v_descale = _qfa_quant_v(value, kv_lens)
-        qfa_args = {
-            "cu_seqlens_q": torch.tensor([0] + cum_q, dtype=torch.int32, device=query.device),
-            "cu_seqlens_kv": torch.tensor([0] + cum_kv, dtype=torch.int32, device=query.device),
-            "mask_mode": 3,
-            "max_seqlen_q": max(cum_q),
-            "max_seqlen_kv": max(kv_lens),
-            "layout_q": "TND",
-            "layout_q_descale": "TND",
-            "layout_kv": "TND",
-            "layout_out": "TND",
-        }
-        metadata = torch.ops._C_ascend.npu_quant_flash_attn_metadata(
-            self.num_heads, self.num_kv_heads, d, 1, v_descale=v_descale, **qfa_args
-        )
-        attn_output, _ = torch.ops._C_ascend.npu_quant_flash_attn(
-            q_fp8,
-            k_fp8,
-            v_fp8,
-            q_descale,
-            k_descale,
-            v_descale,
-            1,
-            block_table=None,
-            attn_mask=attn_metadata.attn_mask,
-            metadata=metadata,
-            softmax_scale=self.scale,
-            **qfa_args,
-        )
-        return attn_output
-
     def _qfa_paged_call(
         self,
         query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, ...],
         block_table: torch.Tensor,
         metadata: torch.Tensor,
         qfa_args: dict[str, Any],
         attn_mask: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Quantize q/k/v and run QFA against a paged cache.
+        """Run QFA against the MXFP8 paged cache.
 
-        The cache arrives as (num_blocks, block_size, N * D); QFA wants the
-        heads split out. Quantizing the whole cache every step is what makes
-        this cost more than it saves today -- it goes away once the cache is
-        stored as MXFP8.
+        K and V are already FP8 in the cache and their E8M0 scales sit next
+        to them in the (num_blocks, block_size, N, ...) order PA_BBND reads,
+        so this touches neither: no quantization, no transpose. Only q is
+        quantized, because the graph produces it in bf16 from this step's QKV
+        projection and it exists nowhere else.
+
+        The scale caches are stored as uint8 -- index_put_ on float8 either
+        errors or falls back to AICPU -- and only become E8M0 here.
         """
-        d = self.head_size
-        q_fp8, q_descale = _qfa_quant(query, d)
-        nb, bs = key.shape[0], key.shape[1]
-        k_fp8, k_descale = _qfa_quant(key.reshape(nb, bs, self.num_kv_heads, d), d)
-        v_fp8, v_descale = _qfa_quant_v(value.reshape(nb, bs, self.num_kv_heads, d))
+        key, value, key_scale, value_scale = kv_cache
+        q_fp8, q_descale = _qfa_quant(query, self.head_size)
         attn_output, _ = torch.ops._C_ascend.npu_quant_flash_attn(
             q_fp8,
-            k_fp8,
-            v_fp8,
+            key,
+            value,
             q_descale,
-            k_descale,
-            v_descale,
+            key_scale.view(torch.float8_e8m0fnu),
+            value_scale.view(torch.float8_e8m0fnu),
             1,
             block_table=block_table,
             attn_mask=attn_mask,
@@ -2033,8 +1931,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
     def full_graph_qfa(
         self,
         query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, ...],
         attn_metadata: AscendMetadata,
     ) -> tuple[torch.Tensor, int]:
         """Capture the QFA causal path.
@@ -2044,7 +1941,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         buffer outside the graph, so all replay owes it is fresh buffer contents
         before the event is released -- see _update_qfa_graph_buffers.
         """
-        key, value, _, block_table, _ = self._get_fia_params(key, value, attn_metadata)
+        block_table = attn_metadata.block_tables
         num_tokens = attn_metadata.actual_seq_lengths_q[-1]
         query = query[:num_tokens]
         step = attn_metadata.qfa
@@ -2072,7 +1969,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         qfa_args["cu_seqlens_q"] = buffers.cu_seqlens_q
         qfa_args["seqused_kv"] = buffers.seqused_kv
         attn_output = self._qfa_paged_call(
-            query, key, value, buffers.block_table, buffers.metadata, qfa_args, attn_metadata.attn_mask
+            query, kv_cache, buffers.block_table, buffers.metadata, qfa_args, attn_metadata.attn_mask
         )
         return attn_output.view(num_tokens, self.num_heads, self.head_size), num_tokens
 
@@ -2850,14 +2747,20 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
     enable_hamming_sparse: bool = False
 
     def _transpose_kv_cache(self, kv_cache: tuple[torch.Tensor]) -> tuple[torch.Tensor]:
-        """Swap block_size (dim 1) and num_kv_heads (dim 2) on paged K/V for FIA.
+        """Reorder the cache out of its stored PA_BBND layout into FIA's.
 
-        [num_blocks, block_size, num_kv_heads, head_dim]
-        -> [num_blocks, num_kv_heads, block_size, head_dim]
+        [num_blocks, block_size, num_kv_heads, ...]
+        -> [num_blocks, num_kv_heads, block_size, ...]
+
+        The scale caches move with their payloads. This copies the whole
+        cache for every layer of every step, which is exactly what the QFA
+        path in forward() avoids by reading the stored order directly.
         """
         key = kv_cache[0].transpose(1, 2).contiguous()
         value = kv_cache[1].transpose(1, 2).contiguous()
-        return (key, value, kv_cache[2], kv_cache[3])
+        key_scale = kv_cache[2].transpose(1, 2).contiguous()
+        value_scale = kv_cache[3].transpose(1, 2).contiguous()
+        return (key, value, key_scale, value_scale)
 
     def _run_mxfp8_fia_v2(
         self,
@@ -3155,15 +3058,16 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
         # reshape_and_cache mxfp8 scales
         key_scale_cache, value_scale_cache = kv_cache[2], kv_cache[3]
         scatter_mxfp_k_scale_cache(
-            key_scale,
+            # Byte view: index_put_ on float8 errors or falls back to AICPU.
+            key_scale.view(torch.uint8),
             key_scale_cache,
             slot_mapping,
             key_cache.shape[1],
         )
         if not self.save_v_scale_flag:
             # (hidden_size) -> (num_kv_heads, head_size) -> broadcast to
-            # (num_blocks, num_kv_heads, block_size // 64, head_size, 2)
-            value_scale_cache.copy_(value_scale.view(1, self.num_kv_heads, 1, self.head_size, 1))
+            # (num_blocks, block_size // 64, num_kv_heads, head_size, 2)
+            value_scale_cache.copy_(value_scale.view(1, 1, self.num_kv_heads, self.head_size, 1))
             self.save_v_scale_flag = True
 
     def forward(
@@ -3188,10 +3092,6 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
         if getattr(self, "enable_hamming_sparse", False):
             raise NotImplementedError("C8_MXFP attention does not support hamming sparse KV compression yet.")
 
-        query_mxfp8, query_scale = torch_npu.npu_dynamic_mx_quant(
-            query[: attn_metadata.num_actual_tokens],
-            dst_type=torch.float8_e4m3fn,
-        )
         key_mxfp8, key_scale = torch_npu.npu_dynamic_mx_quant(
             key[: attn_metadata.num_actual_tokens],
             dst_type=torch.float8_e4m3fn,
@@ -3211,11 +3111,38 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
 
         self.reshape_and_cache(key_mxfp8, value_mxfp8, key_scale, layer.v_cache_scale, kv_cache, attn_metadata)
 
+        full_capture = _EXTRA_CTX.capturing and get_forward_context().cudagraph_runtime_mode == CUDAGraphMode.FULL
+        if self.enable_qfa and self._qfa_serves(attn_metadata):
+            # QFA consumes the cache in the order it is stored, so this path
+            # skips _transpose_kv_cache entirely. It also does not gate on
+            # attn_state: the target's decode graph is captured under
+            # ChunkedPrefill, so a DecodeOnly check would exclude it.
+            if full_capture:
+                attn_output, num_tokens = self.full_graph_qfa(query, kv_cache, attn_metadata)
+            else:
+                step = attn_metadata.qfa
+                assert step is not None, "paged QFA needs the builder's per-step inputs"
+                num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+                attn_output = self._qfa_paged_call(
+                    query[:num_tokens],
+                    kv_cache,
+                    attn_metadata.block_tables,
+                    step.metadata,
+                    step.op_kwargs,
+                    attn_metadata.attn_mask,
+                ).view(num_tokens, self.num_heads, self.head_size)
+            output[:num_tokens] = attn_output[:num_tokens]
+            return output
+
+        query_mxfp8, query_scale = torch_npu.npu_dynamic_mx_quant(
+            query[: attn_metadata.num_actual_tokens],
+            dst_type=torch.float8_e4m3fn,
+        )
         fia_kv_cache = self._transpose_kv_cache(kv_cache)
         # PIECEWISE captures the regular FIA call inside its compiled region.
         # Only FULL capture needs a task handle whose list arguments are
         # rebound before every replay.
-        if _EXTRA_CTX.capturing and get_forward_context().cudagraph_runtime_mode == CUDAGraphMode.FULL:
+        if full_capture:
             if attn_metadata.attn_state != AscendAttentionState.DecodeOnly:
                 raise NotImplementedError("C8_MXFP FULL graph capture only supports DecodeOnly attention.")
             return self._full_graph_mxfp8_decode(

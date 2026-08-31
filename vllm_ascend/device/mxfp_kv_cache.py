@@ -1,11 +1,12 @@
 import torch
-import torch_npu
 
-# KV cache MXFP8 scale layouts:
+# KV cache MXFP8 scale layouts. The block and head axes are ordered the way
+# QuantFlashAttn's PA_BBND reads them -- the same order as the K/V caches
+# themselves -- so attention consumes cache and scales without transposing
+# either. FIA wants heads first; _transpose_kv_cache is what pays for that.
 # K scale token:  [num_tokens, num_kv_heads, head_dim // 64, 2]
-# K scale cache:  [num_blocks, num_kv_heads, block_size, head_dim // 64, 2]
-# V scale token (axis=0 quant): [cdiv(num_tokens, 64), num_kv_heads, head_dim, 2]
-# V scale cache:  [num_blocks, num_kv_heads, block_size // 64, head_dim, 2]
+# K scale cache:  [num_blocks, block_size, num_kv_heads, head_dim // 64, 2]
+# V scale cache:  [num_blocks, block_size // 64, num_kv_heads, head_dim, 2]
 MXFP_KV_SCALE_GROUP_SIZE = 64
 MXFP_KV_SCALE_VALUES_PER_GROUP = 2
 # Unified per-block scale bytes: num_kv_heads * block_size * head_dim / MXFP8_GROUP_SIZE (K and V).
@@ -58,8 +59,8 @@ def mxfp_k_scale_cache_shape(
 ) -> tuple[int, int, int, int, int]:
     return (
         num_blocks,
-        num_kv_heads,
         block_size,
+        num_kv_heads,
         mxfp_kv_scale_groups(head_dim),
         MXFP_KV_SCALE_VALUES_PER_GROUP,
     )
@@ -73,8 +74,8 @@ def mxfp_v_scale_cache_shape(
 ) -> tuple[int, int, int, int, int]:
     return (
         num_blocks,
-        num_kv_heads,
         mxfp_kv_block_scale_groups(block_size),
+        num_kv_heads,
         head_dim,
         MXFP_KV_SCALE_VALUES_PER_GROUP,
     )
@@ -184,7 +185,7 @@ def scatter_mxfp_k_scale_cache(
 
     ``key_scale`` shape: ``[num_tokens, num_kv_heads, head_dim // 64, 2]``.
     ``key_scale_cache`` shape:
-    ``[num_blocks, num_kv_heads, block_size, head_dim // 64, 2]``.
+    ``[num_blocks, block_size, num_kv_heads, head_dim // 64, 2]``.
     """
     validate_mxfp_v_scale_block_size(block_size)
     slots = slot_mapping.to(torch.long)
@@ -199,59 +200,7 @@ def scatter_mxfp_k_scale_cache(
     safe_slots = torch.where(valid_slots, slots, torch.zeros_like(slots))
     block_ids = safe_slots // block_size
     block_offsets = safe_slots % block_size
-    cached_scale = key_scale_cache[block_ids, :, block_offsets, :, :]
+    cached_scale = key_scale_cache[block_ids, block_offsets]
     scale_mask = valid_slots.view(-1, 1, 1, 1)
     scale_updates = torch.where(scale_mask, key_scale, cached_scale)
-    key_scale_cache[block_ids, :, block_offsets, :, :] = scale_updates
-
-
-def scatter_mxfp_v_cache(
-    quant_value: torch.Tensor,
-    value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-    block_size: int,
-) -> None:
-    """Scatter per-token quantized V into the paged V cache.
-
-    ``quant_value`` shape: ``[num_tokens, num_kv_heads, v_dim]``.
-    ``value_cache`` shape: ``[num_blocks, block_size, num_kv_heads, v_dim]``.
-    """
-    validate_mxfp_v_scale_block_size(block_size)
-    slots = slot_mapping.to(torch.long)
-    if slots.numel() == 0:
-        return
-
-    num_kv_heads = quant_value.shape[1]
-    v_dim = quant_value.shape[2]
-    flat_cache = value_cache.view(-1, num_kv_heads * v_dim)
-    torch_npu.npu_scatter_nd_update_(
-        flat_cache,
-        slots.view(-1, 1),
-        quant_value.reshape(quant_value.shape[0], num_kv_heads * v_dim),
-    )
-
-
-def scatter_mxfp_v_scale_cache(
-    value_scale: torch.Tensor,
-    value_scale_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-    block_size: int,
-) -> None:
-    """Scatter per-64-token-group V scales into the paged V-scale cache.
-
-    ``value_scale`` comes from ``npu_dynamic_mx_quant(..., axis=0)`` and has shape
-    ``[ceil(num_tokens / 64), num_kv_heads, head_dim, 2]``. The cache layout is
-    ``[num_blocks, num_kv_heads, block_size // 64, head_dim, 2]``.
-    """
-    validate_mxfp_v_scale_block_size(block_size)
-    num_scales = value_scale.shape[0]
-    v_scale_slot_mapping = (slot_mapping // MXFP_KV_SCALE_GROUP_SIZE).unique()
-    if v_scale_slot_mapping.numel() != num_scales:
-        raise ValueError(
-            f"C8_MXFP V scale slot mapping mismatch: expected {v_scale_slot_mapping.numel()}, got {num_scales}."
-        )
-
-    v_scale_cache_block_size = mxfp_kv_block_scale_groups(block_size)
-    block_ids = v_scale_slot_mapping // v_scale_cache_block_size
-    v_scale_cache_offsets = v_scale_slot_mapping % v_scale_cache_block_size
-    value_scale_cache[block_ids, :, v_scale_cache_offsets, :, :] = value_scale
+    key_scale_cache[block_ids, block_offsets] = scale_updates
