@@ -418,6 +418,126 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_kv_quant_sparse_flash_attenti
     return std::tuple<at::Tensor, at::Tensor, at::Tensor>(output, softmax_max, softmax_sum);
 }
 
+at::Tensor npu_quant_flash_attn_metadata_meta(
+    int64_t num_heads_q, int64_t num_heads_kv, int64_t head_dim, int64_t quant_mode,
+    const c10::optional<at::Tensor> &cu_seqlens_q, const c10::optional<at::Tensor> &cu_seqlens_kv,
+    const c10::optional<at::Tensor> &seqused_q, const c10::optional<at::Tensor> &seqused_kv,
+    const c10::optional<at::Tensor> &v_descale, c10::optional<int64_t> batch_size,
+    int64_t max_seqlen_q, int64_t max_seqlen_kv, int64_t mask_mode,
+    int64_t win_left, int64_t win_right,
+    c10::string_view layout_q, c10::string_view layout_q_descale,
+    c10::string_view layout_kv, c10::string_view layout_out)
+{
+    // Fixed-size int32 split-plan buffer; mirrors METADATA_NUM_INT32 in
+    // quant_flash_attn_torch_adpt.h.
+    constexpr int64_t METADATA_NUM_INT32 = 4096;
+    at::TensorOptions options = at::TensorOptions().device(at::kMeta).dtype(at::kInt);
+    for (const auto *candidate : {&cu_seqlens_q, &cu_seqlens_kv, &seqused_q, &seqused_kv, &v_descale}) {
+        if (candidate->has_value() && candidate->value().defined()) {
+            options = candidate->value().options().dtype(at::kInt);
+            break;
+        }
+    }
+    return at::empty({METADATA_NUM_INT32}, options);
+}
+
+std::tuple<at::Tensor, at::Tensor> npu_quant_flash_attn_meta(
+    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
+    const at::Tensor &q_descale, const at::Tensor &k_descale, const at::Tensor &v_descale,
+    int64_t quant_mode,
+    const c10::optional<at::Tensor> &block_table, const c10::optional<at::Tensor> &p_scale,
+    const c10::optional<at::Tensor> &cu_seqlens_q, const c10::optional<at::Tensor> &cu_seqlens_kv,
+    const c10::optional<at::Tensor> &seqused_q, const c10::optional<at::Tensor> &seqused_kv,
+    const c10::optional<at::Tensor> &sinks, const c10::optional<at::Tensor> &attn_mask,
+    const c10::optional<at::Tensor> &metadata,
+    double softmax_scale, int64_t mask_mode, int64_t win_left, int64_t win_right,
+    int64_t max_seqlen_q, int64_t max_seqlen_kv,
+    c10::string_view layout_q, c10::string_view layout_q_descale,
+    c10::string_view layout_kv, c10::string_view layout_out,
+    bool return_softmax_lse)
+{
+    constexpr int64_t DIM_0 = 0;
+    constexpr int64_t DIM_1 = 1;
+    constexpr int64_t DIM_2 = 2;
+    constexpr int64_t DIM_3 = 3;
+    constexpr int64_t DIM_4 = 4;
+
+    std::string layout_q_str = std::string(layout_q);
+    std::string layout_kv_str = std::string(layout_kv);
+    std::string layout_out_str = std::string(layout_out);
+    c10::SymInt t_size = 0;
+    c10::SymInt n_size = 0;
+    c10::SymInt s_size = 0;
+    c10::SymInt b_size = 0;
+    if (layout_q_str == "TND") {
+        t_size = q.sym_size(DIM_0);
+        n_size = q.sym_size(DIM_1);
+    } else if (layout_q_str == "NTD") {
+        n_size = q.sym_size(DIM_0);
+        t_size = q.sym_size(DIM_1);
+    } else if (layout_q_str == "BSND") {
+        b_size = q.sym_size(DIM_0);
+        s_size = q.sym_size(DIM_1);
+        n_size = q.sym_size(DIM_2);
+    } else {  // BNSD
+        b_size = q.sym_size(DIM_0);
+        n_size = q.sym_size(DIM_1);
+        s_size = q.sym_size(DIM_2);
+    }
+    c10::SymInt d_size = 0;
+    if (layout_kv_str == "TND") {
+        d_size = v.sym_size(DIM_2);
+    } else if (layout_kv_str == "PA_NZ") {
+        d_size = v.sym_size(DIM_2) * v.sym_size(DIM_4);
+    } else {
+        d_size = v.sym_size(v.dim() - 1);
+    }
+
+    c10::SymDimVector lse_shape;
+    if (return_softmax_lse) {
+        if (q.dim() == DIM_3) {
+            lse_shape = {n_size, t_size};
+        } else {
+            lse_shape = {b_size, n_size, s_size};
+        }
+    } else {
+        lse_shape = {c10::SymInt(0)};
+    }
+    at::Tensor softmax_lse = at::empty_symint(lse_shape, q.options().dtype(at::kFloat));
+
+    c10::SymDimVector out_shape;
+    if (layout_out_str == "TND") {
+        out_shape = {t_size, n_size, d_size};
+    } else if (layout_out_str == "BNSD") {
+        out_shape = {b_size, n_size, s_size, d_size};
+    } else {  // BSND
+        out_shape = {b_size, s_size, n_size, d_size};
+    }
+    at::Tensor attn_out = at::empty_symint(out_shape, q.options().dtype(at::kBFloat16));
+    return std::tuple<at::Tensor, at::Tensor>(attn_out, softmax_lse);
+}
+
+// The .out overload writes into the caller's tensors, so there is nothing to
+// infer: the meta kernel hands back what it was given.
+std::tuple<at::Tensor, at::Tensor> npu_quant_flash_attn_out_meta(
+    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
+    const at::Tensor &q_descale, const at::Tensor &k_descale, const at::Tensor &v_descale,
+    int64_t quant_mode,
+    const c10::optional<at::Tensor> &block_table, const c10::optional<at::Tensor> &p_scale,
+    const c10::optional<at::Tensor> &cu_seqlens_q, const c10::optional<at::Tensor> &cu_seqlens_kv,
+    const c10::optional<at::Tensor> &seqused_q, const c10::optional<at::Tensor> &seqused_kv,
+    const c10::optional<at::Tensor> &sinks, const c10::optional<at::Tensor> &attn_mask,
+    const c10::optional<at::Tensor> &metadata,
+    double softmax_scale, int64_t mask_mode, int64_t win_left, int64_t win_right,
+    int64_t max_seqlen_q, int64_t max_seqlen_kv,
+    c10::string_view layout_q, c10::string_view layout_q_descale,
+    c10::string_view layout_kv, c10::string_view layout_out,
+    bool return_softmax_lse,
+    at::Tensor &attn_out, at::Tensor &softmax_lse)
+{
+    return std::tuple<at::Tensor, at::Tensor>(attn_out, softmax_lse);
+}
+
 std::tuple<at::Tensor,at::Tensor, at::Tensor> moe_gating_top_k_meta(
     const at::Tensor& x,
     int64_t k,
@@ -1973,6 +2093,11 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_msa_index_score", &vllm_ascend::meta::npu_msa_index_score_meta);
     ops.impl("npu_kv_quant_sparse_flash_attention",
              &vllm_ascend::meta::npu_kv_quant_sparse_flash_attention_meta);
+    // QuantFlashAttn (vendored ops-transformer, A5 only)
+    ops.impl("npu_quant_flash_attn_metadata",
+             &vllm_ascend::meta::npu_quant_flash_attn_metadata_meta);
+    ops.impl("npu_quant_flash_attn", &vllm_ascend::meta::npu_quant_flash_attn_meta);
+    ops.impl("npu_quant_flash_attn.out", &vllm_ascend::meta::npu_quant_flash_attn_out_meta);
     // MoE dispatch-ffn-combine
     ops.impl("dispatch_ffn_combine", &vllm_ascend::meta::dispatch_ffn_combine_meta);
     // Moe_gating_top_k
