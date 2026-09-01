@@ -5,7 +5,7 @@ import dataclasses
 import weakref
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import patch
 
@@ -319,6 +319,14 @@ class GraphParams:
     workspaces: dict[int, torch.Tensor]
     handles: dict[int, list[torch_npu._C._NPUTaskGroupHandle]]
     attn_params: dict[int, list[Any]]
+    # QuantFlashAttn replays the way FIA does -- its call sits in a task group
+    # and is re-issued through graph_task_update before every replay -- so it
+    # keeps its own params/handles/events rather than sharing the three above,
+    # whose tuple layout is FIA's. It needs no workspace. Defaulted so the
+    # positional constructions below stay as they are.
+    qfa_params: dict[int, list[Any]] = field(default_factory=dict)
+    qfa_handles: dict[int, list[torch_npu._C._NPUTaskGroupHandle]] = field(default_factory=dict)
+    qfa_events: dict[int, list[torch.npu.ExternalEvent]] = field(default_factory=dict)
 
 
 _graph_params: GraphParams | None = None

@@ -103,6 +103,132 @@ class QFAStepInputs:
 
     metadata: torch.Tensor
     op_kwargs: dict[str, Any]
+    # Recorded on the stream that ran the AICPU metadata op, once it has
+    # been enqueued, so a consumer on another stream can wait for the plan
+    # to actually be written. See _update_qfa_graph_params.
+    plan_ready: Any
+
+
+def _qfa_graph_params():
+    """The captured-op registry this model owns.
+
+    The draft model is wrapped in its own ACLGraphWrapper with its own params,
+    and its prefill graph is separate again -- reading the target's here is how
+    a draft replay ends up releasing events nobody recorded.
+    """
+    if not _EXTRA_CTX.is_draft_model:
+        return get_graph_params()
+    if _EXTRA_CTX.is_draft_model_prefill:
+        return get_draft_graph_prefill_params()
+    return get_draft_graph_params()
+
+
+def _qfa_steps_per_op(forward_context, draft_attn_metadatas, num_ops: int) -> list[tuple]:
+    """One (step, block_table) per captured op, in the order they were captured.
+
+    Target: every full-attention layer of a step shares one plan -- nothing
+    reads v_descale under PA_BBND, so _attach_qfa_inputs builds it once before
+    any layer runs -- so the same pair repeats for all num_ops.
+
+    Draft: MTP merges every draft step into one graph, so the captured ops run
+    step 0's layers, then step 1's, and so on. Flattening (draft_step, key) in
+    that order is what lines them up, which is exactly what FIA's draft branch
+    does with attn_params/handles/events.
+    """
+    if _EXTRA_CTX.is_draft_model:
+        pairs = [
+            (metadata.qfa, metadata.block_tables)
+            for per_step in (draft_attn_metadatas or [])
+            for metadata in per_step.values()
+            if getattr(metadata, "qfa", None) is not None
+        ]
+        return pairs
+
+    for metadata in forward_context.attn_metadata.values():
+        if getattr(metadata, "qfa", None) is not None:
+            return [(metadata.qfa, metadata.block_tables)] * num_ops
+    return []
+
+
+def _update_qfa_graph_params(update_stream, forward_context, num_tokens: int, draft_attn_metadatas=None) -> None:
+    """Re-issue every captured QFA call with this step's tensors, then release.
+
+    The same mechanism FIA replays through: graph_task_update re-runs the whole
+    `.out()` call against the task the capture registered, so the plan, block
+    table and lengths can be this step's own objects instead of fixed buffers
+    the capture owned. q_fp8/q_descale are handed back unchanged -- the graph
+    recomputes them from this step's query on its own.
+
+    Returns quietly when this graph size captured no QFA op: QFA is off, or the
+    layer fell back to FIA.
+    """
+
+    graph_params = _qfa_graph_params()
+    if graph_params is None:
+        return
+    params = graph_params.qfa_params.get(num_tokens)
+    handles = graph_params.qfa_handles.get(num_tokens)
+    events = graph_params.qfa_events.get(num_tokens)
+    if not params:
+        return
+
+    steps = _qfa_steps_per_op(forward_context, draft_attn_metadatas, len(params))
+    if len(steps) != len(params):
+        # Replaying against a plan nobody wrote this step reads as an AI Core
+        # invalid GM address with nothing in the traceback pointing here, so
+        # this is worth catching loudly. Either a state that leaves
+        # attn_metadata.qfa unset (PrefillNoCache) is replaying a graph
+        # captured for one that sets it -- _qfa_serves is supposed to make that
+        # impossible -- or a draft replay is handing over a different number of
+        # steps than were captured.
+        raise RuntimeError(
+            f"QFA graph for num_tokens={num_tokens} (draft={_EXTRA_CTX.is_draft_model}) captured "
+            f"{len(params)} ops but this step supplies {len(steps)} plans; "
+            f"states={[getattr(m, 'attn_state', None) for m in forward_context.attn_metadata.values()]}"
+        )
+
+    with torch.npu.stream(update_stream):
+        # The plan comes off an AICPU op on the builder's stream, whose latency
+        # is long and variable, and update_stream has no dependency on it.
+        # Without this wait the re-issued call can reference a half-written
+        # plan. Waiting on the whole stream instead would deadlock: the graph
+        # is already enqueued and parked on the events recorded below.
+        for param, handle, event, (step, block_tables) in zip(params, handles, events, steps):
+            # Per op rather than once: a draft replay carries one plan per draft
+            # step, each recorded on the builder's stream at a different time.
+            # Waiting again on an already-signalled event costs nothing.
+            update_stream.wait_event(step.plan_ready)
+            (
+                q_fp8,
+                q_descale,
+                key,
+                value,
+                key_scale,
+                value_scale,
+                attn_out,
+                softmax_lse,
+                scale,
+                attn_mask,
+            ) = param
+            torch.npu.graph_task_update_begin(update_stream, handle)
+            torch.ops._C_ascend.npu_quant_flash_attn.out(
+                q_fp8,
+                key,
+                value,
+                q_descale,
+                key_scale.view(torch.float8_e8m0fnu),
+                value_scale.view(torch.float8_e8m0fnu),
+                1,
+                block_table=block_tables,
+                attn_mask=attn_mask,
+                metadata=step.metadata,
+                softmax_scale=scale,
+                attn_out=attn_out,
+                softmax_lse=softmax_lse,
+                **step.op_kwargs,
+            )
+            torch.npu.graph_task_update_end(update_stream)
+            event.record(update_stream)
 
 
 # default max value of sliding window size
@@ -467,7 +593,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         # Freshly allocated rather than written into one builder-owned buffer:
         # the MTP proposer builds every draft step's metadata before running any
         # of them, so a shared buffer would leave all of them reading the last
-        # step's plan.
+        # step's plan. Capture takes its own copies instead (full_graph_qfa).
         cu_seqlens_q = torch.tensor([0] + list(cum_q), dtype=torch.int32, device=self.device)
         seqused_kv = torch.tensor(attn_metadata.seq_lens_list, dtype=torch.int32, device=self.device)
         # Constant for every paged step, not just the ones that look like
@@ -499,7 +625,8 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             v_descale=self._qfa_v_descale_stub,
             **op_kwargs,
         )
-        attn_metadata.qfa = QFAStepInputs(metadata=metadata, op_kwargs=op_kwargs)
+        plan_ready = torch.npu.current_stream().record_event()
+        attn_metadata.qfa = QFAStepInputs(metadata=metadata, op_kwargs=op_kwargs, plan_ready=plan_ready)
 
     def build(
         self,
@@ -751,6 +878,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         draft_attn_metadatas=None,
     ):
         use_layer_aware_replay = needs_layer_aware_fia_graph_replay()
+        # No-op unless this graph size captured a QFA op. The branches below
+        # then find no captured params of their own and return.
+        _update_qfa_graph_params(update_stream, forward_context, num_tokens, draft_attn_metadatas)
         if using_paged_attention(num_tokens, vllm_config):
             # Paged Attention update logic
             if _EXTRA_CTX.is_draft_model:
@@ -1723,8 +1853,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
         Every full-attention layer of a model answers this the same way, which
         is what keeps update_graph_params' captured-op-to-layer mapping intact:
         with QFA on there are no FIA handles left to replay, with it off there
-        are only FIA handles. The draft model is not excluded: each of its
-        steps calls attention with its own metadata.
+        are only FIA handles. The draft model is not excluded, captured or not:
+        each of its steps calls attention with its own metadata, and a captured
+        draft graph lines those up by flattening them in capture order -- see
+        _qfa_steps_per_op.
         """
         serves = (
             self.enable_qfa
@@ -1772,6 +1904,78 @@ class AscendAttentionBackendImpl(AttentionImpl):
             **qfa_args,
         )
         return attn_output
+
+    def full_graph_qfa(
+        self,
+        query: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, ...],
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor,
+    ) -> tuple[torch.Tensor, int]:
+        """Capture the QFA causal path as a task the replay can re-issue.
+
+        Same shape as full_graph_fia: the call goes inside a task group, its
+        handle is kept, and _update_qfa_graph_params re-runs it before every
+        replay with this step's own tensors. That is what the `.out()` overload
+        bought -- without it the only way to feed a captured QFA fresh values
+        was to copy them into buffers the capture owned, which is what this did
+        before and what the fixed addresses were for.
+
+        q_fp8/q_descale are the exception that still has to be rebound as-is:
+        the graph recomputes them from this step's query every replay, so the
+        update hands back the very tensors capture produced.
+        """
+        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+        query = query[:num_tokens]
+        step = attn_metadata.qfa
+        assert step is not None, "captured QFA needs the builder's per-step inputs"
+        key, value, key_scale, value_scale = kv_cache
+
+        graph_params = _qfa_graph_params()
+        attn_out = output[:num_tokens].view(num_tokens, self.num_heads, self.head_size)
+        softmax_lse = torch.empty(0, dtype=torch.float32, device=query.device)
+        q_fp8, q_descale = _qfa_quant_q(query, self.head_size)
+
+        stream = torch_npu.npu.current_stream()
+        event = torch.npu.ExternalEvent()
+        event.wait(stream)
+        event.reset(stream)
+        graph_params.qfa_events.setdefault(num_tokens, []).append(event)
+        graph_params.qfa_params.setdefault(num_tokens, []).append(
+            (
+                weak_ref_tensors(q_fp8),
+                weak_ref_tensors(q_descale),
+                key,
+                value,
+                key_scale,
+                value_scale,
+                attn_out,
+                softmax_lse,
+                self.scale,
+                attn_metadata.attn_mask,
+            )
+        )
+
+        torch.npu.graph_task_group_begin(stream)
+        torch.ops._C_ascend.npu_quant_flash_attn.out(
+            q_fp8,
+            key,
+            value,
+            q_descale,
+            key_scale.view(torch.float8_e8m0fnu),
+            value_scale.view(torch.float8_e8m0fnu),
+            1,
+            block_table=attn_metadata.block_tables,
+            attn_mask=attn_metadata.attn_mask,
+            metadata=step.metadata,
+            softmax_scale=self.scale,
+            attn_out=attn_out,
+            softmax_lse=softmax_lse,
+            **step.op_kwargs,
+        )
+        handle = torch.npu.graph_task_group_end(stream)
+        graph_params.qfa_handles.setdefault(num_tokens, []).append(handle)
+        return attn_out, num_tokens
 
     def _forward_fia_chunked_prefill_split(
         self,
@@ -2911,20 +3115,34 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
         self.reshape_and_cache(key_mxfp8, value_mxfp8, key_scale, layer.v_cache_scale, kv_cache, attn_metadata)
 
         # QFA consumes the cache in the order it is stored, so this path skips
-        # _transpose_kv_cache entirely. The draft model is served here too --
-        # it has to be, since FIA cannot take head_dim=256 at all.
+        # _transpose_kv_cache entirely. It also does not gate on attn_state:
+        # which states get captured is not readable from it -- with MTP the
+        # target's decode graph is captured under ChunkedPrefill, without it
+        # under DecodeOnly -- so any such check would exclude the wrong ones.
+        #
+        # The draft model is served here too, captured or not. MTP merges every
+        # draft step into one graph, but that is only an ordering problem: the
+        # captured ops run step 0's layers, then step 1's, and
+        # _update_qfa_graph_params flattens draft_attn_metadatas the same way
+        # to line each one up with its own plan -- which is what FIA's draft
+        # branch has always done. It has to be served, too: FIA cannot take
+        # head_dim=256 at all.
+        qfa_capture = _EXTRA_CTX.capturing and get_forward_context().cudagraph_runtime_mode == CUDAGraphMode.FULL
         if self.enable_qfa and self._qfa_serves(attn_metadata):
-            step = attn_metadata.qfa
-            assert step is not None, "paged QFA needs the builder's per-step inputs"
-            num_tokens = attn_metadata.actual_seq_lengths_q[-1]
-            attn_output = self._qfa_paged_call(
-                query[:num_tokens],
-                kv_cache,
-                attn_metadata.block_tables,
-                step.metadata,
-                step.op_kwargs,
-                attn_metadata.attn_mask,
-            ).view(num_tokens, self.num_heads, self.head_size)
+            if qfa_capture:
+                attn_output, num_tokens = self.full_graph_qfa(query, kv_cache, attn_metadata, output)
+            else:
+                step = attn_metadata.qfa
+                assert step is not None, "paged QFA needs the builder's per-step inputs"
+                num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+                attn_output = self._qfa_paged_call(
+                    query[:num_tokens],
+                    kv_cache,
+                    attn_metadata.block_tables,
+                    step.metadata,
+                    step.op_kwargs,
+                    attn_metadata.attn_mask,
+                ).view(num_tokens, self.num_heads, self.head_size)
             output[:num_tokens] = attn_output[:num_tokens]
             return output
 
