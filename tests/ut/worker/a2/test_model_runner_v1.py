@@ -1017,8 +1017,9 @@ class TestNPUModelRunnerKVCache(unittest.TestCase):
         k_cache, v_cache, k_scale_cache, v_scale_cache = kv_caches["attn"]
         self.assertEqual(k_cache.shape, (2, 128, 1, 64))
         self.assertEqual(v_cache.shape, (2, 128, 1, 64))
-        self.assertEqual(k_scale_cache.shape, (2, 1, 128, 1, 2))
-        self.assertEqual(v_scale_cache.shape, (2, 1, 2, 64, 2))
+        # (blocks, block_size, heads, ...) -- the order QFA's PA_BBND reads.
+        self.assertEqual(k_scale_cache.shape, (2, 128, 1, 1, 2))
+        self.assertEqual(v_scale_cache.shape, (2, 2, 1, 64, 2))
         self.assertEqual(k_cache.untyped_storage().data_ptr(), raw_tensor.untyped_storage().data_ptr())
         self.assertEqual(k_cache.storage_offset(), hybrid_padding_size)
 

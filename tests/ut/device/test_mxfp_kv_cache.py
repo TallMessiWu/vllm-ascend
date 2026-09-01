@@ -1,10 +1,16 @@
 import torch
 
-from vllm_ascend.device.mxfp_kv_cache import scatter_mxfp_k_scale_cache
+from vllm_ascend.device.mxfp_kv_cache import (
+    mxfp_k_scale_cache_shape,
+    mxfp_v_scale_cache_shape,
+    scatter_mxfp_k_scale_cache,
+)
 
 
 def test_scatter_mxfp_k_scale_cache_ignores_full_graph_padding():
-    key_scale_cache = torch.full((1, 1, 2, 1, 2), 7, dtype=torch.uint8)
+    # One block of 64 slots: block_size has to be a multiple of the 64-token
+    # scale group, which validate_mxfp_v_scale_block_size enforces.
+    key_scale_cache = torch.full((1, 64, 1, 1, 2), 7, dtype=torch.uint8)
     key_scale = torch.tensor(
         [
             [[[[3, 4]]]],
@@ -18,7 +24,7 @@ def test_scatter_mxfp_k_scale_cache_ignores_full_graph_padding():
         key_scale,
         key_scale_cache,
         slot_mapping,
-        block_size=2,
+        block_size=64,
     )
 
     torch.testing.assert_close(
@@ -26,6 +32,13 @@ def test_scatter_mxfp_k_scale_cache_ignores_full_graph_padding():
         torch.tensor([[7, 7]], dtype=torch.uint8),
     )
     torch.testing.assert_close(
-        key_scale_cache[0, 0, 1],
+        key_scale_cache[0, 1, 0],
         torch.tensor([[3, 4]], dtype=torch.uint8),
     )
+
+
+def test_mxfp_scale_cache_shapes_follow_pa_bbnd():
+    # Block before head, matching the K/V caches, so QuantFlashAttn reads
+    # cache and scales in one layout and transposes neither.
+    assert mxfp_k_scale_cache_shape(2, 128, 3, 64) == (2, 128, 3, 1, 2)
+    assert mxfp_v_scale_cache_shape(2, 128, 3, 64) == (2, 2, 3, 64, 2)
