@@ -24,6 +24,7 @@ import torch_npu
 from vllm.config import CUDAGraphMode, VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
 from vllm.forward_context import get_forward_context
+from vllm.logger import logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
     AttentionBackend,
@@ -86,6 +87,47 @@ def _qfa_quant_q(x: torch.Tensor, d: int):
     return (
         fp8.reshape(x.shape),
         scale.view(torch.uint8).reshape(*x.shape[:-1], d // 64, 2).view(torch.float8_e8m0fnu),
+    )
+
+
+_QFA_SEEN: set = set()
+# How many times each (batch, max_seqlen_q) has had its plan header printed.
+# Reading the header is an NPU->CPU sync, so it is capped rather than done
+# every step.
+_QFA_PLAN_HITS: dict = {}
+_QFA_PLAN_LOGS_PER_SHAPE = 3
+
+
+def _trace_qfa_plan(op_kwargs: dict, metadata: torch.Tensor, block_table: torch.Tensor | None) -> None:
+    """Print the AICPU plan's header for the first few steps of each shape.
+
+    Header layout is quant_flash_attn_metadata.h: [0] sectionNum, [1] isFd,
+    [2] mBaseSize, [3] s2BaseSize. The last two come out of
+    AdjustSinnerAndSouter(head_dim, max_seqlen_q, max_seqlen_kv, mask_mode, ...)
+    -- the same tiling the main op resolves on the host and therefore bakes into
+    the graph when captured. Replay refreshes the plan but not the baked tiling,
+    so the two agree only while this header does. _attach_qfa_inputs asserts it
+    is constant ("hence constant"); nothing has ever measured that. This does.
+    Capture-phase lines land before vLLM's graph-capture-finished log, replay
+    lines after, so comparing them needs nothing but the log order.
+    """
+    key = (op_kwargs["cu_seqlens_q"].numel() - 1, op_kwargs["max_seqlen_q"])
+    hits = _QFA_PLAN_HITS.get(key, 0)
+    if hits >= _QFA_PLAN_LOGS_PER_SHAPE:
+        return
+    _QFA_PLAN_HITS[key] = hits + 1
+    logger.info(
+        "[qfa] plan #%s batch=%s max_q=%s max_kv=%s header(sections,is_fd,m_base,s2_base)=%s "
+        "shapes cu=%s seq=%s meta=%s bt=%s",
+        hits,
+        key[0],
+        key[1],
+        op_kwargs["max_seqlen_kv"],
+        tuple(metadata[:4].tolist()),
+        tuple(op_kwargs["cu_seqlens_q"].shape),
+        tuple(op_kwargs["seqused_kv"].shape),
+        tuple(metadata.shape),
+        None if block_table is None else tuple(block_table.shape),
     )
 
 
@@ -163,13 +205,28 @@ def _update_qfa_graph_params(update_stream, forward_context, num_tokens: int, dr
     layer fell back to FIA.
     """
 
+    def _trace(where: str, **extra) -> None:
+        key = ("update", _EXTRA_CTX.is_draft_model, num_tokens, where)
+        if key in _QFA_SEEN:
+            return
+        _QFA_SEEN.add(key)
+        logger.info(
+            "[qfa] update tokens=%s draft=%s -> %s %s",
+            num_tokens,
+            _EXTRA_CTX.is_draft_model,
+            where,
+            extra,
+        )
+
     graph_params = _qfa_graph_params()
     if graph_params is None:
+        _trace("skip: no graph params")
         return
     params = graph_params.qfa_params.get(num_tokens)
     handles = graph_params.qfa_handles.get(num_tokens)
     events = graph_params.qfa_events.get(num_tokens)
     if not params:
+        _trace("skip: nothing captured at this size", captured_sizes=sorted(graph_params.qfa_params))
         return
 
     steps = _qfa_steps_per_op(forward_context, draft_attn_metadatas, len(params))
@@ -187,6 +244,7 @@ def _update_qfa_graph_params(update_stream, forward_context, num_tokens: int, dr
             f"states={[getattr(m, 'attn_state', None) for m in forward_context.attn_metadata.values()]}"
         )
 
+    _trace("updating", ops=len(params), handles=len(handles), events=len(events))
     with torch.npu.stream(update_stream):
         # The plan comes off an AICPU op on the builder's stream, whose latency
         # is long and variable, and update_stream has no dependency on it.
@@ -626,6 +684,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             **op_kwargs,
         )
         plan_ready = torch.npu.current_stream().record_event()
+        _trace_qfa_plan(op_kwargs, metadata, attn_metadata.block_tables)
         attn_metadata.qfa = QFAStepInputs(metadata=metadata, op_kwargs=op_kwargs, plan_ready=plan_ready)
 
     def build(
@@ -1865,6 +1924,16 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and attn_metadata.causal
             and attn_metadata.qfa is not None
         )
+        key = ("capture", attn_metadata.attn_state, serves)
+        if key not in _QFA_SEEN:
+            _QFA_SEEN.add(key)
+            logger.info(
+                "[qfa] capture state=%s serves=%s draft=%s tokens=%s",
+                attn_metadata.attn_state,
+                serves,
+                _EXTRA_CTX.is_draft_model,
+                attn_metadata.actual_seq_lengths_q[-1] if attn_metadata.actual_seq_lengths_q else None,
+            )
         return serves
 
     def _qfa_paged_call(
@@ -1974,7 +2043,23 @@ class AscendAttentionBackendImpl(AttentionImpl):
             **step.op_kwargs,
         )
         handle = torch.npu.graph_task_group_end(stream)
-        graph_params.qfa_handles.setdefault(num_tokens, []).append(handle)
+        handles = graph_params.qfa_handles.setdefault(num_tokens, [])
+        handles.append(handle)
+        # Only this branch can print it. _qfa_serves logs from the eager path
+        # too, so its serves=True proves nothing about capture -- that is
+        # exactly how an earlier run looked healthy while QFA never entered a
+        # graph at all. Once per (size, layer count) so a whole capture sweep
+        # stays a handful of lines.
+        key = ("captured", _EXTRA_CTX.is_draft_model, num_tokens, len(handles))
+        if key not in _QFA_SEEN:
+            _QFA_SEEN.add(key)
+            logger.info(
+                "[qfa] captured op #%s into task group at tokens=%s draft=%s (state=%s)",
+                len(handles),
+                num_tokens,
+                _EXTRA_CTX.is_draft_model,
+                attn_metadata.attn_state,
+            )
         return attn_out, num_tokens
 
     def _forward_fia_chunked_prefill_split(

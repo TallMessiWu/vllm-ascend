@@ -1,6 +1,7 @@
 import torch
 from vllm.config import get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
+from vllm.logger import logger
 
 from ..base import AscendAttentionScheme
 
@@ -76,6 +77,14 @@ class AscendC8MXFPKVCacheAttentionMethod(AscendAttentionScheme):
         # zero the result is identical, and if they are not the cost is
         # precision rather than a poisoned cache.
         raw = layer.v_cache_scale.data
+        # All-127 here means nothing was loaded and V is being cached
+        # unscaled -- the silent state this mapping was added to fix.
+        logger.info_once(
+            "[quantization] C8 MXFP V cache scale: min=%s max=%s distinct=%s (all-127 => not loaded)",
+            int(raw.min()),
+            int(raw.max()),
+            int(raw.unique().numel()),
+        )
         exponent = torch.where(raw == 0, torch.full_like(raw, 127), raw).to(torch.float32) - 127
         layer.v_cache_scale_float = torch.nn.Parameter(torch.exp2(exponent).to(target_dtype), requires_grad=False)
         layer.v_cache_scale_float_reciprocal = torch.nn.Parameter(
