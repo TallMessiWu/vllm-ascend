@@ -77,6 +77,13 @@ env_variables: dict[str, Callable[[], Any]] = {
     # effect on a C8-MXFP KV cache, which is the only thing QFA can read:
     # with a bf16 cache the flag is ignored.
     "VLLM_ASCEND_ENABLE_QFA": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA", "0"))),
+    # Force the C8-MXFP KV cache off even when the checkpoint asks for it
+    # (kv_cache_type=K_DYNAMIC_V_STATIC_MXFP8_PER_CHANNEL), falling back to a
+    # bf16 cache served by plain FIA. Exists so a quantized checkpoint can be
+    # measured against its own unquantized baseline; QFA is unavailable in this
+    # mode since it can only read a C8-MXFP cache. "1" disables, "0" (default)
+    # honours the checkpoint.
+    "VLLM_ASCEND_DISABLE_C8_MXFP": lambda: bool(int(os.getenv("VLLM_ASCEND_DISABLE_C8_MXFP", "0"))),
 }
 
 # end-env-vars-definition

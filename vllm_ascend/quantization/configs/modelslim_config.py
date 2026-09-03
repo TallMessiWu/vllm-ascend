@@ -41,6 +41,7 @@ from vllm.model_executor.layers.quantization.base_config import QuantizationConf
 from vllm.model_executor.layers.vocab_parallel_embedding import UnquantizedEmbeddingMethod, VocabParallelEmbedding
 from vllm.model_executor.models.utils import WeightsMapper
 
+from vllm_ascend import envs
 from vllm_ascend.utils import (
     ASCEND_QUANTIZATION_METHOD,
     AscendDeviceType,
@@ -1118,9 +1119,16 @@ class AscendModelSlimConfig(QuantizationConfig):
         self.enable_indexer_quant = indexer_quant_type != ""
         self.indexer_quant_layers = []
         kv_quant_type = self.quant_description.get("kv_cache_type", "")
-        self.enable_mxfp_c8_quant = kv_quant_type == "K_DYNAMIC_V_STATIC_MXFP8_PER_CHANNEL"
+        self.enable_mxfp_c8_quant = (
+            kv_quant_type == "K_DYNAMIC_V_STATIC_MXFP8_PER_CHANNEL" and not envs.VLLM_ASCEND_DISABLE_C8_MXFP
+        )
         if self.enable_mxfp_c8_quant:
             logger.info_once("[quantization] Enable C8 MXFP8 quantization!")
+        elif kv_quant_type == "K_DYNAMIC_V_STATIC_MXFP8_PER_CHANNEL":
+            logger.info_once(
+                "[quantization] C8 MXFP8 quantization disabled by VLLM_ASCEND_DISABLE_C8_MXFP; "
+                "falling back to a bf16 KV cache."
+            )
         self.enable_c8_quant = kv_quant_type == "C8"
         self.c8_quant_layers = []
         if self.enable_fa_quant or self.enable_indexer_quant or self.enable_c8_quant:
