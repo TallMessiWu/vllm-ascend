@@ -157,6 +157,23 @@ def dump_cache_write(
     )
 
 
+def _dump_attn_mask_once(attn_mask: torch.Tensor | None) -> str | None:
+    """Store the shared mask in its own file; every layer points at the same one.
+
+    get_splitfuse_attn_mask() hands out one cached 2048x2048 int8 tensor for the
+    whole run, so writing it per call would add 4MB a time for no new content.
+    """
+    if attn_mask is None:
+        return None
+    directory = envs.VLLM_ASCEND_QFA_DUMP_DIR
+    os.makedirs(directory, exist_ok=True)
+    name = "attn_mask.pt"
+    path = os.path.join(directory, name)
+    if not os.path.exists(path):
+        torch.save(_host(attn_mask), path)
+    return name
+
+
 def dump_qfa_call(
     layer_name: str,
     *,
@@ -167,6 +184,7 @@ def dump_qfa_call(
     block_table: torch.Tensor,
     metadata: torch.Tensor,
     op_kwargs: dict[str, Any],
+    attn_mask: torch.Tensor | None,
     attn_output: torch.Tensor,
     softmax_scale: float,
     num_heads: int,
@@ -176,6 +194,7 @@ def dump_qfa_call(
     """Everything the operator saw, with the cache sliced to the read blocks."""
     if not _should_dump(layer_name):
         return
+    mask_file = _dump_attn_mask_once(attn_mask)
 
     key_cache, value_cache, key_scale_cache, value_scale_cache = kv_cache
     block_size = key_cache.shape[1]
@@ -211,6 +230,8 @@ def dump_qfa_call(
                 "block_size": block_size,
                 "metadata": metadata,
                 "op_kwargs": op_kwargs,
+                # Sidecar file, so a replay can rebuild the full argument list.
+                "attn_mask_file": mask_file,
                 "attn_output": attn_output,
                 "softmax_scale": softmax_scale,
                 "num_heads": num_heads,

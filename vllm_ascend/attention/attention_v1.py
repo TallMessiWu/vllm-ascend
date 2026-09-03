@@ -3259,6 +3259,7 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
                         block_table=attn_metadata.block_tables,
                         metadata=step.metadata,
                         op_kwargs=step.op_kwargs,
+                        attn_mask=attn_metadata.attn_mask,
                         attn_output=attn_output,
                         softmax_scale=self.scale,
                         num_heads=self.num_heads,
