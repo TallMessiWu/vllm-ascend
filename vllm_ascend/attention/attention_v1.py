@@ -43,6 +43,7 @@ from vllm.v1.kv_cache_interface import AttentionSpec, CrossAttentionSpec
 
 import vllm_ascend.envs as envs_ascend
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
+from vllm_ascend.attention import qfa_dump
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
@@ -3197,6 +3198,22 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
         )
         value_mxfp8 = value_mxfp8.view((attn_metadata.num_actual_tokens, *original_value_shape[1:]))
 
+        if qfa_dump.dump_enabled():
+            # Last point where the bf16 K/V still exist: the cache keeps FP8 only.
+            qfa_dump.dump_cache_write(
+                layer.layer_name,
+                query=query,
+                key=key,
+                value=value.view(original_value_shape),
+                key_mxfp8=key_mxfp8,
+                key_scale=key_scale,
+                value_mxfp8=value_mxfp8,
+                v_cache_scale=layer.v_cache_scale,
+                v_cache_scale_float_reciprocal=layer.v_cache_scale_float_reciprocal,
+                slot_mapping=attn_metadata.slot_mapping,
+                num_actual_tokens=attn_metadata.num_actual_tokens,
+            )
+
         self.reshape_and_cache(key_mxfp8, value_mxfp8, key_scale, layer.v_cache_scale, kv_cache, attn_metadata)
 
         # QFA consumes the cache in the order it is stored, so this path skips
@@ -3228,6 +3245,26 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
                     step.op_kwargs,
                     attn_metadata.attn_mask,
                 ).view(num_tokens, self.num_heads, self.head_size)
+                if qfa_dump.dump_enabled():
+                    # _qfa_quant_q is deterministic, so recomputing it here costs
+                    # one quantization on dump steps and keeps _qfa_paged_call's
+                    # signature untouched.
+                    dump_q_fp8, dump_q_descale = _qfa_quant_q(query[:num_tokens], self.head_size)
+                    qfa_dump.dump_qfa_call(
+                        layer.layer_name,
+                        query_bf16=query[:num_tokens],
+                        q_fp8=dump_q_fp8,
+                        q_descale=dump_q_descale,
+                        kv_cache=kv_cache,
+                        block_table=attn_metadata.block_tables,
+                        metadata=step.metadata,
+                        op_kwargs=step.op_kwargs,
+                        attn_output=attn_output,
+                        softmax_scale=self.scale,
+                        num_heads=self.num_heads,
+                        num_kv_heads=self.num_kv_heads,
+                        head_size=self.head_size,
+                    )
             output[:num_tokens] = attn_output[:num_tokens]
             return output
 

@@ -77,6 +77,16 @@ env_variables: dict[str, Callable[[], Any]] = {
     # effect on a C8-MXFP KV cache, which is the only thing QFA can read:
     # with a bf16 cache the flag is ignored.
     "VLLM_ASCEND_ENABLE_QFA": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_QFA", "0"))),
+    # Directory to dump QFA's inputs/outputs into, for checking the operator's
+    # numerics against a reference computed off-device. Empty (default) turns
+    # dumping off entirely. Only the eager path can be dumped: a D2H copy inside
+    # an aclgraph capture fails with EE1016, and on replay no Python runs at all,
+    # so this needs GRAPH=0.
+    "VLLM_ASCEND_QFA_DUMP_DIR": lambda: os.getenv("VLLM_ASCEND_QFA_DUMP_DIR", ""),
+    # How many forward calls to dump per attention layer before going quiet.
+    # Each call writes the bf16 K/V of this step plus the cache blocks the step
+    # actually reads, so a handful of calls is enough and keeps the dump small.
+    "VLLM_ASCEND_QFA_DUMP_CALLS": lambda: int(os.getenv("VLLM_ASCEND_QFA_DUMP_CALLS", "2")),
 }
 
 # end-env-vars-definition
