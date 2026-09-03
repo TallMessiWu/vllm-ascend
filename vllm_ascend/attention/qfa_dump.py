@@ -81,6 +81,19 @@ def _host(value: Any) -> Any:
     return value.detach().cpu()
 
 
+def _index_blocks(cache: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+    """Gather cache blocks by index, routing FP8 through a uint8 view.
+
+    aclnnIndex has no FP8 kernel and rejects the tensor outright (EZ1001), and
+    this runs before anything reaches the host, so the byte view has to happen
+    on device. float8 is one byte wide, so the view addresses the same memory
+    with the same shape and is reinterpreted after the gather.
+    """
+    if _is_byte_float(cache):
+        return cache.view(torch.uint8)[ids].view(cache.dtype)
+    return cache[ids]
+
+
 def _host_tree(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {k: _host_tree(v) for k, v in obj.items()}
@@ -220,10 +233,10 @@ def dump_qfa_call(
                 "q_fp8": q_fp8,
                 "q_descale": q_descale,
                 # Cache slices, in the same PA_BBND order the operator reads.
-                "key_cache": key_cache[device_ids],
-                "value_cache": value_cache[device_ids],
-                "key_scale_cache": key_scale_cache[device_ids],
-                "value_scale_cache": value_scale_cache[device_ids],
+                "key_cache": _index_blocks(key_cache, device_ids),
+                "value_cache": _index_blocks(value_cache, device_ids),
+                "key_scale_cache": _index_blocks(key_scale_cache, device_ids),
+                "value_scale_cache": _index_blocks(value_scale_cache, device_ids),
                 "block_ids": block_ids,
                 "block_table_full": block_table,
                 "block_table_local": local_block_table,
