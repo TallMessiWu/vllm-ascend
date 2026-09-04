@@ -1,3 +1,5 @@
+import functools
+
 import torch
 from vllm.config import get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
@@ -6,7 +8,16 @@ from vllm.logger import logger
 from ..base import AscendAttentionScheme
 
 
-def _quant_weight_loader(param: torch.Tensor, loaded_weight: torch.Tensor):
+def _quant_weight_loader(param: torch.Tensor, loaded_weight: torch.Tensor, *, head_size_v: int):
+    """Load the static per-channel V-cache scale into this rank's slice.
+
+    The scale is one E8M0 byte per (kv_head, channel), so the split is counted
+    in KV heads rather than by dividing the tensor by tp_size. Two cases make
+    an even split wrong: a checkpoint may store a single set of channel scales
+    shared by every KV head, and when total_kv_heads < tp_size vLLM replicates
+    a KV head across ranks instead of sharding it, leaving every rank with the
+    full head.
+    """
     # ModelSlim ships the V-cache scale as [hidden_size, 1]; the parameter is
     # 1-D, and the size assert below would reject the trailing axis.
     loaded_weight = loaded_weight.reshape(-1)
@@ -15,12 +26,18 @@ def _quant_weight_loader(param: torch.Tensor, loaded_weight: torch.Tensor):
     else:
         tp_rank = get_tensor_model_parallel_rank()
         tp_size = get_tensor_model_parallel_world_size()
-        shard_size = loaded_weight.shape[0] // tp_size
-        loaded_weight = loaded_weight.narrow(0, shard_size * tp_rank, shard_size)
+        heads_in_ckpt = loaded_weight.numel() // head_size_v
+        heads_in_param = param.numel() // head_size_v
+        if heads_in_ckpt == 1 and heads_in_param > 1:
+            loaded_weight = loaded_weight.repeat(heads_in_param)
+        elif heads_in_ckpt > heads_in_param:
+            replicas = max(1, tp_size // heads_in_ckpt)
+            first_head = (tp_rank // replicas) * heads_in_param
+            loaded_weight = loaded_weight.narrow(0, first_head * head_size_v, heads_in_param * head_size_v)
         assert param.size() == loaded_weight.size(), (
             "[vllm-ascend/MXFP8_PER_CHANNEL] Attempted to load weight "
             f"({loaded_weight.size()}) into parameter ({param.size()}) "
-            f"when TP size is {tp_size} and TP rank is {tp_rank}."
+            f"when TP size is {tp_size}, TP rank is {tp_rank} and head_size_v is {head_size_v}."
         )
 
         param.data.copy_(loaded_weight)
@@ -64,12 +81,32 @@ class AscendC8MXFPKVCacheAttentionMethod(AscendAttentionScheme):
             requires_grad=False,
         )
         layer.register_parameter("v_cache_scale", weight_param)
+        # Some ModelSlim recipes emit a V offset next to the scale, borrowed
+        # from the affine FAKQuant template. MXFP8 per-channel is symmetric and
+        # the operator takes no offset, so the only correct value is zero --
+        # register it to check that, rather than dropping it unread.
+        offset_param = torch.nn.Parameter(
+            torch.zeros((hidden_size,), dtype=torch.float32),
+            requires_grad=False,
+        )
+        layer.register_parameter("v_cache_offset", offset_param)
         # When loading weights, segment them according to TP
-        weight_param.weight_loader = _quant_weight_loader
+        loader = functools.partial(_quant_weight_loader, head_size_v=layer.head_size_v)
+        weight_param.weight_loader = loader
+        offset_param.weight_loader = loader
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         vllm_config = get_current_vllm_config()
         target_dtype = vllm_config.model_config.dtype
+        offset = layer.v_cache_offset.data
+        if bool(offset.any()):
+            raise RuntimeError(
+                "[vllm-ascend/MXFP8_PER_CHANNEL] V cache offset is non-zero "
+                f"(min={float(offset.min())} max={float(offset.max())}), but the MXFP8 "
+                "per-channel scheme and the QuantFlashAttn operator are both symmetric. "
+                "This checkpoint was calibrated with an affine V quantizer and cannot be "
+                "served by this scheme."
+            )
         # A minmax calibrator emits 0 for a channel whose absmax was 0, and
         # 2^-127 there would make the quantization reciprocal 2^127 -- any
         # activation that is not exactly zero at inference would go to inf.
