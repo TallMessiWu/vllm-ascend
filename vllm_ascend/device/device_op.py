@@ -811,6 +811,13 @@ class BaseDeviceAdaptor:
         indices: torch.Tensor,
         value: int,
     ) -> torch.Tensor:
+        # 空 indices 在 CUDA 上是 no-op，但 aclnnInplaceIndexFill 会直接拒绝
+        # （EZ0015 "shape size must be greater than zero" / 561103）。调用方
+        # 传空是正常语义——例如 prepare_next_token_ids_padded 里
+        # discard_request_indices[:0]，即这一步没有请求需要作废——所以这里
+        # 按 no-op 处理，而不是让它崩在算子里。
+        if indices.numel() == 0:
+            return tensor
         tensor.index_fill_(dim, indices, value)
         return tensor
 

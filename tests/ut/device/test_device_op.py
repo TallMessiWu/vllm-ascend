@@ -182,3 +182,32 @@ def test_a5_npu_flash_attention_uses_python_sequence_lengths():
     assert call_kwargs["actual_seq_qlen"] == [2, 5]
     assert all(isinstance(seq_len, int) for seq_len in call_kwargs["actual_seq_qlen"])
     assert call_kwargs["actual_seq_kvlen"] is call_kwargs["actual_seq_qlen"]
+
+
+def test_index_fill_with_empty_indices_is_noop():
+    # 空 indices 在 CUDA 上是 no-op，但 aclnnInplaceIndexFill 会拒绝
+    # （EZ0015 "shape size must be greater than zero"）。调用方传空是正常语义：
+    # prepare_next_token_ids_padded 里 discard_request_indices[:0] 表示这一步
+    # 没有请求需要作废，不该让整个 worker 崩在算子里。
+    tensor = torch.arange(6, dtype=torch.int32).reshape(3, 2)
+    original = tensor.clone()
+    empty_indices = torch.empty(0, dtype=torch.long)
+
+    with mock.patch.object(torch.Tensor, "index_fill_") as mock_index_fill:
+        result = BaseDeviceAdaptor.index_fill(tensor, 0, empty_indices, -1)
+
+    mock_index_fill.assert_not_called()
+    assert result is tensor
+    assert torch.equal(tensor, original)
+
+
+def test_index_fill_with_non_empty_indices_still_fills():
+    tensor = torch.arange(6, dtype=torch.int32).reshape(3, 2)
+    indices = torch.tensor([0, 2], dtype=torch.long)
+
+    result = BaseDeviceAdaptor.index_fill(tensor, 0, indices, -1)
+
+    assert result is tensor
+    assert torch.equal(result[0], torch.tensor([-1, -1], dtype=torch.int32))
+    assert torch.equal(result[2], torch.tensor([-1, -1], dtype=torch.int32))
+    assert torch.equal(result[1], torch.tensor([2, 3], dtype=torch.int32))
