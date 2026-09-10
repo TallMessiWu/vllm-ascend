@@ -811,6 +811,13 @@ class BaseDeviceAdaptor:
         indices: torch.Tensor,
         value: int,
     ) -> torch.Tensor:
+        # 空 indices 在 CUDA 上是 no-op，但 aclnnInplaceIndexFill 会直接拒绝
+        # （EZ0015 "shape size must be greater than zero" / 561103）。调用方
+        # 传空是正常语义——例如 prepare_next_token_ids_padded 里
+        # discard_request_indices[:0]，即这一步没有请求需要作废——所以这里
+        # 按 no-op 处理，而不是让它崩在算子里。
+        if indices.numel() == 0:
+            return tensor
         tensor.index_fill_(dim, indices, value)
         return tensor
 
@@ -902,6 +909,12 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
         act_quant_type: torch.dtype | None = None,
     ):
         input_dtype = act_quant_type or hidden_states.dtype
+        # On A5, float8_e4m3fn must be passed as x_dtype for MXFP8 quant.
+        # QUANT_DTYPES only contains the special quantized dtypes used by
+        # the generic path, so handle float8_e4m3fn explicitly here.
+        x_dtype = input_dtype if input_dtype in QUANT_DTYPES else None
+        if x_dtype is None and input_dtype == torch.float8_e4m3fn:
+            x_dtype = input_dtype
         return torch_npu.npu_moe_init_routing_v2(
             hidden_states,
             topk_ids,
@@ -912,7 +925,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
             expert_tokens_num_flag=expert_tokens_num_flag,
             active_expert_range=active_expert_range,
             quant_mode=quant_mode,
-            x_dtype=input_dtype if input_dtype in QUANT_DTYPES else None,
+            x_dtype=x_dtype,
         )
 
     @staticmethod

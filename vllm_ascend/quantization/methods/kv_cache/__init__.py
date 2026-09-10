@@ -17,9 +17,11 @@
 """KV cache quantization methods for Ascend NPU."""
 
 from .kv_c8 import AscendC8KVCacheAttentionMethod, AscendFAQuantAttentionMethod, AscendSFAQuantAttentionMethod
+from .mxfp_c8 import AscendC8MXFPKVCacheAttentionMethod
 
 __all__ = [
     "AscendC8KVCacheAttentionMethod",
+    "AscendC8MXFPKVCacheAttentionMethod",
     "AscendFAQuantAttentionMethod",
     "AscendSFAQuantAttentionMethod",
 ]

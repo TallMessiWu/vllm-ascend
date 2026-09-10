@@ -51,6 +51,7 @@
 #include "attention/recurrent_gated_delta_rule_v310/recurrent_gated_delta_rule_310_torch_adpt.h"
 #include "attention/k2q_csr/k2q_csr_torch_adpt.h"
 #include "attention/msa_index_score/msa_index_score_torch_adpt.h"
+#include "attention/quant_flash_attn/quant_flash_attn_torch_adpt.h"
 #include "attention/sparse_attention_score/sparse_attention_score_torch_adpt.h"
 #include "attention/store_kv_block/store_kv_block_torch_adpt.h"
 #include "attention/store_kv_block_metadata/store_kv_block_metadata_torch_adpt.cpp"
@@ -2234,6 +2235,64 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("npu_kv_quant_sparse_flash_attention", torch::kPrivateUse1,
              &vllm_ascend::npu_kv_quant_sparse_flash_attention);
+
+    // Vendored ops-transformer QuantFlashAttn (arch35 / A5 only). The AICPU
+    // metadata op must run first with an argument set identical to the main
+    // op's; the kernel does no cross-call validation.
+    ops.def(
+        "npu_quant_flash_attn_metadata(int num_heads_q, int num_heads_kv, int head_dim,"
+        "                              int quant_mode, *,"
+        "                              Tensor? cu_seqlens_q=None, Tensor? cu_seqlens_kv=None,"
+        "                              Tensor? seqused_q=None, Tensor? seqused_kv=None,"
+        "                              Tensor? v_descale=None, int? batch_size=None,"
+        "                              int max_seqlen_q=-1, int max_seqlen_kv=-1,"
+        "                              int mask_mode=0, int win_left=-1, int win_right=-1,"
+        "                              str layout_q='BSND', str layout_q_descale='BSND',"
+        "                              str layout_kv='BSND', str layout_out='BSND') -> Tensor"
+    );
+    ops.impl("npu_quant_flash_attn_metadata", torch::kPrivateUse1,
+             &vllm_ascend::npu_quant_flash_attn_metadata);
+
+    ops.def(
+        "npu_quant_flash_attn(Tensor q, Tensor k, Tensor v,"
+        "                     Tensor q_descale, Tensor k_descale, Tensor v_descale,"
+        "                     int quant_mode, *,"
+        "                     Tensor? block_table=None, Tensor? p_scale=None,"
+        "                     Tensor? cu_seqlens_q=None, Tensor? cu_seqlens_kv=None,"
+        "                     Tensor? seqused_q=None, Tensor? seqused_kv=None,"
+        "                     Tensor? sinks=None, Tensor? attn_mask=None, Tensor? metadata=None,"
+        "                     float softmax_scale=1.0, int mask_mode=0,"
+        "                     int win_left=-1, int win_right=-1,"
+        "                     int max_seqlen_q=-1, int max_seqlen_kv=-1,"
+        "                     str layout_q='BSND', str layout_q_descale='BSND',"
+        "                     str layout_kv='BSND', str layout_out='BSND',"
+        "                     bool return_softmax_lse=False)"
+        " -> (Tensor attn_out, Tensor softmax_lse)"
+    );
+    ops.impl("npu_quant_flash_attn", torch::kPrivateUse1, &vllm_ascend::npu_quant_flash_attn);
+
+    // The .out overload exists so a captured call can be re-issued through
+    // torch.npu.graph_task_update, which needs the outputs to be the caller's
+    // (and therefore the graph's). aclnnQuantFlashAttn always took them as
+    // inputs -- see quant_flash_attn_torch_adpt.h.
+    ops.def(
+        "npu_quant_flash_attn.out(Tensor q, Tensor k, Tensor v,"
+        "                         Tensor q_descale, Tensor k_descale, Tensor v_descale,"
+        "                         int quant_mode, *,"
+        "                         Tensor? block_table=None, Tensor? p_scale=None,"
+        "                         Tensor? cu_seqlens_q=None, Tensor? cu_seqlens_kv=None,"
+        "                         Tensor? seqused_q=None, Tensor? seqused_kv=None,"
+        "                         Tensor? sinks=None, Tensor? attn_mask=None, Tensor? metadata=None,"
+        "                         float softmax_scale=1.0, int mask_mode=0,"
+        "                         int win_left=-1, int win_right=-1,"
+        "                         int max_seqlen_q=-1, int max_seqlen_kv=-1,"
+        "                         str layout_q='BSND', str layout_q_descale='BSND',"
+        "                         str layout_kv='BSND', str layout_out='BSND',"
+        "                         bool return_softmax_lse=False,"
+        "                         Tensor(a!) attn_out, Tensor(b!) softmax_lse)"
+        " -> (Tensor(a!), Tensor(b!))"
+    );
+    ops.impl("npu_quant_flash_attn.out", torch::kPrivateUse1, &vllm_ascend::npu_quant_flash_attn_out);
 
     ops.def(
         "dispatch_ffn_combine(Tensor x, Tensor[] weight1, Tensor[] weight2, Tensor expert_idx,"
