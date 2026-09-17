@@ -2547,6 +2547,9 @@ class NPUModelRunner(GPUModelRunner):
             hidden_states = self._model_forward(
                 num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds, **model_kwargs
             )
+            from vllm_ascend.attention.qfa_len_probe import record_qfa_lengths
+
+            record_qfa_lengths([attn_metadata], is_draft_model=False, graph_mode=cudagraph_mode)
             self._cpp_execution_time_ms = _finish_profiling_chunk_timing(
                 profiling_chunk_config,
                 execution_start_time,

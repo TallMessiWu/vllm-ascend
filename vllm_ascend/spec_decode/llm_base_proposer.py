@@ -1220,6 +1220,9 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             else:
                 draft_token_ids = run_draft()
                 self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+            from vllm_ascend.attention.qfa_len_probe import record_qfa_lengths
+
+            record_qfa_lengths(multi_steps_attn_metadata, is_draft_model=True, graph_mode=aclgraph_runtime_mode)
         if active_device_metadata_executor is not None:
             active_device_metadata_executor.release()
         return draft_token_ids

@@ -87,6 +87,9 @@ env_variables: dict[str, Callable[[], Any]] = {
     # (safe for Ascend 910B/A3). Set to a positive value to override when
     # auto-detection is unavailable or for debugging UB overflow issues.
     "VLLM_ASCEND_ROPE_UB_SIZE_KB": lambda: int(os.getenv("VLLM_ASCEND_ROPE_UB_SIZE_KB") or 0),
+    # Debug branch only (debug-qfa-kv-lens): a directory to append one JSON
+    # line per QFA call's cu_seqlens_q / seqused_kv to. Unset (default) is off.
+    "VLLM_ASCEND_QFA_LEN_DUMP": lambda: os.getenv("VLLM_ASCEND_QFA_LEN_DUMP", None),
 }
 
 # end-env-vars-definition
