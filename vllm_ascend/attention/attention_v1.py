@@ -15,6 +15,7 @@
 # This file is a part of the vllm-ascend project.
 #
 
+import inspect
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -2386,12 +2387,18 @@ def _build_qfa_cu_seqlens(cumulative_seq_lengths: list[int], device: torch.devic
 
 # Resolved lazily and cached: (main_op, metadata_op). The QFA dual operators
 # are delivered through the cann_ops_transformer package shipped with the
-# CANN toolkit (confirmed final delivery form). That wrapper's call shape
-# (verified on-device): positional q/k/v/q_descale/k_descale/v_descale/
-# quant_mode, p_scale instead of quant_scale_p, an extra layout_q_descale,
-# no pa_block_size, and a required non-null v_descale placeholder on the
-# metadata call for quant_mode=1 (batch_size must not be passed with a TND
-# layout_q; the op infers it from cu_seqlens_q).
+# CANN toolkit. Call shape of the delivery this backend targets (operator
+# doc torchapi_quant_flash_attn.md):
+#   metadata: (num_heads_q, num_heads_kv, head_dim, quant_mode) positional,
+#     then keyword-only cu_seqlens_*/seqused_*/batch_size/max_seqlen_*/
+#     head_dim_v/mask_mode/win_*/layout_*/is_grad_enabled. It takes NO
+#     v_descale, and it allocates and returns the metadata tensor itself.
+#   main: q/k/v/q_descale/k_descale/v_descale/quant_mode positional (v_descale
+#     is still the V scale cache's entry point here), everything else
+#     keyword-only, p_scale instead of quant_scale_p, no pa_block_size and no
+#     head_dim_v.
+# batch_size must not be passed with a TND layout_q; the op infers it from
+# cu_seqlens_q.
 # Graph capture: torch_npu's npugraph_ex backend (the mechanism this vLLM
 # build uses for FULL graphs, confirmed in the on-device capture stack)
 # captures the ALLOCATING wrapper directly -- internal at::empty allocations
@@ -2417,8 +2424,50 @@ def _get_qfa_ops() -> tuple[Any, Any]:
                 "cann_ops_transformer.ops.quant_flash_attn(_metadata) could not "
                 "be imported in this environment."
             ) from None
+        _assert_qfa_delivery(metadata_op)
         _QFA_OPS = (main_op, metadata_op)
     return _QFA_OPS
+
+
+def _assert_qfa_delivery(metadata_op: Any) -> None:
+    """Refuse a delivery this call site is no longer written for.
+
+    The metadata op dropped ``v_descale`` and gained ``head_dim_v`` /
+    ``is_grad_enabled``. In the same change its output stopped being a
+    fixed-size scratch buffer and became ``(2, max_schedule_size)``, sized
+    ``16 + (aic + aiv) * 16 * batch * num_heads_kv`` -- it now grows with the
+    batch, and MXFP8 additionally turns FlashDecode on, which claims the AIV
+    half of that buffer.
+
+    Mixing the halves is why this raises instead of adapting. An older wrapper
+    allocates the fixed buffer while a newer AICPU kernel writes the derived
+    one; the kernel's own capacity check is skipped when the shape attrs are
+    absent, so the overrun goes straight to an AICPU abort inside
+    QuantFlashAttnMetadata. That abort takes the device with it: every later op
+    on the stream fails with 507018 and the Python traceback points at whatever
+    happened to run next (GDN, SwiGlu, Cumsum), never at QFA. Fail here, while
+    the cause is still legible.
+    """
+    try:
+        params = inspect.signature(metadata_op).parameters
+    except (TypeError, ValueError):
+        return  # opaque wrapper: nothing to inspect, let the call itself speak
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return
+    if "v_descale" in params:
+        raise RuntimeError(
+            "The installed cann_ops_transformer.quant_flash_attn_metadata still "
+            "declares v_descale, i.e. it predates the delivery this backend "
+            "targets. Upgrade cann_ops_transformer and the CANN operator library "
+            "TOGETHER -- a new kernel with an old wrapper corrupts the metadata "
+            "buffer and aborts the AICPU."
+        )
+    missing = [k for k in ("head_dim_v", "is_grad_enabled") if k not in params]
+    if missing:
+        raise RuntimeError(
+            f"The installed cann_ops_transformer.quant_flash_attn_metadata does not "
+            f"declare {missing}; this backend requires the delivery that added them."
+        )
 
 
 class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
@@ -2470,13 +2519,12 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
     buffers in place before each draft-step replay.
 
     NOTE: the QFA dual operators are called through _get_qfa_ops(), which
-    resolves cann_ops_transformer.ops.quant_flash_attn(_metadata) -- the
-    confirmed final delivery form, shipped with the CANN toolkit. That
-    wrapper's signature (verified on-device via inspect + the vendored-QFA
-    bring-up) differs from the requirement doc's torch_npu example: positional
-    q_descale/k_descale/v_descale/quant_mode, p_scale instead of
-    quant_scale_p, an extra layout_q_descale, no pa_block_size, and a
-    required v_descale placeholder on the metadata call for quant_mode=1.
+    resolves cann_ops_transformer.ops.quant_flash_attn(_metadata) and gates on
+    the delivery's signature (_assert_qfa_delivery). Both differ from the
+    requirement doc's torch_npu example: positional
+    q_descale/k_descale/v_descale/quant_mode on the main op, p_scale instead of
+    quant_scale_p, an extra layout_q_descale and no pa_block_size. The metadata
+    op takes no v_descale at all and sizes its own output from the batch.
     """
 
     # Installed via ``layer.impl.__class__`` assignment, which does not call
@@ -2565,40 +2613,12 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
             cache["k_scale_slots"] = slot_index
         return slot_index
 
-    @staticmethod
-    def _qfa_v_descale_placeholder(value_scale_cache: torch.Tensor) -> torch.Tensor:
-        """The v_descale the metadata op insists on, without allocating one.
-
-        quant_mode=1 refuses a null v_descale at the aclnn entry
-        (quant_flash_attn_metadata_check.h), but under PA_NZ nothing reads
-        it, so a minimal 6-D E8M0 tensor is all it takes. That used to be a
-        ``torch.zeros`` inside the step, and an allocation in a captured
-        region records its zero-fill as a graph node that every replay runs
-        again. The first two bytes of the layer's own V scale cache serve
-        just as well: a view launches nothing, the cache exists before any
-        capture -- draft layers included, which a lazily built stub would not
-        be able to promise -- and its address is the one the main operator
-        already reads in the same graph.
-
-        ``view(-1)`` rather than ``flatten()``: a cache that ever stopped
-        being contiguous should fail here, not start copying in the step.
-
-        NOTE: torch_npu.float8_e8m0fnu is the integer dtype ID (293) on this
-        torch_npu build, not a torch.dtype; tensor.view() would parse it as a
-        target shape. Bitcast with the stock torch dtype instead.
-        """
-        placeholder = value_scale_cache.view(-1)[:2].view(1, 1, 1, 1, 1, 2)
-        if placeholder.dtype != torch.float8_e8m0fnu:
-            placeholder = placeholder.view(torch.float8_e8m0fnu)
-        return placeholder
-
     def _get_qfa_metadata(
         self,
         attn_metadata: AscendMetadata,
         *,
         cu_seqlens_q: torch.Tensor,
         seqused_kv: torch.Tensor,
-        value_scale_cache: torch.Tensor,
         max_seqlen_q: int,
         mask_mode: int,
         layout_q_descale: str,
@@ -2644,7 +2664,14 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
             # TND + PA: pass cu_seqlens_q only; the KV side is addressed via
             # block_table + seqused_kv (QFA requirement doc, 3.2.3).
             # batch_size must NOT be passed with a TND layout_q (the checker
-            # rejects it); the op infers it from cu_seqlens_q.
+            # rejects it); the op infers it from cu_seqlens_q -- which is also
+            # what sizes the plan, since the buffer the op allocates for itself
+            # grows with the batch.
+            # head_dim_v: C8_MXFP allocates K and V with the same per-head dim
+            # (mxfp_resolve_kv_cache_layout takes both from the KVCacheSpec and
+            # this backend's head_size is that dim), so V's is head_size too.
+            # Passing it explicitly rather than leaving the default keeps the
+            # attr off the operator's own inference path.
             _, metadata_op = _get_qfa_ops()
             metadata = metadata_op(
                 self.num_heads,
@@ -2655,9 +2682,9 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
                 cu_seqlens_kv=None,
                 seqused_q=None,
                 seqused_kv=seqused_kv,
-                v_descale=self._qfa_v_descale_placeholder(value_scale_cache),
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_kv=-1,
+                head_dim_v=self.head_size,
                 mask_mode=mask_mode,
                 win_left=-1,
                 win_right=-1,
@@ -2665,6 +2692,7 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
                 layout_q_descale=layout_q_descale,
                 layout_kv=QFA_LAYOUT_PA_NZ,
                 layout_out=QFA_LAYOUT_TND,
+                is_grad_enabled=False,
             )
             cache[plan_key] = metadata
         return metadata
@@ -2892,7 +2920,6 @@ class AscendC8MXFPAttentionBackendImpl(AscendAttentionBackendImpl):
             attn_metadata,
             cu_seqlens_q=cu_seqlens_q,
             seqused_kv=seqused_kv,
-            value_scale_cache=kv_cache[3],
             max_seqlen_q=max_seqlen_q,
             mask_mode=mask_mode,
             layout_q_descale=layout_q_descale,
