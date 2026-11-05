@@ -223,6 +223,9 @@ class NVFP4A4Tests(unittest.TestCase):
         self.assertIsNone(scale)
         self.assertTrue(torch.equal(moe_layer.w13_weight, before))
         self.assertTrue(torch.equal(inputs.hidden_states, x))
+        moe_layer.ascend_expert_map = torch.tensor([1, 0])
+        with self.assertRaisesRegex(ValueError, "identity expert placement"):
+            moe.process_weights_after_loading(moe_layer)
 
     def test_config_routes_targets_and_rejects_unsupported_runtime_without_mutating_carrier(self):
         registry = {}

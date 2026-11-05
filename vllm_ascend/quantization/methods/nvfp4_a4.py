@@ -3,7 +3,7 @@
 """NVFP4 A4 QDQ at real Ascend dense/expert GEMM boundaries.
 
 Buffers are created by process_weights_after_loading, before warmup/capture.
-No weight quantization, runner patch, CPU synchronization or per-step Python state.
+No weight quantization, runner patch, forward-path CPU synchronization or per-step Python state.
 """
 
 from dataclasses import replace
@@ -37,6 +37,10 @@ class NVFP4A4LinearMethod(AscendUnquantizedLinearMethod):
 
 
 class NVFP4A4MoEMethod(AscendUnquantizedFusedMoEMethod):
+    @property
+    def supports_eplb(self) -> bool:
+        return False
+
     def __init__(self, moe, gate_up_scales: list[float], down_scales: list[float]):
         super().__init__(moe=moe)
         self.gate_up_scales = gate_up_scales
@@ -49,6 +53,12 @@ class NVFP4A4MoEMethod(AscendUnquantizedFusedMoEMethod):
             raise ValueError("NVFP4 A4 requires identity single-rank logical expert placement")
 
     def process_weights_after_loading(self, layer):
+        mapping = getattr(layer, "ascend_expert_map", None)
+        if mapping is not None:
+            # One-time load-stage check, before capture; never inspect device values in forward.
+            expected = torch.arange(len(self.gate_up_scales), dtype=torch.int64, device="cpu")
+            if not torch.equal(mapping.detach().to(device="cpu", dtype=torch.int64), expected):
+                raise ValueError("NVFP4 A4 requires identity expert placement; calibration must not be misassigned")
         super().process_weights_after_loading(layer)
         device = layer.w13_weight.device
         layer.register_buffer(
