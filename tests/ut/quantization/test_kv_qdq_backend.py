@@ -1,0 +1,202 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Huawei Technologies Co., Ltd. All Rights Reserved.
+"""Test the backend seam with real QDQ math and a fake cache-writer parent.
+
+Does not import real vLLM/Ascend runtime, torch_npu, or test any hardware kernel.
+"""
+
+import ast
+import importlib
+import importlib.util
+import sys
+import types
+import unittest
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import patch
+
+import torch
+
+ROOT = Path(__file__).resolve().parents[3]
+package = types.ModuleType("kv_qdq_backend_numerics")
+package.__path__ = [str(ROOT / "vllm_ascend/quantization")]
+sys.modules[package.__name__] = package
+codec = importlib.import_module(package.__name__ + ".kv_fp4")
+config = importlib.import_module(package.__name__ + ".kv_qdq_config")
+
+
+class CacheWriterParent:
+    def __init__(
+        self,
+        num_heads,
+        head_size,
+        scale,
+        num_kv_heads,
+        alibi_slopes,
+        sliding_window,
+        kv_cache_dtype,
+        logits_soft_cap,
+        attn_type,
+        kv_sharing_target_layer_name,
+        **kwargs,
+    ):
+        self.num_heads, self.head_size, self.num_kv_heads = num_heads, head_size, num_kv_heads
+
+    def reshape_and_cache(self, query, key, value, kv_cache, attn_metadata, output):
+        kv_cache[0].copy_(key)
+        kv_cache[1].copy_(value)
+        return query, key, value, output
+
+    def do_kv_cache_update(self, layer, key, value, kv_cache, slot_mapping):
+        kv_cache[0].copy_(key)
+        kv_cache[1].copy_(value)
+
+
+def load_backend(target="kv", name="g16-b"):
+    runtime = NS(
+        model_config=NS(dtype=torch.bfloat16, hf_config=NS(model_type="qwen3_moe")),
+        cache_config=NS(cache_dtype="bfloat16", enable_prefix_caching=False),
+        parallel_config=NS(
+            tensor_parallel_size=1,
+            data_parallel_size=1,
+            pipeline_parallel_size=1,
+            prefill_context_parallel_size=1,
+            decode_context_parallel_size=1,
+        ),
+        lora_config=None,
+        speculative_config=None,
+        kv_transfer_config=None,
+        quant_config=None,
+        additional_config={"kv_fp4_qdq": {"format": name, "target": target}},
+    )
+    modules = {
+        "vllm.config": NS(get_current_vllm_config=lambda: runtime),
+        "vllm.logger": NS(logger=NS(info_once=lambda *a, **kw: None)),
+        "vllm_ascend.attention.attention_v1": NS(
+            AscendAttentionBackend=type("Backend", (), {}), AscendAttentionBackendImpl=CacheWriterParent
+        ),
+        "vllm_ascend.quantization.kv_fp4": codec,
+        "vllm_ascend.quantization.kv_qdq_config": config,
+    }
+    source = ROOT / "vllm_ascend/attention/kv_fp4_qdq.py"
+    spec = importlib.util.spec_from_file_location("kv_qdq_backend_under_test", source)
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, modules):
+        spec.loader.exec_module(module)
+    return module
+
+
+class KVQDQBackendTests(unittest.TestCase):
+    def create(self, target):
+        module = load_backend(target)
+        return module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+
+    def test_cache_writer_and_direct_prefill_receive_identical_qdq_values(self):
+        q = torch.randn(2, 2, 16).bfloat16()
+        k = torch.full((2, 1, 16), 0.75, dtype=torch.bfloat16)
+        k[:, :, -1] = 6
+        v = -k
+        k_before, v_before = k.clone(), v.clone()
+        expected_k = codec.qdq_fp4(k, codec.FP4Recipe(16, "bf16"))
+        expected_v = codec.qdq_fp4(v, codec.FP4Recipe(16, "bf16"))
+        for target in ("off", "k", "v", "kv"):
+            backend = self.create(target)
+            cache = [torch.zeros_like(k), torch.zeros_like(v)]
+            output = torch.empty_like(q)
+            out_q, out_k, out_v, out = backend.reshape_and_cache(q, k, v, cache, NS(), output)
+            self.assertIs(out_q, q)
+            self.assertIs(out, output)
+            torch.testing.assert_close(out_k, expected_k if target in ("k", "kv") else k, rtol=0, atol=0)
+            torch.testing.assert_close(out_v, expected_v if target in ("v", "kv") else v, rtol=0, atol=0)
+            torch.testing.assert_close(cache[0], out_k, rtol=0, atol=0)
+            torch.testing.assert_close(cache[1], out_v, rtol=0, atol=0)
+            if target == "off":
+                self.assertIs(out_k, k)
+                self.assertIs(out_v, v)
+        torch.testing.assert_close(k, k_before, rtol=0, atol=0)
+        torch.testing.assert_close(v, v_before, rtol=0, atol=0)
+
+    def test_split_writer_consumes_changed_inputs_instead_of_cached_values(self):
+        backend = self.create("kv")
+        k = torch.full((1, 1, 16), 0.75, dtype=torch.bfloat16)
+        k[:, :, -1] = 6
+        cache = [torch.zeros_like(k), torch.zeros_like(k)]
+        for factor in (1.0, 2.3, 0.0, -0.7):
+            value = k * factor
+            backend.do_kv_cache_update(None, value, -value, cache, torch.tensor([0]))
+            expected = codec.qdq_fp4(value, codec.FP4Recipe(16, "bf16"))
+            torch.testing.assert_close(cache[0], expected, rtol=0, atol=0)
+            torch.testing.assert_close(cache[1], -expected, rtol=0, atol=0)
+
+    def test_large_noncontiguous_prefill_keeps_group_boundaries_when_tiled(self):
+        backend = self.create("kv")
+        k = torch.randn(1033, 1, 32).bfloat16()[..., ::2]
+        v = -k
+        self.assertFalse(k.is_contiguous())
+        q = torch.zeros(1033, 2, 16, dtype=torch.bfloat16)
+        cache = [torch.zeros_like(k), torch.zeros_like(v)]
+        backend.reshape_and_cache(q, k, v, cache, NS(causal=True), q.clone())
+        for original, actual in zip((k, v), cache):
+            torch.testing.assert_close(actual, codec.qdq_fp4(original, codec.FP4Recipe(16, "bf16")), rtol=0, atol=0)
+        with self.assertRaises(ValueError):
+            backend.reshape_and_cache(q, k, v, cache, NS(causal=False), q.clone())
+
+    def test_unsupported_attention_and_wrong_tensor_layout_fail_before_writing(self):
+        module = load_backend()
+        args = [2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None]
+        for index, value in ((4, [0.1, 0.2]), (5, 128), (6, "fp8"), (7, 1.0), (8, "encoder"), (9, "shared")):
+            bad = list(args)
+            bad[index] = value
+            with self.assertRaises(ValueError):
+                module.AscendKVFP4QDQImpl(*bad)
+        with self.assertRaises(ValueError):
+            module.AscendKVFP4QDQImpl(*args, sinks=torch.ones(2))
+        backend = self.create("kv")
+        q = torch.zeros(2, 2, 16, dtype=torch.bfloat16)
+        k = torch.ones(2, 1, 16, dtype=torch.bfloat16)
+        for bad in (k.float(), k[:, :, :8], k.reshape(2, 16), k.expand(2, 2, 16)):
+            cache = [torch.zeros_like(k), torch.zeros_like(k)]
+            with self.assertRaises(ValueError):
+                backend.reshape_and_cache(q, bad, k, cache, NS(), q.clone())
+            self.assertEqual(cache[0].count_nonzero().item(), 0)
+
+    def test_real_platform_selector_is_opt_in_and_rejects_other_attention_families(self):
+        # Exercise the actual selector method without importing NPU platform setup.
+        tree = ast.parse((ROOT / "vllm_ascend/platform.py").read_text())
+        method = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_select_attn_backend_cls"
+        )
+        method.decorator_list = []
+        node = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
+        current = [None]
+        patcher = patch.dict(sys.modules, {"vllm.config": NS(get_current_vllm_config_or_none=lambda: current[0])})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        hardware = NS(attention_backend_family="standard")
+        namespace = {
+            "get_current_hardware_profile": lambda: hardware,
+            "AttentionBackendFamily": NS(COMPATIBILITY="compatibility"),
+            "_validate_fa3_backend": lambda *a: False,
+            "_validate_flash_attn_backend": lambda *a: False,
+        }
+        exec(compile(node, "actual_platform_selector", "exec"), namespace)
+        select = namespace["_select_attn_backend_cls"]
+        selector = NS(use_mla=False, use_sparse=False, use_compress=False, use_pcp=False)
+        self.assertEqual(select(None, selector), "vllm_ascend.attention.attention_v1.AscendAttentionBackend")
+        # Existing PCP capability lookup must not acquire a new singleton-init requirement.
+        pcp = NS(**{**vars(selector), "use_pcp": True})
+        self.assertEqual(select(None, pcp), "vllm_ascend.attention.attention_v1.AscendAttentionBackend")
+        current[0] = NS(additional_config={"kv_fp4_qdq": {"format": "mx4", "target": "kv"}})
+        self.assertEqual(select(None, selector), "vllm_ascend.attention.kv_fp4_qdq.AscendKVFP4QDQBackend")
+        for name in ("use_mla", "use_sparse", "use_compress", "use_pcp"):
+            changed = NS(**vars(selector))
+            setattr(changed, name, True)
+            with self.assertRaises(ValueError):
+                select(None, changed)
+        hardware.attention_backend_family = "compatibility"
+        with self.assertRaises(ValueError):
+            select(None, selector)
+
+
+if __name__ == "__main__":
+    unittest.main()

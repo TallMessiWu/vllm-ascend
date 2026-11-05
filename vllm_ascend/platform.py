@@ -312,6 +312,21 @@ class NPUPlatform(Platform):
 
     @classmethod
     def _select_attn_backend_cls(cls, attn_selector_config) -> str:
+        # Config can be absent for ordinary capability/PCP lookups. Read this
+        # experiment only from the active context, not a stale Ascend singleton.
+        from vllm.config import get_current_vllm_config_or_none
+
+        current_config = get_current_vllm_config_or_none()
+        additional = getattr(current_config, "additional_config", None)
+        if isinstance(additional, dict) and additional.get("kv_fp4_qdq") is not None:
+            if get_current_hardware_profile().attention_backend_family is AttentionBackendFamily.COMPATIBILITY:
+                raise ValueError("KV QDQ reference does not support the compatibility attention backend")
+            if any(
+                getattr(attn_selector_config, name, False)
+                for name in ("use_mla", "use_sparse", "use_compress", "use_pcp")
+            ):
+                raise ValueError("KV QDQ reference supports local dense GQA only")
+            return "vllm_ascend.attention.kv_fp4_qdq.AscendKVFP4QDQBackend"
         use_compress = getattr(attn_selector_config, "use_compress", False)
         use_mla = attn_selector_config.use_mla
         use_sparse = attn_selector_config.use_sparse

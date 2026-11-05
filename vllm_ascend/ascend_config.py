@@ -425,6 +425,7 @@ class AscendConfig:
         {
             "refresh": false,
             "enable_cpu_binding": true,
+            "kv_fp4_qdq": null,
             "multistream_dsv4_dsa_overlap": true,
             "multistream_engram_overlap": true,
             "enable_prefill_mc2": false,
@@ -567,6 +568,8 @@ class AscendConfig:
 
     # ---- user-input switches: bool/int/list/str, auto type validation ----
     enable_cpu_binding: bool = True
+    # Experimental fixed-recipe KV QDQ; no native low-bit storage. None leaves selection unchanged.
+    kv_fp4_qdq: dict[str, Any] | None = None
     multistream_dsv4_dsa_overlap: bool = True
     # Prepare Engram hashes, lookups and DP/TP exchanges on an auxiliary stream;
     # FULL graphs wait on descriptor-specific external events at consumers.
@@ -686,6 +689,13 @@ class AscendConfig:
     # the max_num_batched_tokens that sequence-parallel writeback corrected).
     def derive_and_validate(self, vllm_config: VllmConfig) -> AscendConfig:
         vc = vllm_config
+        if self.kv_fp4_qdq is not None:
+            from vllm_ascend.quantization.kv_qdq_config import parse_kv_qdq, validate_kv_qdq_runtime
+
+            parse_kv_qdq(self.kv_fp4_qdq)
+            validate_kv_qdq_runtime(vc)
+            if self.enable_force_eplb or self.eplb_config.dynamic_eplb:
+                raise ValueError("KV QDQ reference requires fixed, non-forced expert routing")
         engram_config = getattr(vc, "engram_config", None)
         if (
             engram_config is not None
