@@ -112,6 +112,7 @@ class NPUPlatform(Platform):
         "deepseek_v4_fp8",
         "modelopt_mxfp8",
         "mxfp8",
+        "nvfp4_a4_qdq",
     ]
 
     @property
@@ -388,8 +389,9 @@ class NPUPlatform(Platform):
         if parser is not None:
             quant_action = parser._option_string_actions.get("--quantization")
             if quant_action and hasattr(quant_action, "choices") and quant_action.choices:
-                if ASCEND_QUANTIZATION_METHOD not in quant_action.choices:
-                    quant_action.choices.append(ASCEND_QUANTIZATION_METHOD)
+                for method in (ASCEND_QUANTIZATION_METHOD, "nvfp4_a4_qdq"):
+                    if method not in quant_action.choices:
+                        quant_action.choices.append(method)
             # Same pattern for --kv-cache-dtype: the argparse choices were
             # built from the upstream CacheDType Literal before this patch
             # widened it, so append the Ascend-only dtypes here.
@@ -407,6 +409,7 @@ class NPUPlatform(Platform):
                 AscendFp8Config,
                 AscendModelOptMxFp8Config,
                 AscendModelSlimConfig,
+                AscendNVFP4A4Config,
             )
         else:
             from vllm_ascend._310p.quantization import AscendModelSlimConfig310  # noqa: F401
