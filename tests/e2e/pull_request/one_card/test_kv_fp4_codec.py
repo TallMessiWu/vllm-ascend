@@ -8,6 +8,7 @@ allowed to stand in for device evidence. This is not a native FP4 cache backend.
 
 import os
 import unittest
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import torch
@@ -26,6 +27,53 @@ def recipes():
     )
 
 
+def e4m3_stages(x, recipe):
+    """Diagnostic re-execution only; never called inside capture/replay."""
+    group = recipe.group_size
+    padded = torch.nn.functional.pad(x.float(), (0, (-x.shape[-1]) % group))
+    blocks = padded.reshape(*x.shape[:-1], padded.shape[-1] // group, group)
+    amax = blocks.abs().amax(dim=-1)
+    raw = amax / (codec.FP4_MAX * recipe.outer_scale)
+    clipped = raw.clamp(min=codec.FP8_MIN, max=codec.FP8_MAX)
+    log2 = torch.log2(clipped)
+    step = torch.exp2((torch.floor(log2) - 3).clamp(min=-9))
+    round_input = clipped / step
+    rounded = torch.round(round_input)
+    scale = codec._e4m3_round(raw)
+    scale = torch.where(amax == 0, 1.0, scale)
+    combined = scale * recipe.outer_scale
+    normalized = blocks / combined.unsqueeze(-1)
+    return dict(
+        amax=amax,
+        raw=raw,
+        log2=log2,
+        step=step,
+        round_input=round_input,
+        rounded=rounded,
+        scale=scale,
+        combined=combined,
+        normalized=normalized,
+        codes=codec._codes(normalized),
+        scale_bytes=codec._scale_storage(scale, recipe),
+        round_ties=torch.round(torch.tensor([0.5, 1.5, 2.5, 12.5, -12.5], device=x.device)),
+    )
+
+
+def report_stage(name, actual, expected):
+    """Bounded output: at most four flat indices, including exact FP32 bits."""
+    actual, expected = actual.detach().cpu().flatten(), expected.detach().cpu().flatten()
+    actual_bits = actual.view(torch.int32) if actual.dtype == torch.float32 else actual
+    expected_bits = expected.view(torch.int32) if expected.dtype == torch.float32 else expected
+    indices = (actual_bits != expected_bits).nonzero().flatten()
+    selected = indices[:4].tolist() if indices.numel() else list(range(min(1, actual.numel())))
+    samples = [(i, actual[i].item(), expected[i].item(), int(actual_bits[i]), int(expected_bits[i])) for i in selected]
+    print(
+        f"DIAG {name}: bit_mismatches={indices.numel()}/{actual.numel()} "
+        f"samples(flat_index,device,cpu,device_bits,cpu_bits)={samples}",
+        flush=True,
+    )
+
+
 class KVFP4DeviceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -36,8 +84,32 @@ class KVFP4DeviceTests(unittest.TestCase):
         expected = root / "vllm_ascend/quantization/kv_fp4.py"
         if Path(codec.__file__).resolve() != expected:
             raise RuntimeError("Editable import does not match this test worktree; refusing mixed-source results")
-        print(f"implementation={codec.__file__}; torch={torch.__version__}")
+        print(f"implementation={codec.__file__}; torch={torch.__version__}", flush=True)
+        for package in ("torch-npu", "vllm", "vllm-ascend", "triton-ascend"):
+            try:
+                installed = version(package)
+            except PackageNotFoundError:
+                installed = "metadata unavailable"
+            print(f"runtime {package}={installed}", flush=True)
         torch.npu.set_device(0)
+        print(f"device={torch.npu.get_device_name(0)}", flush=True)
+
+    def setUp(self):
+        # Limit diagnostic volume to one trace per recipe per test method.
+        self.diagnosed_recipes = set()
+
+    def assert_matches(self, actual, expected, host, recipe):
+        try:
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        except AssertionError:
+            if recipe.scale_type == "e4m3" and recipe not in self.diagnosed_recipes:
+                self.diagnosed_recipes.add(recipe)
+                print(f"DIAG recipe={recipe}; outside-capture re-execution, not captured intermediates", flush=True)
+                cpu_stages = e4m3_stages(host, recipe)
+                device_stages = e4m3_stages(host.npu(), recipe)
+                for name, cpu_value in cpu_stages.items():
+                    report_stage(name, device_stages[name], cpu_value)
+            raise
 
     def test_packed_bytes_and_values_match_cpu(self):
         generator = torch.Generator().manual_seed(123)
@@ -48,10 +120,10 @@ class KVFP4DeviceTests(unittest.TestCase):
                     with self.subTest(shape=shape, dtype=dtype, recipe=recipe):
                         expected = codec.pack_fp4(host, recipe)
                         actual = codec.pack_fp4(host.npu(), recipe)
-                        torch.testing.assert_close(actual.data.cpu(), expected.data, rtol=0, atol=0)
-                        torch.testing.assert_close(actual.scales.cpu(), expected.scales, rtol=0, atol=0)
-                        torch.testing.assert_close(
-                            codec.unpack_fp4(actual, dtype).cpu(), codec.unpack_fp4(expected, dtype), rtol=0, atol=0
+                        self.assert_matches(actual.data.cpu(), expected.data, host, recipe)
+                        self.assert_matches(actual.scales.cpu(), expected.scales, host, recipe)
+                        self.assert_matches(
+                            codec.unpack_fp4(actual, dtype).cpu(), codec.unpack_fp4(expected, dtype), host, recipe
                         )
                         self.assertEqual(actual.payload_bytes, expected.payload_bytes)
 
@@ -62,7 +134,7 @@ class KVFP4DeviceTests(unittest.TestCase):
             with self.subTest(recipe=recipe):
                 actual = codec.qdq_fp4(host.npu(), recipe).cpu()
                 expected = codec.qdq_fp4(host, recipe)
-                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+                self.assert_matches(actual, expected, host, recipe)
                 torch.testing.assert_close(torch.signbit(actual), torch.signbit(expected), rtol=0, atol=0)
 
     def test_qdq_acl_replay_consumes_new_values(self):
@@ -84,8 +156,19 @@ class KVFP4DeviceTests(unittest.TestCase):
                     torch.npu.synchronize()
                     graph.replay()
                     torch.npu.synchronize()
+                    replay = result.cpu()
+                    # Evaluate eager AFTER replay; do not warm the changed input
+                    # before replay or inspect device values inside capture.
+                    eager = codec.qdq_fp4(x, recipe).cpu()
                     expected = codec.unpack_fp4(codec.pack_fp4(changed, recipe), host.dtype)
-                    torch.testing.assert_close(result.cpu(), expected, rtol=0, atol=0)
+                    for comparison, actual, reference in (
+                        ("replay_vs_eager", replay, eager),
+                        ("eager_vs_cpu", eager, expected),
+                        ("replay_vs_cpu", replay, expected),
+                    ):
+                        with self.subTest(factor=factor, comparison=comparison):
+                            print(f"CHECK recipe={recipe}; factor={factor}; comparison={comparison}", flush=True)
+                            self.assert_matches(actual, reference, changed, recipe)
 
     def test_nonfinite_inputs_are_not_silently_accepted(self):
         for recipe in recipes():

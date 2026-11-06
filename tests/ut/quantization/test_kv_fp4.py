@@ -3,12 +3,16 @@
 """CPU-only numerical contracts, without importing the framework/NPU runtime."""
 
 import importlib.util
+import io
 import math
 import struct
 import sys
+import types
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
@@ -206,6 +210,70 @@ class KVFP4Tests(unittest.TestCase):
                 expected = codec.unpack_fp4(codec.pack_fp4(x, recipe), x.dtype)
                 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
             torch._dynamo.reset()
+
+
+class KVFP4ReportTests(unittest.TestCase):
+    """CPU tests of diagnostic math/reporting, NOT the NPU test suite."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = SOURCE.parents[2] / "tests/e2e/pull_request/one_card/test_kv_fp4_codec.py"
+        spec = importlib.util.spec_from_file_location("kv_fp4_device_report_test", source)
+        cls.report = importlib.util.module_from_spec(spec)
+        quantization = types.ModuleType("vllm_ascend.quantization")
+        quantization.kv_fp4 = codec
+        # Never import torch_npu or the real framework on this CPU host.
+        with patch.dict(
+            sys.modules,
+            {
+                "torch_npu": types.ModuleType("torch_npu"),
+                "vllm_ascend": types.ModuleType("vllm_ascend"),
+                "vllm_ascend.quantization": quantization,
+            },
+        ):
+            spec.loader.exec_module(cls.report)
+
+    def test_stage_trace_matches_reference_and_exposes_scale_tie(self):
+        for group in (16, 32):
+            recipe = codec.FP4Recipe(group, "e4m3", 0.02)
+            x = torch.tensor([[0.25, 0.75, 5.0, 6.0] + [0.0] * 33])
+            stages = self.report.e4m3_stages(x, recipe)
+            self.assertEqual(stages["raw"][0, 0].item(), 50.0)
+            self.assertEqual(stages["round_input"][0, 0].item(), 12.5)
+            self.assertEqual(stages["scale"][0, 0].item(), 48.0)
+            self.assertEqual(stages["scale_bytes"][0, 0].item(), 100)
+            reconstructed = (codec._values(stages["codes"]) * stages["combined"].unsqueeze(-1)).flatten(-2)
+            torch.testing.assert_close(reconstructed[..., : x.shape[-1]], codec.qdq_fp4(x, recipe), rtol=0, atol=0)
+
+    def test_stage_report_is_bounded_and_retains_float_bits(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.report.report_stage("raw", torch.ones(10000), torch.zeros(10000))
+            self.report.report_stage("zero", torch.tensor([-0.0]), torch.tensor([0.0]))
+            self.report.report_stage("empty", torch.empty(0), torch.empty(0))
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn("bit_mismatches=10000/10000", lines[0])
+        self.assertIn("(3, 1.0, 0.0, 1065353216, 0)", lines[0])
+        self.assertNotIn("(4,", lines[0])
+        self.assertIn("bit_mismatches=1/1", lines[1])
+        self.assertIn("-2147483648", lines[1])
+        self.assertIn("samples(flat_index,device,cpu,device_bits,cpu_bits)=[]", lines[2])
+
+    def test_diagnostics_do_not_swallow_failure_or_repeat_recipe(self):
+        case = self.report.KVFP4DeviceTests()
+        case.setUp()
+        host = torch.ones(1, 16)
+        recipe = codec.FP4Recipe(16, "e4m3", 0.02)
+        output = io.StringIO()
+        with patch.object(torch.Tensor, "npu", lambda x: x, create=True), redirect_stdout(output):
+            case.assert_matches(host, host, host, recipe)
+            self.assertEqual(output.getvalue(), "")
+            for _ in range(2):
+                with self.assertRaises(AssertionError):
+                    case.assert_matches(host, host * 2, host, recipe)
+        self.assertEqual(output.getvalue().count("DIAG recipe="), 1)
+        self.assertLess(len(output.getvalue().splitlines()), 20)
 
 
 if __name__ == "__main__":
