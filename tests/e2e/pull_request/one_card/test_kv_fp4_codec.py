@@ -33,7 +33,7 @@ def e4m3_stages(x, recipe):
     padded = torch.nn.functional.pad(x.float(), (0, (-x.shape[-1]) % group))
     blocks = padded.reshape(*x.shape[:-1], padded.shape[-1] // group, group)
     amax = blocks.abs().amax(dim=-1)
-    raw = amax / (codec.FP4_MAX * recipe.outer_scale)
+    raw = codec._e4m3_scale_input(amax, recipe)
     clipped = raw.clamp(min=codec.FP8_MIN, max=codec.FP8_MAX)
     log2 = torch.log2(clipped)
     step = torch.exp2((torch.floor(log2) - 3).clamp(min=-9))
@@ -46,6 +46,7 @@ def e4m3_stages(x, recipe):
     return dict(
         amax=amax,
         raw=raw,
+        legacy_scalar_raw=amax / (codec.FP4_MAX * recipe.outer_scale),
         log2=log2,
         step=step,
         round_input=round_input,
@@ -110,6 +111,39 @@ class KVFP4DeviceTests(unittest.TestCase):
                 for name, cpu_value in cpu_stages.items():
                     report_stage(name, device_stages[name], cpu_value)
             raise
+
+    def test_e4m3_scale_midpoints_and_neighbors(self):
+        centers = torch.tensor([6.0, 1.5])
+        maxima = torch.stack(
+            (
+                torch.nextafter(centers, torch.zeros_like(centers)),
+                centers,
+                torch.nextafter(centers, torch.full_like(centers, float("inf"))),
+            ),
+            dim=-1,
+        ).flatten()
+        for group in (16, 32):
+            for outer_scale in (0.02, 0.03, 0.1, 1.0):
+                recipe = codec.FP4Recipe(group, "e4m3", outer_scale)
+                with self.subTest(recipe=recipe):
+                    expected_raw = maxima / torch.full_like(maxima, codec.FP4_MAX * recipe.outer_scale)
+                    device_maxima = maxima.npu()
+                    actual_raw = codec._e4m3_scale_input(device_maxima, recipe).cpu()
+                    if group == 16 and outer_scale == 0.02:
+                        legacy = device_maxima / (codec.FP4_MAX * recipe.outer_scale)
+                        report_stage("legacy_scalar_raw", legacy, expected_raw)
+                        report_stage("active_tensor_raw", actual_raw, expected_raw)
+                    torch.testing.assert_close(actual_raw, expected_raw, rtol=0, atol=0)
+                    host = maxima[:, None].expand(-1, group).contiguous()
+                    expected = codec.pack_fp4(host, recipe)
+                    if outer_scale == 0.02:
+                        self.assertEqual(expected.scales[:, 0].tolist(), [100, 100, 101, 84, 84, 85])
+                    actual = codec.pack_fp4(host.npu(), recipe)
+                    self.assert_matches(actual.scales.cpu(), expected.scales, host, recipe)
+                    self.assert_matches(actual.data.cpu(), expected.data, host, recipe)
+                    self.assert_matches(
+                        codec.qdq_fp4(host.npu(), recipe).cpu(), codec.qdq_fp4(host, recipe), host, recipe
+                    )
 
     def test_packed_bytes_and_values_match_cpu(self):
         generator = torch.Generator().manual_seed(123)

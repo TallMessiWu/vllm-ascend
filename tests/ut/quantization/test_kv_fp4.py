@@ -134,6 +134,45 @@ class KVFP4Tests(unittest.TestCase):
         expected = (x[:, 0] / 6).to(torch.float8_e4m3fn).view(torch.uint8)
         torch.testing.assert_close(packed.scales[:, 0], expected, rtol=0, atol=0)
 
+    def test_e4m3_scale_avoids_scalar_reciprocal_lowering(self):
+        # Model the observed scalar division path using a rounded FP32
+        # reciprocal. This is CPU fault injection, not an NPU implementation.
+        original_div = torch.Tensor.__truediv__
+        denominator = f32(6 * f32(0.02))
+
+        def reciprocal_scalar_div(x, other):
+            if isinstance(other, (int, float)) and f32(other) == denominator:
+                return x * f32(1.0 / denominator)
+            return original_div(x, other)
+
+        for group in (16, 32):
+            recipe = codec.FP4Recipe(group, "e4m3", 0.02)
+            x = torch.tensor([[6.0] * group, [1.5] * group])
+            expected = codec.qdq_fp4(x, recipe)
+            with patch.object(torch.Tensor, "__truediv__", reciprocal_scalar_div):
+                packed = codec.pack_fp4(x, recipe)
+                actual = codec.qdq_fp4(x, recipe)
+            self.assertEqual(packed.scales.tolist(), [[100], [84]])  # scales 48 and 12, not 52 and 13
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+    def test_e4m3_scale_midpoint_neighbors_are_not_snapped(self):
+        centers = torch.tensor([6.0, 1.5])
+        maxima = torch.stack(
+            (
+                torch.nextafter(centers, torch.zeros_like(centers)),
+                centers,
+                torch.nextafter(centers, torch.full_like(centers, float("inf"))),
+            ),
+            dim=-1,
+        ).flatten()
+        for group in (16, 32):
+            recipe = codec.FP4Recipe(group, "e4m3", 0.02)
+            x = maxima[:, None].expand(-1, group)
+            packed = codec.pack_fp4(x, recipe)
+            self.assertEqual(packed.scales[:, 0].tolist(), [100, 100, 101, 84, 84, 85])
+            expected = torch.tensor([scalar_reference(row, recipe) for row in x.tolist()])
+            torch.testing.assert_close(codec.qdq_fp4(x, recipe), expected, rtol=0, atol=0)
+
     def test_e8m0_scale_changes_immediately_above_power_of_two(self):
         x = torch.tensor([[6.0] * 32, [torch.nextafter(torch.tensor(6.0), torch.tensor(float("inf"))).item()] * 32])
         packed = codec.pack_fp4(x, codec.FP4Recipe(32, "e8m0"))
@@ -244,6 +283,16 @@ class KVFP4ReportTests(unittest.TestCase):
             self.assertEqual(stages["scale_bytes"][0, 0].item(), 100)
             reconstructed = (codec._values(stages["codes"]) * stages["combined"].unsqueeze(-1)).flatten(-2)
             torch.testing.assert_close(reconstructed[..., : x.shape[-1]], codec.qdq_fp4(x, recipe), rtol=0, atol=0)
+
+    def test_device_scale_regression_harness_on_cpu(self):
+        case = self.report.KVFP4DeviceTests("test_e4m3_scale_midpoints_and_neighbors")
+        output = io.StringIO()
+        with patch.object(torch.Tensor, "npu", lambda x: x, create=True), redirect_stdout(output):
+            result = case.run()
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(result.failures, [])
+        self.assertEqual(result.errors, [])
+        self.assertIn("active_tensor_raw: bit_mismatches=0/6", output.getvalue())
 
     def test_stage_report_is_bounded_and_retains_float_bits(self):
         output = io.StringIO()

@@ -30,6 +30,16 @@ corpus or claim that an arbitrary outer scale is suitable for real KV tensors.
 Zero groups use raw scale 1 (before the E4M3 outer scale). These conventions are
 part of the experiment and must be reproduced by a native reader/writer.
 
+The E4M3 scale input uses FP32 tensor/tensor division with a same-shape divisor
+containing `float32(6 * outer_scale)`. Do not replace it with multiplication by a
+rounded reciprocal: at `outer_scale=float32(0.02)` and `amax=6`, the quotient
+rounds to 50, then E4M3 RNE selects 48. A rounded FP32 reciprocal can instead
+produce 50.000003814697266 and select 52. The device-side divisor fill is replayed
+with the graph; it reads no device values on the host and caches no input values.
+No epsilon, tie snapping or test tolerance is used. This changes the arithmetic
+path, not the scale format, calibration or RNE contract. Hardware verification
+is still required for the tensor-division path.
+
 The upward E8M0 recipe is encoded from FP32 exponent/mantissa bits to avoid
 `ceil(log2(x))` losing the distinction immediately above a power of two. The
 finite exponent range is [-126, 127]. Group16 with E8M0 is not called MXFP4.
@@ -62,7 +72,9 @@ arithmetic, and has no native-cache savings or speed claim.
 
 CPU unit tests compare against literal bytes, independent scalar table search,
 struct-based BF16 rounding, native CPU E4M3 casts and CPU Dynamo fullgraph with
-changing values/shapes. They do not import real torch_npu or prove NPU behavior.
+changing values/shapes. Regression tests inject rounded-reciprocal scalar division
+and check exact E4M3 scale bytes at midpoints and their neighboring FP32 inputs.
+They do not import real torch_npu or prove NPU behavior.
 
 In an already installed NPU environment, from the source worktree:
 
@@ -72,7 +84,10 @@ ASCEND_RT_VISIBLE_DEVICES=0 python3 tests/e2e/pull_request/one_card/test_kv_fp4_
 
 Select a device assigned to you. This uses small synthetic tensors, no weights,
 model or requests. It checks packed bytes, tail groups, invalid values and QDQ
-ACL capture/replay with changing inputs. Missing runtime/device is an error,
+ACL capture/replay with changing inputs, separately against NPU eager and CPU.
+An additional scale regression checks tensor division and nearby midpoints across
+four synthetic outer scales. `DIAG legacy_scalar_raw` may still show differences
+on the unused old path; only the active path must pass. Missing runtime/device is an error,
 not a skip. The imported implementation must come from the same worktree as the
 test. Passing this test is only component evidence; real KV distributions,
 attention outputs, full-model quality and native packed-cache performance remain
