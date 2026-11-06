@@ -86,3 +86,34 @@ complete loader/model, long-context correctness, quality and performance remain
 unverified until real-device results are supplied. This experimental fork is
 not an upstream release; a user-facing release fragment is required if submitted
 as an upstream feature PR.
+
+### Compiled numerical component checks
+
+Direct ACL capture of eager operators does not exercise compiler graph rewrites.
+Two additional small-tensor cases isolate the MX4 bit-view/exponent/scale path and
+the actual tiled QDQ helper, with G32-B as a control:
+
+```bash
+ASCEND_RT_VISIBLE_DEVICES=0 python3 tests/e2e/pull_request/one_card/test_kv_fp4_codec.py \
+  KVFP4DeviceTests.test_mx4_compiled_scale_trace \
+  KVFP4DeviceTests.test_qdq_npugraph_ex_matches_reference
+```
+
+Select an assigned NPU and normally stop your previous model service/worker.
+No model or weights are loaded. The test uses `npugraph_ex.get_npu_backend` with the service options
+`force_eager=True`, `inplace_pass=False`, `clone_input=False`, `clone_output=False`.
+Here `force_eager` executes the optimized FX graph before external capture; it
+does not bypass `torch.compile`. Backend invocations are counted explicitly.
+No static/super kernel option is enabled and no compiler or model-runner patch is
+installed by the test.
+
+It compares CPU, NPU eager, compiled execution and compiled-plus-ACL replay at
+zero tolerance. Each graph keeps a stable input buffer, warmed on the capture
+stream before capture; replay changes input values and is checked before another
+compiled call could reuse its output buffers. Shapes include decode, prefill and
+the 1024-row tile boundary. Failure stops the current case, so later input cases
+may remain unverified. Missing compiler/device is an error, not a skip.
+
+A passing component result does not establish correctness of the complete model,
+its fusion/partition context, cache lifecycle, or all stream/concurrency patterns.
+Keep full-model graph/eager validation and quality evaluation separate.

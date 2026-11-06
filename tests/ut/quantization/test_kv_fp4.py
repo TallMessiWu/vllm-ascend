@@ -6,10 +6,11 @@ import importlib.util
 import math
 import struct
 import sys
+import types
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 
@@ -246,6 +247,67 @@ class KVFP4Tests(unittest.TestCase):
                 expected = codec.unpack_fp4(codec.pack_fp4(x, recipe), x.dtype)
                 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
             torch._dynamo.reset()
+
+
+class KVFP4CompileContractTests(unittest.TestCase):
+    """CPU tests for test-vector math and compiler option plumbing only."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = SOURCE.parents[2] / "tests/e2e/pull_request/one_card/test_kv_fp4_codec.py"
+        spec = importlib.util.spec_from_file_location("kv_fp4_compile_contract", source)
+        cls.device_tests = importlib.util.module_from_spec(spec)
+        quantization = types.ModuleType("vllm_ascend.quantization")
+        quantization.kv_fp4 = codec
+        with patch.dict(
+            sys.modules,
+            {
+                "torch_npu": types.ModuleType("torch_npu"),
+                "vllm_ascend": types.ModuleType("vllm_ascend"),
+                "vllm_ascend.quantization": quantization,
+            },
+        ):
+            spec.loader.exec_module(cls.device_tests)
+
+    def test_scale_trace_has_literal_bits_and_preserves_power_neighbors(self):
+        x = torch.tensor([0.5, 1.0, 2.0])
+        bits, exponent, scale = self.device_tests.mx4_scale_trace(x)
+        self.assertEqual(bits.tolist(), [0x3F000000, 0x3F800000, 0x40000000])
+        self.assertEqual(exponent.tolist(), [126, 127, 128])
+        torch.testing.assert_close(scale, x, rtol=0, atol=0)
+        above = torch.nextafter(x, torch.full_like(x, float("inf")))
+        torch.testing.assert_close(self.device_tests.mx4_scale_trace(above)[2], 2 * x, rtol=0, atol=0)
+        zeros = torch.zeros_like(x)
+        torch.testing.assert_close(
+            self.device_tests.mx4_scale_trace(zeros)[2], torch.full_like(x, 2.0**-126), rtol=0, atol=0
+        )
+
+    def test_compiler_options_match_service_without_real_npu_import(self):
+        for layout in ("compiler_config", "npugraphex_config"):
+            nge = types.ModuleType("npugraph_ex")
+            nge.__path__ = []
+            nge.CompilerConfig = Mock(return_value=object())
+            nge.get_npu_backend = Mock(return_value=object())
+            configs = types.ModuleType("npugraph_ex.configs")
+            configs.__path__ = []
+            options = types.ModuleType(f"npugraph_ex.configs.{layout}")
+            options._process_kwargs_options = Mock()
+            modules = {
+                "npugraph_ex": nge,
+                "npugraph_ex.configs": configs,
+                "npugraph_ex.configs.compiler_config": None,
+                "npugraph_ex.configs.npugraphex_config": None,
+                f"npugraph_ex.configs.{layout}": options,
+            }
+            npu = types.SimpleNamespace(set_compile_mode=Mock())
+            with patch.dict(sys.modules, modules), patch.object(torch, "npu", npu, create=True):
+                actual = self.device_tests.compiler_backend()
+            self.assertIs(actual, nge.get_npu_backend.return_value)
+            npu.set_compile_mode.assert_called_once_with(jit_compile=False)
+            options._process_kwargs_options.assert_called_once_with(
+                nge.CompilerConfig.return_value,
+                {"options": dict(force_eager=True, inplace_pass=False, clone_input=False, clone_output=False)},
+            )
 
 
 if __name__ == "__main__":
