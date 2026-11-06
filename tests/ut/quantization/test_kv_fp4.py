@@ -9,6 +9,7 @@ import sys
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
@@ -129,6 +130,45 @@ class KVFP4Tests(unittest.TestCase):
         packed = codec.pack_fp4(x, codec.FP4Recipe(16, "e4m3", outer_scale=1.0))
         expected = (x[:, 0] / 6).to(torch.float8_e4m3fn).view(torch.uint8)
         torch.testing.assert_close(packed.scales[:, 0], expected, rtol=0, atol=0)
+
+    def test_e4m3_scale_avoids_scalar_reciprocal_lowering(self):
+        # Model the observed scalar division path using a rounded FP32
+        # reciprocal. This is CPU fault injection, not an NPU implementation.
+        original_div = torch.Tensor.__truediv__
+        denominator = f32(6 * f32(0.02))
+
+        def reciprocal_scalar_div(x, other):
+            if isinstance(other, (int, float)) and f32(other) == denominator:
+                return x * f32(1.0 / denominator)
+            return original_div(x, other)
+
+        for group in (16, 32):
+            recipe = codec.FP4Recipe(group, "e4m3", 0.02)
+            x = torch.tensor([[6.0] * group, [1.5] * group])
+            expected = codec.qdq_fp4(x, recipe)
+            with patch.object(torch.Tensor, "__truediv__", reciprocal_scalar_div):
+                packed = codec.pack_fp4(x, recipe)
+                actual = codec.qdq_fp4(x, recipe)
+            self.assertEqual(packed.scales.tolist(), [[100], [84]])  # scales 48 and 12, not 52 and 13
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+    def test_e4m3_scale_midpoint_neighbors_are_not_snapped(self):
+        centers = torch.tensor([6.0, 1.5])
+        maxima = torch.stack(
+            (
+                torch.nextafter(centers, torch.zeros_like(centers)),
+                centers,
+                torch.nextafter(centers, torch.full_like(centers, float("inf"))),
+            ),
+            dim=-1,
+        ).flatten()
+        for group in (16, 32):
+            recipe = codec.FP4Recipe(group, "e4m3", 0.02)
+            x = maxima[:, None].expand(-1, group)
+            packed = codec.pack_fp4(x, recipe)
+            self.assertEqual(packed.scales[:, 0].tolist(), [100, 100, 101, 84, 84, 85])
+            expected = torch.tensor([scalar_reference(row, recipe) for row in x.tolist()])
+            torch.testing.assert_close(codec.qdq_fp4(x, recipe), expected, rtol=0, atol=0)
 
     def test_e8m0_scale_changes_immediately_above_power_of_two(self):
         x = torch.tensor([[6.0] * 32, [torch.nextafter(torch.tensor(6.0), torch.tensor(float("inf"))).item()] * 32])

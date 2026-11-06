@@ -100,6 +100,15 @@ def _values(code: torch.Tensor) -> torch.Tensor:
     return torch.where((code & 8) != 0, -value, value)
 
 
+def _e4m3_scale_input(amax: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
+    # Keep the divisor a same-shape FP32 tensor. Scalar division can lower to
+    # multiplication by a rounded reciprocal, moving an exact E4M3 midpoint
+    # by one ULP (e.g. 6 / float32(6 * float32(0.02)) must round to 50).
+    # full_like is device-only and replayed; no host reads or cached inputs.
+    divisor = torch.full_like(amax, FP4_MAX * recipe.outer_scale)
+    return amax / divisor
+
+
 def _e4m3_round(value: torch.Tensor) -> torch.Tensor:
     value = value.clamp(min=FP8_MIN, max=FP8_MAX)
     step = torch.exp2((torch.floor(torch.log2(value)) - 3).clamp(min=-9))
@@ -138,7 +147,7 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe):
     if recipe.scale_type == "bf16":
         scale = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL).to(torch.bfloat16).float()
     elif recipe.scale_type == "e4m3":
-        scale = _e4m3_round(amax / (FP4_MAX * recipe.outer_scale))
+        scale = _e4m3_round(_e4m3_scale_input(amax, recipe))
     else:
         # Ceiling power-of-two recipe. Integer exponent extraction avoids log2
         # rounding a value immediately above a power of two down to that power.
