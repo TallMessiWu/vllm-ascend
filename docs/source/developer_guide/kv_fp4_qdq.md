@@ -31,6 +31,31 @@ scales, fit them on the evaluation set, or change them during an engine's
 lifetime. The replay recipe and model recipe must match. No new default
 calibration corpus or arbitrary production scale is supplied.
 
+### Value-preserving copy diagnostic
+
+`diagnostic_copy` defaults to `false` and must be a JSON boolean. Opt in with:
+
+```text
+--additional-config '{"kv_fp4_qdq":{"format":"mx4","target":"kv","diagnostic_copy":true}}'
+```
+
+For each selected side, this calls `clone(memory_format=torch.contiguous_format)`
+instead of QDQ. Values and BF16 dtype are retained, but the writer and returned
+prefill path receive a new tensor with PyTorch-contiguous layout (not a guarantee
+about NPU internal format). Unselected sides are returned
+unchanged; `target=off` still returns both original objects. The format/recipe is
+validated but not used for numerical conversion in copy-only mode. Startup logs
+explicitly label `operation=copy-only (no quantization)`.
+
+This is a diagnostic, not a repair, FP4 quality result or performance feature.
+It compares identity/off, value-preserving materialization and lossy QDQ at the
+same existing backend seam. A copy-only failure does not require FP4 numerical
+error; a success does not exclude QDQ-specific allocation/lifetime issues,
+because cloning does not reproduce all FP32 workspaces, tiling or timing.
+No input mutation, cached tensors, host reads, graph-mode change, new native op
+or model-runner patch is introduced. Copies are device operations recorded for
+replay; real model graph validation remains required.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.

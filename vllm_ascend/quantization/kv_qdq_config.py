@@ -23,16 +23,20 @@ class KVQDQSettings:
     target: str
     k_recipe: FP4Recipe
     v_recipe: FP4Recipe
+    diagnostic_copy: bool = False
 
 
 def parse_kv_qdq(value: dict | None) -> KVQDQSettings | None:
     if value is None:
         return None
-    keys = {"format", "target", "k_outer_scale", "v_outer_scale"}
+    keys = {"format", "target", "k_outer_scale", "v_outer_scale", "diagnostic_copy"}
     if not isinstance(value, dict) or set(value) - keys or not {"format", "target"} <= set(value):
-        raise ValueError("kv_fp4_qdq requires explicit format/target and accepts only K/V outer scales")
+        raise ValueError("kv_fp4_qdq requires format/target; optional K/V outer scales and diagnostic_copy only")
     if value["target"] not in ("off", "k", "v", "kv"):
         raise ValueError("kv_fp4_qdq.target must be off/k/v/kv")
+    diagnostic_copy = value.get("diagnostic_copy", False)
+    if type(diagnostic_copy) is not bool:
+        raise ValueError("kv_fp4_qdq.diagnostic_copy must be a boolean")
     for name, group, scale in FORMATS:
         if value["format"] == name:
             return KVQDQSettings(
@@ -40,6 +44,7 @@ def parse_kv_qdq(value: dict | None) -> KVQDQSettings | None:
                 value["target"],
                 FP4Recipe(group, scale, value.get("k_outer_scale")),
                 FP4Recipe(group, scale, value.get("v_outer_scale")),
+                diagnostic_copy=diagnostic_copy,
             )
     raise ValueError("Unknown kv_fp4_qdq format")
 

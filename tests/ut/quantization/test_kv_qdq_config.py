@@ -54,6 +54,18 @@ class KVQDQConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 config.parse_kv_qdq(bad)
 
+    def test_diagnostic_copy_is_explicit_boolean_and_default_stays_qdq(self):
+        base = {"format": "mx4", "target": "kv"}
+        self.assertFalse(config.parse_kv_qdq(base).diagnostic_copy)
+        for enabled in (False, True):
+            for target in ("off", "k", "v", "kv"):
+                setting = config.parse_kv_qdq({**base, "target": target, "diagnostic_copy": enabled})
+                self.assertIs(setting.diagnostic_copy, enabled)
+                self.assertEqual(setting.target, target)
+        for bad in (0, 1, "true", "false", None, [], {}):
+            with self.assertRaisesRegex(ValueError, "diagnostic_copy"):
+                config.parse_kv_qdq({**base, "diagnostic_copy": bad})
+
     def test_runtime_restrictions_do_not_silently_change_configuration(self):
         cfg = runtime()
         config.validate_kv_qdq_runtime(cfg)

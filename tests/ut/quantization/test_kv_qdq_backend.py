@@ -52,7 +52,7 @@ class CacheWriterParent:
         kv_cache[1].copy_(value)
 
 
-def load_backend(target="kv", name="g16-b"):
+def load_backend(target="kv", name="g16-b", diagnostic_copy=False):
     runtime = NS(
         model_config=NS(dtype=torch.bfloat16, hf_config=NS(model_type="qwen3_moe")),
         cache_config=NS(cache_dtype="bfloat16", enable_prefix_caching=False),
@@ -69,6 +69,8 @@ def load_backend(target="kv", name="g16-b"):
         quant_config=None,
         additional_config={"kv_fp4_qdq": {"format": name, "target": target}},
     )
+    if diagnostic_copy:
+        runtime.additional_config["kv_fp4_qdq"]["diagnostic_copy"] = diagnostic_copy
     modules = {
         "vllm.config": NS(get_current_vllm_config=lambda: runtime),
         "vllm.logger": NS(logger=NS(info_once=lambda *a, **kw: None)),
@@ -115,6 +117,38 @@ class KVQDQBackendTests(unittest.TestCase):
                 self.assertIs(out_v, v)
         torch.testing.assert_close(k, k_before, rtol=0, atol=0)
         torch.testing.assert_close(v, v_before, rtol=0, atol=0)
+
+    def test_diagnostic_copy_preserves_bits_and_replaces_only_selected_sides(self):
+        q = torch.zeros(2, 2, 16, dtype=torch.bfloat16)
+        k = torch.arange(64, dtype=torch.bfloat16).reshape(2, 1, 32)[..., ::2]
+        v = (-torch.arange(64, dtype=torch.bfloat16)).reshape(2, 1, 32)[..., ::2]
+        k[0, 0, 0] = -0.0
+        k[0, 0, 1] = float("nan")
+        v[1, 0, -1] = float("inf")
+        before = (k.clone(), v.clone())
+        self.assertFalse(k.is_contiguous())
+        self.assertFalse(v.is_contiguous())
+        for target in ("off", "k", "v", "kv"):
+            module = load_backend(target, diagnostic_copy=True)
+            backend = module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+            cache = [torch.zeros_like(k), torch.zeros_like(v)]
+            with patch.object(module, "_qdq_tiled", side_effect=AssertionError("copy control must not call QDQ")):
+                _, out_k, out_v, _ = backend.reshape_and_cache(q, k, v, cache, NS(), q.clone())
+                for side, original, output, stored in zip(("k", "v"), (k, v), (out_k, out_v), cache):
+                    torch.testing.assert_close(output.view(torch.int16), original.view(torch.int16), rtol=0, atol=0)
+                    torch.testing.assert_close(stored.view(torch.int16), original.view(torch.int16), rtol=0, atol=0)
+                    if target in (side, "kv"):
+                        self.assertNotEqual(output.data_ptr(), original.data_ptr())
+                        self.assertTrue(output.is_contiguous())
+                        output.fill_(9)
+                    else:
+                        self.assertIs(output, original)
+                for original, saved in zip((k, v), before):
+                    torch.testing.assert_close(original.view(torch.int16), saved.view(torch.int16), rtol=0, atol=0)
+                changed_k, changed_v = k + 1, v - 1
+                backend.do_kv_cache_update(None, changed_k, changed_v, cache, torch.tensor([0, 1]))
+                torch.testing.assert_close(cache[0].view(torch.int16), changed_k.view(torch.int16), rtol=0, atol=0)
+                torch.testing.assert_close(cache[1].view(torch.int16), changed_v.view(torch.int16), rtol=0, atol=0)
 
     def test_split_writer_consumes_changed_inputs_instead_of_cached_values(self):
         backend = self.create("kv")

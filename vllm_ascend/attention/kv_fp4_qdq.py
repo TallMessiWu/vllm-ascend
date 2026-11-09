@@ -86,9 +86,12 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             **kwargs,
         )
         logger.info_once(
-            "Experimental KV QDQ: format=%s target=%s, BF16 cache/attention; no packed-cache claim",
+            "Experimental KV QDQ: format=%s target=%s operation=%s, BF16 cache/attention; no packed-cache claim",
             settings.format,
             settings.target,
+            "off"
+            if settings.target == "off"
+            else ("copy-only (no quantization)" if settings.diagnostic_copy else "qdq"),
         )
 
     def _transform_kv(self, key, value):
@@ -106,10 +109,21 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
         if key.shape != value.shape or key.device != value.device:
             raise ValueError("K/V shapes and devices must match")
         settings = self.kv_qdq_settings
+        # Explicit value-preserving control for the same writer/prefill seam.
+        # No cached values or host reads; device copies are recorded for replay.
+        # This does not reproduce all QDQ workspaces or timing.
         if settings.target in ("k", "kv"):
-            key = _qdq_tiled(key, settings.k_recipe)
+            key = (
+                key.clone(memory_format=torch.contiguous_format)
+                if settings.diagnostic_copy
+                else _qdq_tiled(key, settings.k_recipe)
+            )
         if settings.target in ("v", "kv"):
-            value = _qdq_tiled(value, settings.v_recipe)
+            value = (
+                value.clone(memory_format=torch.contiguous_format)
+                if settings.diagnostic_copy
+                else _qdq_tiled(value, settings.v_recipe)
+            )
         return key, value
 
     def reshape_and_cache(self, query, key, value, kv_cache, attn_metadata, output):
