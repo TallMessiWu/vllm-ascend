@@ -116,11 +116,12 @@ def _e4m3_round(value: torch.Tensor) -> torch.Tensor:
 
 
 def _e8m0_scale_values(exponent: torch.Tensor) -> torch.Tensor:
-    # Callers supply valid biased exponents [1, 254], so exp2 is mathematically
-    # >= 2^-126. Some NPU paths return zero at that boundary. Restore the exact
-    # representable lower bound in both generation and packed-scale decoding;
-    # this is not an epsilon or a change to exponent selection / FP4 rounding.
-    return torch.exp2(exponent.float() - 127).clamp(min=FP32_MIN_NORMAL)
+    # This reference accepts biased exponents [1, 254]: positive normal FP32
+    # powers of two have exactly these exponent bits and a zero mantissa.
+    # Avoid exp2 approximations (including values just below a power of two,
+    # whose stored exponent would be one too small). The shift owns new storage;
+    # its equal-width dtype view keeps it alive and is recomputed on replay.
+    return (exponent.to(torch.int32) << 23).view(torch.float32)
 
 
 def _scale_storage(scale: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:

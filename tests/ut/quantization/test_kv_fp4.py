@@ -313,10 +313,50 @@ class KVFP4CompileContractTests(unittest.TestCase):
                 torch.testing.assert_close(codec.unpack_fp4(packed, dtype), host, rtol=0, atol=0)
 
     def test_reference_e8m0_scale_bytes_decode_to_literal_fp32_bits(self):
-        scales = torch.arange(1, 255, dtype=torch.uint8)
-        expected_bits = torch.arange(1, 255, dtype=torch.int32) << 23
-        actual = codec._scale_values(scales, codec.FP4Recipe(32, "e8m0"))
-        torch.testing.assert_close(actual.view(torch.int32), expected_bits, rtol=0, atol=0)
+        recipe = codec.FP4Recipe(32, "e8m0")
+        # Independent arithmetic oracle, including transposed input and both
+        # producer (int32) and reader (uint8) exponent types.
+        expected = torch.tensor([math.ldexp(1.0, e - 127) for e in range(1, 255)]).reshape(2, 127).T
+        for dtype in (torch.uint8, torch.int32):
+            scales = torch.arange(1, 255, dtype=dtype).reshape(2, 127).T
+            before = scales.clone()
+            actual = codec._scale_values(scales, recipe)
+            torch.testing.assert_close(actual.view(torch.int32), expected.view(torch.int32), rtol=0, atol=0)
+            torch.testing.assert_close(codec._scale_storage(actual, recipe), scales.to(torch.uint8), rtol=0, atol=0)
+            torch.testing.assert_close(scales, before, rtol=0, atol=0)
+            scales.zero_()
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)  # owns new storage, not an input alias
+
+    def test_exp2_neighbor_error_cannot_change_scale_bytes_or_fp4_midpoints(self):
+        recipe = codec.FP4Recipe(32, "e8m0")
+        reported = torch.tensor([18, 19, 20, 24], dtype=torch.uint8)
+        expected_scales = torch.tensor([math.ldexp(1.0, int(e) - 127) for e in reported])
+        original_exp2 = torch.exp2
+
+        def approximate_exp2(x):
+            exact = original_exp2(x)
+            affected = (x == -109) | (x == -108) | (x == -107) | (x == -103)
+            return torch.where(affected, torch.nextafter(exact, torch.zeros_like(exact)), exact)
+
+        row = torch.tensor([0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0, 6.0]).repeat(4)
+        rounded = torch.tensor([0, 1, 1, 2, 2, 4, 4, 6]).repeat(4)
+        x = expected_scales[:, None] * row
+        expected_values = expected_scales[:, None] * rounded
+        literal = codec.PackedFP4(
+            torch.tensor([[0x20, 0x42, 0x64, 0x76] * 4] * 4, dtype=torch.uint8),
+            reported[:, None],
+            tuple(x.shape),
+            recipe,
+        )
+        with patch.object(torch, "exp2", approximate_exp2):
+            legacy = torch.exp2(reported.float() - 127)
+            self.assertEqual(codec._scale_storage(legacy, recipe).tolist(), [17, 18, 19, 23])
+            torch.testing.assert_close(codec._scale_values(reported, recipe), expected_scales, rtol=0, atol=0)
+            packed = codec.pack_fp4(x, recipe)
+            torch.testing.assert_close(packed.scales, literal.scales, rtol=0, atol=0)
+            torch.testing.assert_close(packed.data, literal.data, rtol=0, atol=0)
+            torch.testing.assert_close(codec.qdq_fp4(x, recipe), expected_values, rtol=0, atol=0)
+            torch.testing.assert_close(codec.unpack_fp4(literal), expected_values, rtol=0, atol=0)
 
     def test_opaque_out_buffer_survives_dynamo_and_aot_without_inlining_codec(self):
         from torch._dynamo.backends.registry import lookup_backend

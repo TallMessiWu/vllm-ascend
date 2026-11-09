@@ -121,12 +121,15 @@ Shapes include 1/33/257 tokens, offset/non-contiguous synthetic split-QKV views,
 and the 1024-row tile boundary. MX4 additionally replays nonzero floor inputs to
 regress the scale-value correction. GLOBAL capture mode and zero tolerance remain.
 
-The floor check is separate and strict: it checks the active shared scale helper,
-effective zero/nonzero groups, this reference's scale bytes 1..254 against literal
-FP32 bits, and an independent packed payload. The legacy bare `exp2(-126)` result
-is printed as an observation, not substituted into the corrected oracle.
-Any active mismatch remains RED; the CPU fault-injection regression also retains
-the old zero result as a negative control. Do not treat a scale fix as proof of
+The scale check retains its historical `test_mx4_scale_floor_eager` entry name.
+It checks the active helper, effective zero/nonzero groups, this reference's
+scale bytes 1..254 against literal FP32 bits, byte round-trip, FP4 midpoint
+payloads and independent readers. It also directly captures the int32 producer
+and uint8 reader paths, replaying reversed/minimum/maximum/ascending exponents
+to check the lifetime and freshness of the new int32-to-FP32 view.
+Legacy exp2/clamp mismatches are printed as observations, not substituted into
+the corrected oracle. Any active mismatch remains RED; CPU fault injection
+retains the zero and previous-neighbor results as negative controls. Do not treat a scale fix as proof of
 a model-level root cause. Failure within a case leaves later inputs unverified;
 missing runtime is an error, not a skip.
 

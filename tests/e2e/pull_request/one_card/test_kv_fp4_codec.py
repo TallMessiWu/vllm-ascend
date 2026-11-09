@@ -240,6 +240,36 @@ class KVFP4DeviceTests(unittest.TestCase):
     def test_g32_b_opaque_compile_replay(self):
         self.check_opaque_qdq("bf16")
 
+    def check_exact_scale_replay(self):
+        # The int32 producer and uint8 reader share the bit-construction helper.
+        # Retain both input and viewed output storage until replay completes.
+        host = torch.arange(1, 255, dtype=torch.int32)
+        for dtype in (torch.int32, torch.uint8):
+            device = host.to(dtype).npu()
+            stream = torch.npu.Stream()
+            stream.wait_stream(torch.npu.current_stream())
+            with torch.npu.stream(stream):
+                for _ in range(3):
+                    codec._e8m0_scale_values(device)
+            stream.synchronize()
+            graph = torch.npu.NPUGraph()
+            with torch.npu.graph(graph, stream=stream):
+                result = codec._e8m0_scale_values(device)
+            for name, changed in (
+                ("reverse", host.flip(0)),
+                ("minimum", torch.ones_like(host)),
+                ("maximum", torch.full_like(host, 254)),
+                ("ascending", host),
+            ):
+                device.copy_(changed.to(dtype))
+                torch.npu.synchronize()
+                graph.replay()
+                torch.npu.synchronize()
+                literal = (changed << 23).view(torch.float32)
+                self.assert_outputs_equal(result, literal, f"exact scale replay {dtype} {name}")
+                print(f"PASS exact scale replay {dtype} {name}", flush=True)
+            del result, graph
+
     @torch.inference_mode()
     def test_mx4_scale_floor_eager(self):
         # Check the active producer and packed reader, not a duplicate of the
@@ -267,8 +297,28 @@ class KVFP4DeviceTests(unittest.TestCase):
         with self.subTest(boundary="reference scale bytes 1..254"):
             scales = torch.arange(1, 255, dtype=torch.uint8).npu()
             literal = (torch.arange(1, 255, dtype=torch.int32) << 23).view(torch.float32)
-            self.assert_outputs_equal(codec._scale_values(scales, recipe), literal, "reference E8M0 scales 1..254")
-            print("PASS reference E8M0 scales 1..254 against literal FP32 bits", flush=True)
+            legacy = torch.exp2(scales.float() - 127).clamp(min=codec.FP32_MIN_NORMAL).cpu()
+            bad = (legacy != literal).nonzero().flatten() + 1
+            print(f"LEGACY exp2+clamp mismatching scale bytes={bad.tolist()}", flush=True)
+            actual = codec._scale_values(scales, recipe)
+            self.assert_outputs_equal(actual, literal, "reference E8M0 scales 1..254")
+            self.assert_outputs_equal(codec._scale_storage(actual, recipe), scales, "E8M0 byte round-trip")
+            print("PASS reference E8M0 scales 1..254 and byte round-trip", flush=True)
+        with self.subTest(boundary="all reference exponents ACL replay"):
+            self.check_exact_scale_replay()
+        with self.subTest(boundary="reported exponent FP4 midpoints"):
+            codes = torch.tensor([18, 19, 20, 24], dtype=torch.uint8)
+            powers = torch.tensor([2.0**e for e in (-109, -108, -107, -103)])
+            row = torch.tensor([0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0, 6.0]).repeat(4)
+            rounded = torch.tensor([0, 1, 1, 2, 2, 4, 4, 6]).repeat(4)
+            host, expected = powers[:, None] * row, powers[:, None] * rounded
+            packed = codec.pack_fp4(host.npu(), recipe)
+            literal_data = torch.tensor([[0x20, 0x42, 0x64, 0x76] * 4] * 4, dtype=torch.uint8)
+            self.assert_outputs_equal((packed.scales, packed.data), (codes[:, None], literal_data), "midpoint bytes")
+            literal = codec.PackedFP4(literal_data.npu(), codes[:, None].npu(), tuple(host.shape), recipe)
+            self.assert_outputs_equal(codec.unpack_fp4(literal), expected, "midpoint literal reader")
+            self.assert_outputs_equal(codec.qdq_fp4(host.npu(), recipe), expected, "midpoint QDQ")
+            print("PASS reported-exponent FP4 midpoints and literal payload", flush=True)
         with self.subTest(boundary="floor packed payload and reader"):
             pattern = (torch.tensor([0, 1, 2, 3, 4, 6, 2, 4]) * codec.FP32_MIN_NORMAL).bfloat16().repeat(4)[None]
             host = torch.cat((zero[:1], tiny[:1], -tiny[:1], pattern, -pattern))
