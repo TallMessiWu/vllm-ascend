@@ -282,6 +282,55 @@ class KVFP4CompileContractTests(unittest.TestCase):
             self.device_tests.mx4_scale_trace(zeros)[2], torch.full_like(x, 2.0**-126), rtol=0, atol=0
         )
 
+    def test_zero_group_masks_raw_floor_failure_but_nonzero_group_does_not(self):
+        recipe = codec.FP4Recipe(32, "e8m0")
+        zero = torch.zeros((2, 32), dtype=torch.bfloat16)
+        tiny = torch.full_like(zero, 6 * codec.FP32_MIN_NORMAL)
+        torch.testing.assert_close(codec.qdq_fp4(tiny, recipe), tiny, rtol=0, atol=0)
+        original_exp2 = torch.exp2
+
+        def flush_floor(x):
+            return torch.where(x == -126, 0.0, original_exp2(x))
+
+        # Fault injection explains the oracle boundary; it is not NPU evidence.
+        with patch.object(torch, "exp2", flush_floor):
+            torch.testing.assert_close(codec.qdq_fp4(zero, recipe), zero, rtol=0, atol=0)
+            self.assertEqual(codec._quantize_groups(zero, recipe)[1].tolist(), [[1.0], [1.0]])
+            self.assertFalse(torch.equal(codec.qdq_fp4(tiny, recipe), tiny))
+
+    def test_opaque_out_buffer_survives_dynamo_and_aot_without_inlining_codec(self):
+        from torch._dynamo.backends.registry import lookup_backend
+
+        self.addCleanup(torch._dynamo.reset)
+        recipe = codec.FP4Recipe(32, "e8m0")
+        opaque = self.device_tests.make_opaque_qdq(lambda x: codec.qdq_fp4(x, recipe), "cpu_contract")
+        for backend_name in ("eager", "aot_eager"):
+            graphs = []
+            backend = lookup_backend(backend_name)
+
+            def checked_backend(graph, inputs, graphs=graphs, backend=backend):
+                graphs.append(graph.code)
+                return backend(graph, inputs)
+
+            compiled = torch.compile(opaque, backend=checked_backend, fullgraph=True, dynamic=True)
+            host = torch.linspace(-5, 5, 3 * 32).reshape(3, 32).bfloat16()
+            backing = torch.zeros((3, 3, 32), dtype=host.dtype)
+            x, output = backing[:, 1], torch.empty_like(host)
+            self.assertFalse(x.is_contiguous())
+            for factor in (0.0, 1.0, -0.7):
+                changed = (host.float() * factor).to(host.dtype)
+                x.copy_(changed)
+                actual = compiled(x, output)
+                self.assertEqual(actual.data_ptr(), output.data_ptr())
+                torch.testing.assert_close(output, codec.qdq_fp4(changed, recipe), rtol=0, atol=0)
+                torch.testing.assert_close(x, changed, rtol=0, atol=0)
+            self.assertTrue(graphs)
+            for graph in graphs:
+                self.assertIn("kv_fp4_diagnostic.cpu_contract", graph)
+                self.assertNotIn("exp2", graph)
+                self.assertNotIn("bitwise", graph)
+            torch._dynamo.reset()
+
     def test_compiler_options_match_service_without_real_npu_import(self):
         for layout in ("compiler_config", "npugraphex_config"):
             nge = types.ModuleType("npugraph_ex")

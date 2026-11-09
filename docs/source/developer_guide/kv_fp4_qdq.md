@@ -89,31 +89,45 @@ as an upstream feature PR.
 
 ### Compiled numerical component checks
 
-Direct ACL capture of eager operators does not exercise compiler graph rewrites.
-Two additional small-tensor cases isolate the MX4 bit-view/exponent/scale path and
-the actual tiled QDQ helper, with G32-B as a control:
+The compilation boundary matters: `AscendPlatform.opaque_attention_op()` returns
+true; vLLM calls `unified_attention_with_output`, whose implementation calls the
+backend's `forward` and then `reshape_and_cache`. This experiment's QDQ is inside
+that opaque op. Directly compiling `_qdq_tiled` does **not** reproduce this boundary.
+
+The revised checks use a test-local opaque custom op with an explicit mutable
+output buffer, keeping the real tiled QDQ helper inside it. They assert that
+Dynamo hands one opaque call to the compiler, not inlined codec arithmetic.
+No production op, backend, compiler or model-runner patch is installed.
+
+Select an assigned NPU, normally stop your previous model service/worker, and run
+each case in a fresh process so a capture failure cannot contaminate the next:
 
 ```bash
 ASCEND_RT_VISIBLE_DEVICES=0 python3 tests/e2e/pull_request/one_card/test_kv_fp4_codec.py \
-  KVFP4DeviceTests.test_mx4_compiled_scale_trace \
-  KVFP4DeviceTests.test_qdq_npugraph_ex_matches_reference
+  KVFP4DeviceTests.test_mx4_opaque_compile_replay
+ASCEND_RT_VISIBLE_DEVICES=0 python3 tests/e2e/pull_request/one_card/test_kv_fp4_codec.py \
+  KVFP4DeviceTests.test_g32_b_opaque_compile_replay
+ASCEND_RT_VISIBLE_DEVICES=0 python3 tests/e2e/pull_request/one_card/test_kv_fp4_codec.py \
+  KVFP4DeviceTests.test_mx4_scale_floor_eager
 ```
 
-Select an assigned NPU and normally stop your previous model service/worker.
-No model or weights are loaded. The test uses `npugraph_ex.get_npu_backend` with the service options
+The first two use `npugraph_ex.get_npu_backend` with the service options
 `force_eager=True`, `inplace_pass=False`, `clone_input=False`, `clone_output=False`.
-Here `force_eager` executes the optimized FX graph before external capture; it
-does not bypass `torch.compile`. Backend invocations are counted explicitly.
-No static/super kernel option is enabled and no compiler or model-runner patch is
-installed by the test.
+Here `force_eager` does not bypass `torch.compile`. Cold warmup starts with zeros;
+capture uses both zero and nonzero inputs, followed by changed-value replay.
+Input/output buffers stay alive at stable addresses, warmup uses the capture
+stream, and comparisons run outside capture before any subsequent output reuse.
+Shapes include 1/33/257 tokens, offset/non-contiguous synthetic split-QKV views,
+and the 1024-row tile boundary. GLOBAL capture mode and zero tolerance remain.
 
-It compares CPU, NPU eager, compiled execution and compiled-plus-ACL replay at
-zero tolerance. Each graph keeps a stable input buffer, warmed on the capture
-stream before capture; replay changes input values and is checked before another
-compiled call could reuse its output buffers. Shapes include decode, prefill and
-the 1024-row tile boundary. Failure stops the current case, so later input cases
-may remain unverified. Missing compiler/device is an error, not a skip.
+The floor check is separate and strict: it distinguishes raw `exp2(-126)` from
+the effective zero-group scale of 1 and tests nonzero groups at the floor.
+A failure remains RED, even if both opaque paths pass. Do not treat it as proof
+of a model-level root cause or silently change the reference/tolerance to match
+hardware. Failure within a case leaves later inputs unverified; missing runtime
+is an error, not a skip.
 
-A passing component result does not establish correctness of the complete model,
-its fusion/partition context, cache lifecycle, or all stream/concurrency patterns.
-Keep full-model graph/eager validation and quality evaluation separate.
+These tests load no model or weights and do not execute native cache writes or
+attention. Passing them does not validate the full worker, fusion/partition,
+cache or stream/concurrency context. Keep model correctness, quality and
+performance separate.

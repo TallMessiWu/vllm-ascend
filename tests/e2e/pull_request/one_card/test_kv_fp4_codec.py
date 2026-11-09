@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Huawei Technologies Co., Ltd. All Rights Reserved.
-"""KV-1: small-tensor reference packing/QDQ on NPU, no weights or service.
+"""Small-tensor codec and opaque QDQ graph checks, no weights or service.
 
 Direct execution requires one explicitly selected NPU. No skipped tests are
 allowed to stand in for device evidence. This is not a native FP4 cache backend.
@@ -34,6 +34,24 @@ def mx4_scale_trace(raw):
     exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
     scale = torch.exp2(exponent.clamp(1, 254).float() - 127)
     return bits, exponent, scale
+
+
+def make_opaque_qdq(function, name):
+    # Test-local namespace; match attention's opaque, out-buffer mutation
+    # boundary without registering/replacing any production attention op.
+    @torch.library.custom_op(f"kv_fp4_diagnostic::{name}", mutates_args={"output"})
+    def call(x: torch.Tensor, output: torch.Tensor) -> None:
+        output.copy_(function(x))
+
+    @call.register_fake
+    def fake(x, output):
+        return None
+
+    def invoke(x, output):
+        call(x, output)
+        return output
+
+    return invoke
 
 
 def compiler_backend():
@@ -134,82 +152,111 @@ class KVFP4DeviceTests(unittest.TestCase):
                 print(f"DIFF phase={phase}; output={index}; samples(flat_index,actual,reference)={samples}", flush=True)
             torch.testing.assert_close(host_value, host_reference, rtol=0, atol=0, msg=f"{phase}; output={index}")
 
-    def check_compiled_and_replayed(self, function, host, label):
-        # Keep both real and compiled output lifetimes stable. CPU comparisons
-        # happen only outside capture, and replay is checked before another call
-        # can overwrite a compiler-owned output buffer.
+    def check_compiled_and_replayed(self, function, opaque, host, device, label):
+        # Unlike direct compilation of the codec, the service keeps QDQ inside
+        # an opaque attention op. Check that boundary before handing FX to NGE.
         backend = compiler_backend()
         compilations = []
 
         def counted_backend(graph, inputs):
-            compilations.append(len(list(graph.graph.nodes)))
-            print(f"COMPILE {label}; nodes={compilations[-1]}", flush=True)
+            calls = [str(node.target) for node in graph.graph.nodes if "kv_fp4_diagnostic" in str(node.target)]
+            self.assertEqual(len(calls), 1, "Expected one opaque QDQ call, not inlined codec arithmetic")
+            compilations.append(calls[0])
+            print(f"COMPILE {label}; opaque={calls[0]}; nodes={len(list(graph.graph.nodes))}", flush=True)
             return backend(graph, inputs)
 
-        compiled = torch.compile(function, backend=counted_backend, fullgraph=True, dynamic=True)
-        device = host.npu()
+        compiled = torch.compile(opaque, backend=counted_backend, fullgraph=True, dynamic=True)
+        output = torch.empty_like(device, memory_format=torch.contiguous_format)
+        device.zero_()
+        compiled(device, output)  # Exercise zero-initialized buffers at cold warmup.
+        self.assert_outputs_equal(output, torch.zeros_like(host), f"{label} cold zero")
         factors = (1.0, 2.3, 0.0, -0.7)
         for factor in factors:
             changed = (host.float() * factor).to(host.dtype)
             device.copy_(changed)
             expected = function(changed)
             self.assert_outputs_equal(function(device), expected, f"{label} eager factor={factor}")
-            self.assert_outputs_equal(compiled(device), expected, f"{label} compiled factor={factor}")
-            print(f"PASS {label} compiled factor={factor}", flush=True)
-        device.copy_(host)
-        torch.npu.synchronize()
-        stream = torch.npu.Stream()
-        stream.wait_stream(torch.npu.current_stream())
-        with torch.npu.stream(stream):
-            for _ in range(3):
-                compiled(device)
-        stream.synchronize()
+            compiled(device, output)
+            self.assert_outputs_equal(output, expected, f"{label} compiled opaque factor={factor}")
+            print(f"PASS {label} compiled opaque factor={factor}", flush=True)
         self.assertTrue(compilations, "NPU compiler backend was not invoked")
-        compilation_count = len(compilations)
-        graph = torch.npu.NPUGraph()
-        with torch.npu.graph(graph, stream=stream):
-            result = compiled(device)
-        self.assertEqual(len(compilations), compilation_count, "Unexpected recompilation inside ACL capture")
-        for factor in factors:
-            changed = (host.float() * factor).to(host.dtype)
-            device.copy_(changed)
+        for capture_factor in (0.0, 1.0):
+            device.copy_((host.float() * capture_factor).to(host.dtype))
             torch.npu.synchronize()
-            graph.replay()
-            torch.npu.synchronize()
-            self.assert_outputs_equal(result, function(changed), f"{label} compiled+ACL factor={factor}")
-            print(f"PASS {label} compiled+ACL factor={factor}", flush=True)
-        del result, graph, compiled
+            stream = torch.npu.Stream()
+            stream.wait_stream(torch.npu.current_stream())
+            with torch.npu.stream(stream):
+                for _ in range(3):
+                    compiled(device, output)
+            stream.synchronize()
+            compilation_count = len(compilations)
+            graph = torch.npu.NPUGraph()
+            # Retain GLOBAL capture mode: synchronous host copies must fail.
+            with torch.npu.graph(graph, stream=stream):
+                compiled(device, output)
+            self.assertEqual(len(compilations), compilation_count, "Unexpected recompilation inside ACL capture")
+            for factor in factors:
+                changed = (host.float() * factor).to(host.dtype)
+                device.copy_(changed)
+                torch.npu.synchronize()
+                graph.replay()
+                torch.npu.synchronize()
+                phase = f"{label} opaque+ACL captured={capture_factor} replay={factor}"
+                self.assert_outputs_equal(output, function(changed), phase)
+                print(f"PASS {phase}", flush=True)
+            del graph
+        del compiled
         torch._dynamo.reset()
 
-    @torch.inference_mode()
-    def test_mx4_compiled_scale_trace(self):
-        # Include exact powers and both adjacent FP32 values. Output indices
-        # identify bits=0, exponent=1 and scale=2 at the first divergence.
-        powers = torch.tensor([2.0**-125, 2.0**-10, 0.5, 1.0, 2.0, 2.0**10, 2.0**124])
-        host = torch.stack(
-            (
-                torch.nextafter(powers, torch.zeros_like(powers)),
-                powers,
-                torch.nextafter(powers, torch.full_like(powers, float("inf"))),
-            ),
-            dim=-1,
-        )
-        self.check_compiled_and_replayed(mx4_scale_trace, host, "MX4 scale: bits/exponent/scale")
-
-    @torch.inference_mode()
-    def test_qdq_npugraph_ex_matches_reference(self):
+    def check_opaque_qdq(self, scale_type):
         from vllm_ascend.attention import kv_fp4_qdq as backend
 
+        self.addCleanup(torch._dynamo.reset)
         expected_source = Path(__file__).resolve().parents[4] / "vllm_ascend/attention/kv_fp4_qdq.py"
         self.assertEqual(Path(backend.__file__).resolve(), expected_source)
         print(f"tiled_implementation={backend.__file__}", flush=True)
-        for recipe in (codec.FP4Recipe(32, "bf16"), codec.FP4Recipe(32, "e8m0")):
-            for tokens in (1, 33, 257):
-                # Four KV heads; 257 tokens cross the real 1024-row tile limit.
-                host = torch.linspace(-5, 5, tokens * 4 * 128).reshape(tokens, 4, 128).bfloat16()
-                label = f"{recipe.scale_type} shape={tuple(host.shape)}"
-                print(f"CASE {label}", flush=True)
-                self.check_compiled_and_replayed(lambda x, recipe=recipe: backend._qdq_tiled(x, recipe), host, label)
+        recipe = codec.FP4Recipe(32, scale_type)
+        function = lambda x: backend._qdq_tiled(x, recipe)
+        opaque = make_opaque_qdq(function, f"qdq_{scale_type}")
+        for tokens, sliced in ((1, False), (33, True), (257, True)):
+            # Synthetic split-QKV view: nonzero offset and non-contiguous rows.
+            # Four KV heads; 257 tokens also cross the 1024-row tile limit.
+            host = torch.linspace(-5, 5, tokens * 4 * 128).reshape(tokens, 4, 128).bfloat16()
+            backing = torch.zeros((tokens, 3, 4, 128), dtype=host.dtype, device="npu") if sliced else None
+            device = backing[:, 1] if sliced else torch.empty_like(host, device="npu")
+            label = f"{scale_type} shape={tuple(host.shape)} stride={device.stride()} offset={device.storage_offset()}"
+            print(f"CASE {label}", flush=True)
+            self.check_compiled_and_replayed(function, opaque, host, device, label)
+
+    @torch.inference_mode()
+    def test_mx4_opaque_compile_replay(self):
+        self.check_opaque_qdq("e8m0")
+
+    @torch.inference_mode()
+    def test_g32_b_opaque_compile_replay(self):
+        self.check_opaque_qdq("bf16")
+
+    @torch.inference_mode()
+    def test_mx4_scale_floor_eager(self):
+        # Keep the observed raw exp2(-126) failure strict and independent. The
+        # production zero-group override must not be confused with this floor.
+        torch.npu.set_compile_mode(jit_compile=False)
+        recipe = codec.FP4Recipe(32, "e8m0")
+        zero = torch.zeros((2, 32), dtype=torch.bfloat16)
+        tiny = torch.full_like(zero, 6 * codec.FP32_MIN_NORMAL)
+
+        def effective(x):
+            return codec._quantize_groups(x, recipe)[1], codec.qdq_fp4(x, recipe)
+
+        for label, function, host in (
+            ("effective zero-group scale=1/QDQ=0", effective, zero),
+            ("raw floor bits/exponent/scale", mx4_scale_trace, torch.zeros((7, 3))),
+            ("effective nonzero floor", effective, tiny),
+        ):
+            with self.subTest(boundary=label):
+                print(f"BOUNDARY {label}", flush=True)
+                self.assert_outputs_equal(function(host.npu()), function(host), label)
+                print(f"PASS boundary {label}", flush=True)
 
     def test_nonfinite_inputs_are_not_silently_accepted(self):
         for recipe in recipes():
