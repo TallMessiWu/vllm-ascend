@@ -115,6 +115,14 @@ def _e4m3_round(value: torch.Tensor) -> torch.Tensor:
     return (torch.round(value / step) * step).clamp(max=FP8_MAX)
 
 
+def _e8m0_scale_values(exponent: torch.Tensor) -> torch.Tensor:
+    # Callers supply valid biased exponents [1, 254], so exp2 is mathematically
+    # >= 2^-126. Some NPU paths return zero at that boundary. Restore the exact
+    # representable lower bound in both generation and packed-scale decoding;
+    # this is not an epsilon or a change to exponent selection / FP4 rounding.
+    return torch.exp2(exponent.float() - 127).clamp(min=FP32_MIN_NORMAL)
+
+
 def _scale_storage(scale: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
     if recipe.scale_type == "bf16":
         return scale.to(torch.bfloat16)
@@ -130,7 +138,7 @@ def _scale_values(scales: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
     if recipe.scale_type == "bf16":
         return scales.float()
     if recipe.scale_type == "e8m0":
-        return torch.exp2(scales.float() - 127)
+        return _e8m0_scale_values(scales)
     exponent = scales.to(torch.int32) >> 3
     mantissa = (scales.to(torch.int32) & 7).float()
     value = torch.where(exponent == 0, mantissa * FP8_MIN, (1 + mantissa / 8) * torch.exp2(exponent.float() - 7))
@@ -154,7 +162,7 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe):
         raw = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL)
         bits = raw.view(torch.int32)
         exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
-        scale = torch.exp2(exponent.clamp(1, 254).float() - 127)
+        scale = _e8m0_scale_values(exponent.clamp(1, 254))
     scale = torch.where(amax == 0, 1.0, scale)
     scale = torch.where(finite, scale, float("nan"))
     combined = scale * recipe.outer_scale if recipe.outer_scale is not None else scale

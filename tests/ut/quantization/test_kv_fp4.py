@@ -282,21 +282,41 @@ class KVFP4CompileContractTests(unittest.TestCase):
             self.device_tests.mx4_scale_trace(zeros)[2], torch.full_like(x, 2.0**-126), rtol=0, atol=0
         )
 
-    def test_zero_group_masks_raw_floor_failure_but_nonzero_group_does_not(self):
+    def test_e8m0_floor_survives_exp2_underflow_in_qdq_pack_and_unpack(self):
         recipe = codec.FP4Recipe(32, "e8m0")
-        zero = torch.zeros((2, 32), dtype=torch.bfloat16)
-        tiny = torch.full_like(zero, 6 * codec.FP32_MIN_NORMAL)
-        torch.testing.assert_close(codec.qdq_fp4(tiny, recipe), tiny, rtol=0, atol=0)
         original_exp2 = torch.exp2
 
         def flush_floor(x):
             return torch.where(x == -126, 0.0, original_exp2(x))
 
-        # Fault injection explains the oracle boundary; it is not NPU evidence.
-        with patch.object(torch, "exp2", flush_floor):
-            torch.testing.assert_close(codec.qdq_fp4(zero, recipe), zero, rtol=0, atol=0)
-            self.assertEqual(codec._quantize_groups(zero, recipe)[1].tolist(), [[1.0], [1.0]])
-            self.assertFalse(torch.equal(codec.qdq_fp4(tiny, recipe), tiny))
+        for dtype in (torch.float32, torch.bfloat16):
+            values = torch.tensor([0.0, 6 * codec.FP32_MIN_NORMAL, -6 * codec.FP32_MIN_NORMAL], dtype=dtype)
+            pattern = (torch.tensor([0, 1, 2, 3, 4, 6, 2, 4]) * codec.FP32_MIN_NORMAL).to(dtype).repeat(4)[None]
+            host = torch.cat((values[:, None].expand(-1, 32), pattern, -pattern))
+            # Mixed normal-valued levels catch bad normalization as well as a
+            # zero scale. Literal payloads, not the active codec, are the oracle.
+            packed = codec.PackedFP4(
+                torch.tensor(
+                    [[0x00] * 16, [0x77] * 16, [0xFF] * 16, [0x20, 0x54, 0x76, 0x64] * 4, [0xA8, 0xDC, 0xFE, 0xEC] * 4],
+                    dtype=torch.uint8,
+                ),
+                torch.tensor([[127], [1], [1], [1], [1]], dtype=torch.uint8),
+                tuple(host.shape),
+                recipe,
+            )
+            with patch.object(torch, "exp2", flush_floor):
+                self.assertEqual(torch.exp2(torch.tensor([-126.0])).item(), 0.0)  # negative control
+                torch.testing.assert_close(codec.qdq_fp4(host, recipe), host, rtol=0, atol=0)
+                actual = codec.pack_fp4(host, recipe)
+                torch.testing.assert_close(actual.scales, packed.scales, rtol=0, atol=0)
+                torch.testing.assert_close(actual.data, packed.data, rtol=0, atol=0)
+                torch.testing.assert_close(codec.unpack_fp4(packed, dtype), host, rtol=0, atol=0)
+
+    def test_reference_e8m0_scale_bytes_decode_to_literal_fp32_bits(self):
+        scales = torch.arange(1, 255, dtype=torch.uint8)
+        expected_bits = torch.arange(1, 255, dtype=torch.int32) << 23
+        actual = codec._scale_values(scales, codec.FP4Recipe(32, "e8m0"))
+        torch.testing.assert_close(actual.view(torch.int32), expected_bits, rtol=0, atol=0)
 
     def test_opaque_out_buffer_survives_dynamo_and_aot_without_inlining_codec(self):
         from torch._dynamo.backends.registry import lookup_backend

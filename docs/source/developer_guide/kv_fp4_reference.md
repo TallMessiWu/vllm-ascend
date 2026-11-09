@@ -44,6 +44,18 @@ The upward E8M0 recipe is encoded from FP32 exponent/mantissa bits to avoid
 `ceil(log2(x))` losing the distinction immediately above a power of two. The
 finite exponent range is [-126, 127]. Group16 with E8M0 is not called MXFP4.
 
+For this reference's valid biased exponents 1..254, `exp2(e - 127)` is
+mathematically at least `2^-126`. The common scale-value helper restores this
+exact lower bound with a device-side clamp after `exp2`, because the expression
+can return zero at the lower endpoint on NPU. Both scale generation and packed
+scale decoding use it. This does not change exponent selection, RNE, the zero
+group scale of 1, or the reference's accepted scale-byte range. It is not an
+epsilon or a relaxed test tolerance. BF16/E4M3 recipes are unchanged.
+
+This is a candidate correction for the scale endpoint, not a claim about model
+output failures. Real-device regression remains necessary; do not infer that
+previous component results also validate changed runtime arithmetic.
+
 **Do not infer native equivalence from dtype names.** For example, at base commit
 `11c7d88b10db11a7d3f2f747256af2537c1f73cf`, the existing
 `ops/triton/quantize_mxfp4_indexer.py` uses a lower-code midpoint rule, unlike this
@@ -74,7 +86,9 @@ CPU unit tests compare against literal bytes, independent scalar table search,
 struct-based BF16 rounding, native CPU E4M3 casts and CPU Dynamo fullgraph with
 changing values/shapes. Regression tests inject rounded-reciprocal scalar division
 and check exact E4M3 scale bytes at midpoints and their neighboring FP32 inputs.
-They do not import real torch_npu or prove NPU behavior.
+E8M0 regressions inject a zero result at `exp2(-126)`, then check QDQ, packing and
+decoding against literal payloads; scale bytes 1..254 are checked against literal
+IEEE FP32 bits. They do not import real torch_npu or prove NPU behavior.
 
 In an already installed NPU environment, from the source worktree:
 

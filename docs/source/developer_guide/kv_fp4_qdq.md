@@ -118,14 +118,17 @@ capture uses both zero and nonzero inputs, followed by changed-value replay.
 Input/output buffers stay alive at stable addresses, warmup uses the capture
 stream, and comparisons run outside capture before any subsequent output reuse.
 Shapes include 1/33/257 tokens, offset/non-contiguous synthetic split-QKV views,
-and the 1024-row tile boundary. GLOBAL capture mode and zero tolerance remain.
+and the 1024-row tile boundary. MX4 additionally replays nonzero floor inputs to
+regress the scale-value correction. GLOBAL capture mode and zero tolerance remain.
 
-The floor check is separate and strict: it distinguishes raw `exp2(-126)` from
-the effective zero-group scale of 1 and tests nonzero groups at the floor.
-A failure remains RED, even if both opaque paths pass. Do not treat it as proof
-of a model-level root cause or silently change the reference/tolerance to match
-hardware. Failure within a case leaves later inputs unverified; missing runtime
-is an error, not a skip.
+The floor check is separate and strict: it checks the active shared scale helper,
+effective zero/nonzero groups, this reference's scale bytes 1..254 against literal
+FP32 bits, and an independent packed payload. The legacy bare `exp2(-126)` result
+is printed as an observation, not substituted into the corrected oracle.
+Any active mismatch remains RED; the CPU fault-injection regression also retains
+the old zero result as a negative control. Do not treat a scale fix as proof of
+a model-level root cause. Failure within a case leaves later inputs unverified;
+missing runtime is an error, not a skip.
 
 These tests load no model or weights and do not execute native cache writes or
 attention. Passing them does not validate the full worker, fusion/partition,

@@ -32,7 +32,7 @@ def mx4_scale_trace(raw):
     raw = raw.clamp(min=codec.FP32_MIN_NORMAL)
     bits = raw.view(torch.int32)
     exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
-    scale = torch.exp2(exponent.clamp(1, 254).float() - 127)
+    scale = codec._e8m0_scale_values(exponent.clamp(1, 254))
     return bits, exponent, scale
 
 
@@ -227,6 +227,10 @@ class KVFP4DeviceTests(unittest.TestCase):
             label = f"{scale_type} shape={tuple(host.shape)} stride={device.stride()} offset={device.storage_offset()}"
             print(f"CASE {label}", flush=True)
             self.check_compiled_and_replayed(function, opaque, host, device, label)
+        if scale_type == "e8m0":
+            host = torch.full((1, 4, 128), 6 * codec.FP32_MIN_NORMAL, dtype=torch.bfloat16)
+            device = torch.empty_like(host, device="npu")
+            self.check_compiled_and_replayed(function, opaque, host, device, "e8m0 nonzero floor")
 
     @torch.inference_mode()
     def test_mx4_opaque_compile_replay(self):
@@ -238,8 +242,8 @@ class KVFP4DeviceTests(unittest.TestCase):
 
     @torch.inference_mode()
     def test_mx4_scale_floor_eager(self):
-        # Keep the observed raw exp2(-126) failure strict and independent. The
-        # production zero-group override must not be confused with this floor.
+        # Check the active producer and packed reader, not a duplicate of the
+        # legacy exp2 expression. Retain zero tolerance and independent oracles.
         torch.npu.set_compile_mode(jit_compile=False)
         recipe = codec.FP4Recipe(32, "e8m0")
         zero = torch.zeros((2, 32), dtype=torch.bfloat16)
@@ -248,15 +252,41 @@ class KVFP4DeviceTests(unittest.TestCase):
         def effective(x):
             return codec._quantize_groups(x, recipe)[1], codec.qdq_fp4(x, recipe)
 
+        legacy = torch.exp2(torch.tensor([-126.0], device="npu")).cpu().tolist()
+        print(f"LEGACY observation exp2(-126)={legacy}; active codec must satisfy the exact oracle", flush=True)
         for label, function, host in (
             ("effective zero-group scale=1/QDQ=0", effective, zero),
-            ("raw floor bits/exponent/scale", mx4_scale_trace, torch.zeros((7, 3))),
+            ("active raw floor bits/exponent/scale", mx4_scale_trace, torch.zeros((7, 3))),
             ("effective nonzero floor", effective, tiny),
+            ("effective negative nonzero floor", effective, -tiny),
         ):
             with self.subTest(boundary=label):
                 print(f"BOUNDARY {label}", flush=True)
                 self.assert_outputs_equal(function(host.npu()), function(host), label)
                 print(f"PASS boundary {label}", flush=True)
+        with self.subTest(boundary="reference scale bytes 1..254"):
+            scales = torch.arange(1, 255, dtype=torch.uint8).npu()
+            literal = (torch.arange(1, 255, dtype=torch.int32) << 23).view(torch.float32)
+            self.assert_outputs_equal(codec._scale_values(scales, recipe), literal, "reference E8M0 scales 1..254")
+            print("PASS reference E8M0 scales 1..254 against literal FP32 bits", flush=True)
+        with self.subTest(boundary="floor packed payload and reader"):
+            pattern = (torch.tensor([0, 1, 2, 3, 4, 6, 2, 4]) * codec.FP32_MIN_NORMAL).bfloat16().repeat(4)[None]
+            host = torch.cat((zero[:1], tiny[:1], -tiny[:1], pattern, -pattern))
+            literal = codec.PackedFP4(
+                torch.tensor(
+                    [[0x00] * 16, [0x77] * 16, [0xFF] * 16, [0x20, 0x54, 0x76, 0x64] * 4, [0xA8, 0xDC, 0xFE, 0xEC] * 4],
+                    dtype=torch.uint8,
+                    device="npu",
+                ),
+                torch.tensor([[127], [1], [1], [1], [1]], dtype=torch.uint8, device="npu"),
+                tuple(host.shape),
+                recipe,
+            )
+            packed = codec.pack_fp4(host.npu(), recipe)
+            self.assert_outputs_equal((packed.data, packed.scales), (literal.data, literal.scales), "packed floor")
+            self.assert_outputs_equal(codec.unpack_fp4(literal, host.dtype), host, "literal floor reader")
+            self.assert_outputs_equal(codec.qdq_fp4(host.npu(), recipe), host, "mixed floor QDQ")
+            print("PASS floor packed bytes and independent literal payload reader", flush=True)
 
     def test_nonfinite_inputs_are_not_silently_accepted(self):
         for recipe in recipes():
