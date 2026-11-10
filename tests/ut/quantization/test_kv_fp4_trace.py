@@ -3,8 +3,10 @@
 """CPU/mock tests for diagnostic truthfulness; no NPU/runtime imports."""
 
 import importlib.util
+import json
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
@@ -138,6 +140,72 @@ class KVTraceTests(unittest.TestCase):
             report = extension.kv_trace_control("report")
             self.assertEqual(report["status"], "GREEN")
             self.assertEqual(report["allow_internal_format"], "UNVERIFIED: no getter")
+
+    def test_inference_snapshots_survive_rpc_thread_arm_and_report_without_reallocation(self):
+        # Model warmup/capture allocates inference tensors; the executor's RPC
+        # thread does not inherit that thread-local mode. Exercise that boundary
+        # with real CPU Torch tensors, not a mock of the failing zero_ operation.
+        with torch.inference_mode():
+            self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots)
+            self.record(self.key)
+            self.trace.attention.zero_()
+            self.trace.attention_captured = True
+        self.assertTrue(self.trace.count.is_inference())
+
+        def buffers():
+            return [
+                self.trace.count,
+                self.trace.slot,
+                self.trace.attention,
+                *self.trace.raw,
+                *self.trace.qdq,
+                *self.trace.written,
+            ]
+
+        addresses = [tensor.data_ptr() for tensor in buffers()]
+        extension = trace_module.KVTraceWorkerExtension()
+        extension.model_runner = NS()
+        extension.vllm_config = NS(
+            compilation_config=NS(
+                static_forward_context={"layer.0": NS(impl=NS(kv_trace=self.trace, kv_qdq_settings=self.settings))},
+                mode="VLLM_COMPILE",
+                cudagraph_mode="FULL",
+            ),
+            model_config=NS(hf_config=NS(num_hidden_layers=1)),
+        )
+
+        def rpc(action):
+            self.assertFalse(torch.is_inference_mode_enabled())
+            with torch.no_grad():
+                result = extension.kv_trace_control(action)
+            self.assertFalse(torch.is_inference_mode_enabled())
+            return json.loads(json.dumps(result))
+
+        with (
+            patch.object(torch, "npu", NS(synchronize=lambda: None, config=NS()), create=True),
+            patch.object(trace_module.subprocess, "check_output", return_value="fake-sha\n"),
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            for bnsd in (False, True):
+                arm = executor.submit(rpc, "arm").result(timeout=10)
+                self.assertEqual(arm["status"], "ARMED")
+                self.assertEqual(arm["allow_internal_format"], "UNVERIFIED: no getter")
+                self.assertEqual(int(self.trace.count[0]), 0)
+                self.assertEqual(executor.submit(rpc, "report").result(timeout=10)["status"], "UNVERIFIED")
+                executor.submit(rpc, "arm").result(timeout=10)
+                with torch.inference_mode():
+                    for factor in (2.3, -0.7):
+                        self.record(self.key * factor, bnsd)
+                report = executor.submit(rpc, "report").result(timeout=10)
+                self.assertEqual(report["status"], "GREEN", report)
+                self.assertEqual(report["layers"]["layer.0"]["replays"], 2)
+                self.assertTrue(report["layers"]["layer.0"]["attention_finite"])
+                self.assertEqual([tensor.data_ptr() for tensor in buffers()], addresses)
+                executor.submit(rpc, "arm").result(timeout=10)
+                with torch.inference_mode():
+                    self.record(self.key, bnsd)
+                    self.trace.written[0].zero_()
+                self.assertEqual(executor.submit(rpc, "report").result(timeout=10)["status"], "RED")
 
 
 if __name__ == "__main__":

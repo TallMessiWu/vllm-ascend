@@ -97,6 +97,9 @@ class KVReplayTrace:
 class KVTraceWorkerExtension:
     """Use vLLM's worker-extension RPC seam; do not modify either model runner."""
 
+    # The RPC dispatcher does not inherit model execution's inference mode.
+    # Mutate the retained buffers in that mode, preserving captured addresses.
+    @torch.inference_mode()
     def kv_trace_control(self, action):
         if action not in ("arm", "report"):
             raise ValueError("KV trace action must be arm/report")
