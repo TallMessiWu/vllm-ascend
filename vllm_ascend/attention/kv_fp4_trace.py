@@ -30,6 +30,8 @@ MX4_STAGES = (
     "code",
     "dq_fp32",
 )
+EXPONENT_OPS = ("shift", "biased", "mantissa", "nonzero", "round_up", "exponent")
+EXPONENT_CONSTANTS = (("shift", 23), ("exponent_mask", 255), ("mantissa_mask", 0x7FFFFF), ("zero", 0))
 
 
 def read_slots(cache, slots, bnsd):
@@ -43,8 +45,104 @@ def differences(actual, expected):
     """CPU only, exact BF16/FP32/int32 element bits; never called in capture."""
     if actual.dtype != expected.dtype or actual.shape != expected.shape:
         raise ValueError("Diagnostic comparisons require matching shapes and dtypes")
+    if actual.dtype == torch.bool:
+        return int((actual != expected).sum())
     view_dtype = torch.int32 if actual.element_size() == 4 else torch.int16
     return int((actual.contiguous().view(view_dtype) != expected.contiguous().view(view_dtype)).sum())
+
+
+def exponent_steps(bits, constants=None):
+    operands = dict(EXPONENT_CONSTANTS) if constants is None else constants
+    shift = bits >> operands["shift"]
+    biased = shift & operands["exponent_mask"]
+    mantissa = bits & operands["mantissa_mask"]
+    nonzero = mantissa != operands["zero"]
+    round_up = nonzero.to(torch.int32)
+    return {
+        "shift": shift,
+        "biased": biased,
+        "mantissa": mantissa,
+        "nonzero": nonzero,
+        "round_up": round_up,
+        "exponent": biased + round_up,
+    }
+
+
+class ExponentOpTrace:
+    """Shadow-only scalar/tensor comparison on the same live integer input.
+
+    Device constants and output snapshots are owned for the full graph lifetime.
+    Arm refreshes constants outside capture, without changing their addresses.
+    No shadow result is fed back to the active codec.
+    """
+
+    def __init__(self, template):
+        self.constants = {
+            name: torch.full((1,), value, dtype=torch.int32, device=template.device)
+            for name, value in EXPONENT_CONSTANTS
+        }
+        self.outputs = [
+            {
+                mode: {
+                    name: torch.empty_like(template, dtype=torch.bool if name == "nonzero" else torch.int32)
+                    for name in EXPONENT_OPS
+                }
+                for mode in ("scalar", "tensor")
+            }
+            for _ in range(2)
+        ]
+        self.seen = [set(), set()]
+        # Exercise both native overloads before graph capture. These warmup
+        # outputs are not replay evidence; only capture repopulates coverage.
+        warmup_bits = torch.zeros_like(template)
+        for side in range(2):
+            self.capture(side, warmup_bits)
+        self.seen = [set(), set()]
+
+    def arm(self):
+        for name, value in EXPONENT_CONSTANTS:
+            self.constants[name].fill_(value)
+
+    def capture(self, side, bits):
+        for mode, constants in (("scalar", None), ("tensor", self.constants)):
+            for name, value in exponent_steps(bits, constants).items():
+                self.outputs[side][mode][name].copy_(value)
+                self.seen[side].add((mode, name))
+
+    def report(self, side, bits, active):
+        constant_errors = {name: int((self.constants[name].cpu() != value).sum()) for name, value in EXPONENT_CONSTANTS}
+        result = {"constant_errors": constant_errors}
+        host_bits = bits.cpu()
+        cpu = exponent_steps(host_bits)
+        for mode, constants in (("scalar", None), ("tensor", self.constants)):
+            if any((mode, name) not in self.seen[side] for name in EXPONENT_OPS):
+                result[mode] = {"status": "UNVERIFIED", "reason": "missing captured integer steps"}
+                continue
+            if mode == "tensor" and any(constant_errors.values()):
+                result[mode] = {"status": "UNVERIFIED", "reason": "device constants changed"}
+                continue
+            eager = exponent_steps(bits, constants)
+            row = {"status": "GREEN", "first_replay_divergence": "none", "steps": {}}
+            for name in EXPONENT_OPS:
+                actual, reference = self.outputs[side][mode][name].cpu(), eager[name].cpu()
+                counts = {
+                    "replay_vs_npu_eager": differences(actual, reference),
+                    "replay_vs_cpu": differences(actual, cpu[name]),
+                    "npu_eager_vs_cpu": differences(reference, cpu[name]),
+                }
+                row["steps"][name] = counts
+                if counts["replay_vs_npu_eager"] and row["first_replay_divergence"] == "none":
+                    row["first_replay_divergence"] = name
+                    delta = actual.to(torch.int64) - reference.to(torch.int64)
+                    values, sizes = torch.unique(delta, return_counts=True)
+                    row["first_bad_delta_histogram"] = {
+                        str(value): size for value, size in zip(values.tolist(), sizes.tolist())
+                    }
+                if any(counts.values()):
+                    row["status"] = "RED"
+            row["active_vs_shadow_exponent"] = differences(active, self.outputs[side][mode]["exponent"].cpu())
+            result[mode] = row
+        return result
 
 
 class KVReplayTrace:
@@ -62,6 +160,7 @@ class KVReplayTrace:
         self.raw_after = [torch.empty_like(t) for t in self.raw] if detailed else None
         self.stages = None
         self.captured_stages = [set(), set()]
+        self.exponent_probe = None
         if detailed:
             rows, width = key.numel() // key.shape[-1], key.shape[-1]
             group_shape = (rows, (width + MX4_TRACE_GROUP - 1) // MX4_TRACE_GROUP)
@@ -80,6 +179,12 @@ class KVReplayTrace:
                 }
                 for _ in range(2)
             ]
+            self.exponent_probe = ExponentOpTrace(self.stages[0]["exponent"])
+
+    def arm(self):
+        self.count.zero_()
+        if self.exponent_probe is not None:
+            self.exponent_probe.arm()
 
     def observer(self, side):
         return partial(self._save_stage, 0 if side == "k" else 1) if self.stages is not None else None
@@ -87,6 +192,8 @@ class KVReplayTrace:
     def _save_stage(self, side, name, tensor):
         self.stages[side][name].copy_(tensor)
         self.captured_stages[side].add(name)  # capture coverage, not a replay counter
+        if name == "scale_bits":
+            self.exponent_probe.capture(side, tensor)
 
     def before(self, key, value, slots):
         self.capture_calls += 1  # Python capture events, not a replay counter
@@ -138,6 +245,9 @@ class KVReplayTrace:
         # Keep the legacy name as an alias for the graph-versus-eager question.
         # Cross-device FP32 differences are evidence, not automatically a graph failure.
         result["first_divergence"] = result["first_replay_divergence"]
+        result["exponent_ops"] = self.exponent_probe.report(
+            side, self.stages[side]["scale_bits"], self.stages[side]["exponent"].cpu()
+        )
         return result
 
     def after_writer(self, key_cache, value_cache, bnsd):
@@ -207,6 +317,12 @@ class KVReplayTrace:
                     row["status"] = "UNVERIFIED"
                 elif detail["first_divergence"] not in ("none", "UNVERIFIED: missing stages"):
                     row["status"] = "RED"
+                if "exponent_ops" in detail:
+                    statuses = {detail["exponent_ops"][mode]["status"] for mode in ("scalar", "tensor")}
+                    if "RED" in statuses:
+                        row["status"] = "RED"
+                    elif "UNVERIFIED" in statuses and row["status"] != "RED":
+                        row["status"] = "UNVERIFIED"
         row["attention_finite"] = bool(torch.isfinite(self.attention.cpu()).all()) if self.attention_captured else None
         if row["attention_finite"] is False:
             row["status"] = "RED"
@@ -240,8 +356,9 @@ class KVTraceWorkerExtension:
             # a getter. Optional metadata must not prevent arm/report.
             "allow_internal_format": getattr(torch.npu.config, "allow_internal_format", "UNVERIFIED: no getter"),
             "operation": "mx4 K+V qdq; diagnostic_trace=true",
-            "trace_version": 3,
+            "trace_version": 4,
             "exponent_input": "materialized_int32",
+            "exponent_probe": "shadow_scalar_and_stable_tensor",
             "detail_layer": next(
                 (name for name, impl in selected if impl.kv_trace is not None and impl.kv_trace.stages is not None),
                 None,
@@ -258,7 +375,7 @@ class KVTraceWorkerExtension:
             if trace is None or trace.capture_calls == 0:
                 result["layers"][name] = {"status": "UNVERIFIED", "reason": "no captured one-token writer"}
             elif action == "arm":
-                trace.count.zero_()
+                trace.arm()
                 result["layers"][name] = {"status": "ARMED"}
             elif armed:
                 result["layers"][name] = trace.report(impl.kv_qdq_settings)

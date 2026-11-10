@@ -108,6 +108,18 @@ aliases the former. Cross-device FP32 intermediate differences alone do not
 mark a graph failure when final quantized values agree. An exponent-difference
 histogram is read on CPU only at the idle reporting boundary.
 
+`trace_version=4` leaves that active expression unchanged and adds shadow-only
+integer sub-operation checks in the detailed layer. The same live bits feed
+scalar and persistent-device-Tensor operand paths: right shift, exponent mask,
+mantissa mask, nonzero comparison, bool-to-int32 conversion and addition.
+Constants are allocated during warmup and refreshed in place by idle arm RPC;
+their values are checked before interpreting the Tensor control. Snapshots and
+constants retain their addresses. Each shadow path is compared with NPU eager
+and CPU, as well as the active expression's exponent. Missing steps or corrupt
+constants are unverified; no shadow value feeds the active codec. These extra
+operations perturb timing and cannot establish a model repair. The client keeps
+global layer/seam coverage while expanding only the detailed layer.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.

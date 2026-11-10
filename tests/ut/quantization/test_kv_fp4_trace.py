@@ -86,6 +86,63 @@ class KVTraceTests(unittest.TestCase):
 
     def test_bit_comparison_includes_signed_zero(self):
         self.assertEqual(trace_module.differences(torch.tensor([0.0]).bfloat16(), torch.tensor([-0.0]).bfloat16()), 1)
+        self.assertEqual(trace_module.differences(torch.tensor([True]), torch.tensor([False])), 1)
+
+    def test_scalar_and_tensor_shadow_steps_and_constant_ownership(self):
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.assertEqual(self.trace.exponent_probe.seen, [set(), set()])
+        self.assertEqual(int(self.trace.count[0]), 0)
+        for factor in (1.0, 2.3, 0.0, -0.7):
+            self.record(self.key * factor)
+            row = self.trace.report(self.settings)
+            self.assertEqual(row["status"], "GREEN", row)
+            for side in ("k", "v"):
+                probes = row[side]["detail"]["exponent_ops"]
+                self.assertFalse(any(probes["constant_errors"].values()))
+                for mode in ("scalar", "tensor"):
+                    self.assertEqual(probes[mode]["first_replay_divergence"], "none")
+                    self.assertEqual(probes[mode]["active_vs_shadow_exponent"], 0)
+        self.trace.exponent_probe.outputs[0]["scalar"]["shift"].add_(1)
+        row = self.trace.report(self.settings)
+        probes = row["k"]["detail"]["exponent_ops"]
+        self.assertEqual(row["status"], "RED")
+        self.assertEqual(probes["scalar"]["first_replay_divergence"], "shift")
+        self.assertEqual(probes["tensor"]["status"], "GREEN")
+        self.trace.exponent_probe.constants["shift"].zero_()
+        self.assertEqual(
+            self.trace.report(self.settings)["k"]["detail"]["exponent_ops"]["tensor"]["status"], "UNVERIFIED"
+        )
+        addresses = {name: tensor.data_ptr() for name, tensor in self.trace.exponent_probe.constants.items()}
+        self.trace.arm()
+        self.assertEqual(
+            {name: tensor.data_ptr() for name, tensor in self.trace.exponent_probe.constants.items()}, addresses
+        )
+        self.record(self.key)
+        self.assertEqual(self.trace.report(self.settings)["status"], "GREEN")
+
+    def test_shadow_exponent_steps_match_literal_integer_arithmetic(self):
+        words = [(exponent << 23) | fraction for exponent in range(1, 255) for fraction in (0, 1, 0x2AAAAA, 0x7FFFFF)]
+        bits = torch.tensor(words, dtype=torch.int32).reshape(-1, 4)
+        constants = {name: torch.tensor([value], dtype=torch.int32) for name, value in trace_module.EXPONENT_CONSTANTS}
+        expected = {
+            "shift": [word >> 23 for word in words],
+            "biased": [(word >> 23) & 255 for word in words],
+            "mantissa": [word & 0x7FFFFF for word in words],
+            "nonzero": [(word & 0x7FFFFF) != 0 for word in words],
+            "round_up": [int((word & 0x7FFFFF) != 0) for word in words],
+            "exponent": [((word >> 23) & 255) + int((word & 0x7FFFFF) != 0) for word in words],
+        }
+        for operands in (None, constants):
+            actual = trace_module.exponent_steps(bits, operands)
+            for name, values in expected.items():
+                self.assertEqual(actual[name].flatten().tolist(), values, name)
+
+    def test_missing_shadow_steps_are_unverified(self):
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.record(self.key)
+        self.trace.exponent_probe.seen[0].discard(("tensor", "shift"))
+        row = self.trace.report(self.settings)
+        self.assertEqual(row["status"], "UNVERIFIED")
 
     def test_detailed_stages_detect_first_corruption_and_input_change(self):
         self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
@@ -241,6 +298,13 @@ class KVTraceTests(unittest.TestCase):
                 *self.trace.written,
                 *self.trace.raw_after,
                 *(tensor for side in self.trace.stages for tensor in side.values()),
+                *self.trace.exponent_probe.constants.values(),
+                *(
+                    tensor
+                    for side in self.trace.exponent_probe.outputs
+                    for mode in side.values()
+                    for tensor in mode.values()
+                ),
             ]
 
         addresses = [tensor.data_ptr() for tensor in buffers()]
