@@ -56,6 +56,34 @@ No input mutation, cached tensors, host reads, graph-mode change, new native op
 or model-runner patch is introduced. Copies are device operations recorded for
 replay; real model graph validation remains required.
 
+### Bounded replay seam diagnostic
+
+`diagnostic_trace` defaults to `false`. It accepts a JSON boolean and requires
+ordinary `mx4`, `target=kv`, with copy-only disabled. This temporary diagnostic
+uses the existing worker extension `vllm_ascend.attention.kv_fp4_trace.KVTraceWorkerExtension`.
+The local-loopback diagnostic server can use vLLM's existing development RPC
+to call `kv_trace_control` with `arm` before requests and `report` after requests.
+It needs no model-runner patch, native build or new dependency.
+
+Each layer allocates one fixed snapshot in one-token warmup, retaining the
+buffers for capture/replay. Captured device operations copy raw K/V, QDQ output,
+the writer's effective slot and attention output; no host tensor read or
+synchronization is added there. Only one-token graphs are sampled. Arm clears
+device counters after startup; an idle-worker report synchronizes and compares
+the last replay's same-input QDQ with NPU eager and CPU executions of the tested
+codec, and compares the writer slot with the QDQ snapshot, using exact BF16 bits.
+The eager computation uses the same flattened row shape on a contiguous snapshot;
+it does not reproduce the original input's internal NPU format. Invalid slots,
+missing layers, missing arm or zero replays cannot pass. Attention is checked
+for finiteness only, not against an eager attention oracle.
+
+This can distinguish a sampled QDQ discrepancy from a sampled writer discrepancy.
+It does not cover prefill, earlier steps, other batches, complete attention,
+model quality or performance. Copies and gathers perturb allocation/timing;
+a normal answer under instrumentation is not a repair. Remove the diagnostic
+when the investigation closes. The default experiment does not enable it or
+the development RPC. Test-only CPU mocks do not validate NPU graph capture.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.

@@ -103,6 +103,17 @@ class KVQDQConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.validate_kv_qdq_runtime(cfg)
 
+    def test_trace_requires_boolean_and_ordinary_mx4_kv(self):
+        base = {"format": "mx4", "target": "kv"}
+        self.assertFalse(config.parse_kv_qdq(base).diagnostic_trace)
+        self.assertTrue(config.parse_kv_qdq({**base, "diagnostic_trace": True}).diagnostic_trace)
+        for bad in (1, 0, None, "true"):
+            with self.assertRaisesRegex(ValueError, "diagnostic_trace"):
+                config.parse_kv_qdq({**base, "diagnostic_trace": bad})
+        for overrides in ({"target": "off"}, {"format": "g32-b"}, {"diagnostic_copy": True}):
+            with self.assertRaisesRegex(ValueError, "diagnostic_trace"):
+                config.parse_kv_qdq({**base, **overrides, "diagnostic_trace": True})
+
 
 if __name__ == "__main__":
     unittest.main()

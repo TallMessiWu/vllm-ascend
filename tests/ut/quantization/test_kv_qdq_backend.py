@@ -52,7 +52,7 @@ class CacheWriterParent:
         kv_cache[1].copy_(value)
 
 
-def load_backend(target="kv", name="g16-b", diagnostic_copy=False):
+def load_backend(target="kv", name="g16-b", diagnostic_copy=False, diagnostic_trace=False):
     runtime = NS(
         model_config=NS(dtype=torch.bfloat16, hf_config=NS(model_type="qwen3_moe")),
         cache_config=NS(cache_dtype="bfloat16", enable_prefix_caching=False),
@@ -71,6 +71,8 @@ def load_backend(target="kv", name="g16-b", diagnostic_copy=False):
     )
     if diagnostic_copy:
         runtime.additional_config["kv_fp4_qdq"]["diagnostic_copy"] = diagnostic_copy
+    if diagnostic_trace:
+        runtime.additional_config["kv_fp4_qdq"]["diagnostic_trace"] = diagnostic_trace
     modules = {
         "vllm.config": NS(get_current_vllm_config=lambda: runtime),
         "vllm.logger": NS(logger=NS(info_once=lambda *a, **kw: None)),
@@ -92,6 +94,41 @@ class KVQDQBackendTests(unittest.TestCase):
     def create(self, target):
         module = load_backend(target)
         return module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+
+    def test_trace_is_preallocated_in_warmup_and_only_records_during_capture(self):
+        trace_spec = importlib.util.spec_from_file_location(
+            "backend_trace_test", ROOT / "vllm_ascend/attention/kv_fp4_trace.py"
+        )
+        trace_module = importlib.util.module_from_spec(trace_spec)
+        with patch.dict(sys.modules, {"vllm_ascend.quantization.kv_fp4": codec}):
+            trace_spec.loader.exec_module(trace_module)
+        module = load_backend(name="mx4", diagnostic_trace=True)
+        backend = module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+        q = torch.zeros(1, 2, 16, dtype=torch.bfloat16)
+        k = torch.arange(16, dtype=torch.bfloat16).reshape(1, 1, 16)
+        cache = [torch.zeros(1, 1, 1, 16, dtype=torch.bfloat16) for _ in range(2)]
+        backend.key_cache, backend.value_cache = cache
+        backend.use_bnsd_kv_cache = False
+        metadata = NS(slot_mapping=torch.tensor([0], dtype=torch.int32))
+        capturing = [False]
+        with (
+            patch.dict(sys.modules, {"vllm_ascend.attention.kv_fp4_trace": trace_module}),
+            patch.object(torch, "npu", NS(is_current_stream_capturing=lambda: capturing[0]), create=True),
+        ):
+            backend.reshape_and_cache(q, k, -k, cache, metadata, q.clone())
+            self.assertEqual(int(backend.kv_trace.count[0]), 0)
+            retained = backend.kv_trace
+            capturing[0] = True
+            backend.reshape_and_cache(q, k * 2.3, -k * 2.3, cache, metadata, q.clone())
+            self.assertIs(backend.kv_trace, retained)
+            self.assertEqual(retained.report(backend.kv_qdq_settings)["status"], "GREEN")
+            capturing[0] = False
+            backend.reshape_and_cache(q, k * 0.7, -k * 0.7, cache, metadata, q.clone())
+            self.assertEqual(int(retained.count[0]), 1)
+            backend.kv_trace = None
+            capturing[0] = True
+            with self.assertRaisesRegex(RuntimeError, "warmup"):
+                backend.reshape_and_cache(q, k, -k, cache, metadata, q.clone())
 
     def test_cache_writer_and_direct_prefill_receive_identical_qdq_values(self):
         q = torch.randn(2, 2, 16).bfloat16()

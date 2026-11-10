@@ -71,6 +71,7 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
         if kv_cache_dtype not in ("auto", "bfloat16"):
             raise ValueError("KV QDQ must not change the native cache storage dtype")
         self.kv_qdq_settings = settings  # immutable recipe, fixed before warmup/capture
+        self.kv_trace = None  # optional, per-layer device buffers retained across replay
         super().__init__(
             num_heads,
             head_size,
@@ -129,11 +130,36 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
     def reshape_and_cache(self, query, key, value, kv_cache, attn_metadata, output):
         if not getattr(attn_metadata, "causal", True):
             raise ValueError("KV QDQ reference requires causal attention metadata")
+        recording = False
+        if self.kv_qdq_settings.diagnostic_trace and key is not None and key.shape[0] == 1 and len(kv_cache) > 1:
+            # Lazy import keeps the normal experiment independent of diagnostics.
+            from vllm_ascend.attention.kv_fp4_trace import KVReplayTrace
+
+            capturing = torch.npu.is_current_stream_capturing()
+            if self.kv_trace is None:
+                if capturing:
+                    raise RuntimeError("KV trace requires a one-token warmup before capture")
+                self.kv_trace = KVReplayTrace(key, query, attn_metadata.slot_mapping)
+            recording = capturing
+            if recording:
+                self.kv_trace.before(key, value, attn_metadata.slot_mapping)
         key, value = self._transform_kv(key, value)
+        if recording:
+            self.kv_trace.transformed(key, value)
         # The parent returns these K/V to its direct prefill path as well as
         # writing them to the persistent BF16 cache. Returning original K/V
         # here would leave PrefillNoCache mathematically unquantized.
-        return super().reshape_and_cache(query, key, value, kv_cache, attn_metadata, output)
+        result = super().reshape_and_cache(query, key, value, kv_cache, attn_metadata, output)
+        if recording:
+            self.kv_trace.after_writer(self.key_cache, self.value_cache, self.use_bnsd_kv_cache)
+        return result
+
+    def forward_impl(self, query, key, value, kv_cache, attn_metadata, output):
+        result = super().forward_impl(query, key, value, kv_cache, attn_metadata, output)
+        if self.kv_trace is not None and query.shape[0] == 1 and torch.npu.is_current_stream_capturing():
+            self.kv_trace.attention.copy_(result.reshape(1, self.num_heads, self.head_size))
+            self.kv_trace.attention_captured = True
+        return result
 
     def do_kv_cache_update(self, layer, key, value, kv_cache, slot_mapping):
         key, value = self._transform_kv(key, value)
