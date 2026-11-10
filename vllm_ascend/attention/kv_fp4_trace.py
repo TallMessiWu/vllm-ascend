@@ -114,7 +114,9 @@ class KVTraceWorkerExtension:
             "runner": f"{type(runner).__module__}.{type(runner).__name__}",
             "module": str(Path(__file__).resolve()),
             "commit": subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
-            "allow_internal_format": torch.npu.config.allow_internal_format,
+            # Some torch_npu releases accept assignment here without exposing
+            # a getter. Optional metadata must not prevent arm/report.
+            "allow_internal_format": getattr(torch.npu.config, "allow_internal_format", "UNVERIFIED: no getter"),
             "operation": "mx4 K+V qdq; diagnostic_trace=true",
             "compilation": str(self.vllm_config.compilation_config.mode)
             + "/"

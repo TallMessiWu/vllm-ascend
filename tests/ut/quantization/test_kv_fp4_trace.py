@@ -108,6 +108,37 @@ class KVTraceTests(unittest.TestCase):
             extension.vllm_config.model_config.hf_config.num_hidden_layers = 2
             self.assertEqual(extension.kv_trace_control("arm")["status"], "UNVERIFIED")
 
+    def test_write_only_config_does_not_block_arm_or_report(self):
+        class WriteOnlyConfig:
+            def __setattr__(self, name, value):
+                pass  # Matches a setter that does not expose a Python getter.
+
+        npu_config = WriteOnlyConfig()
+        npu_config.allow_internal_format = True
+        self.assertFalse(hasattr(npu_config, "allow_internal_format"))
+        extension = trace_module.KVTraceWorkerExtension()
+        extension.model_runner = NS()
+        extension.vllm_config = NS(
+            compilation_config=NS(
+                static_forward_context={"layer.0": NS(impl=NS(kv_trace=self.trace, kv_qdq_settings=self.settings))},
+                mode="VLLM_COMPILE",
+                cudagraph_mode="FULL",
+            ),
+            model_config=NS(hf_config=NS(num_hidden_layers=1)),
+        )
+        self.record(self.key)
+        with (
+            patch.object(torch, "npu", NS(synchronize=lambda: None, config=npu_config), create=True),
+            patch.object(trace_module.subprocess, "check_output", return_value="fake-sha\n"),
+        ):
+            arm = extension.kv_trace_control("arm")
+            self.assertEqual(arm["status"], "ARMED")
+            self.assertEqual(arm["allow_internal_format"], "UNVERIFIED: no getter")
+            self.record(self.key * 2.3)
+            report = extension.kv_trace_control("report")
+            self.assertEqual(report["status"], "GREEN")
+            self.assertEqual(report["allow_internal_format"], "UNVERIFIED: no getter")
+
 
 if __name__ == "__main__":
     unittest.main()
