@@ -120,6 +120,24 @@ constants are unverified; no shadow value feeds the active codec. These extra
 operations perturb timing and cannot establish a model repair. The client keeps
 global layer/seam coverage while expanding only the detailed layer.
 
+### Active MX4 tensor shift
+
+The model backend now owns one immutable device int32 `[23]` per layer. Its first
+eager warmup initializes the constant with a blocking CPU-to-device copy before
+marking it ready; initialization during capture is rejected. Every subsequent
+tile/request reuses the same Tensor address as the exponent right-shift operand.
+No per-step host read, transfer or synchronization is added. Masks, rounding and
+E8M0 reconstruction are unchanged. Off/copy-only/other formats do not allocate it.
+This path also applies with diagnostic tracing disabled and needs no model-runner
+patch or native rebuild. Direct MX4 graph users of `qdq_fp4` must similarly pass
+a prepared `exponent_shift`; omission retains the offline/eager scalar reference.
+
+The repair-validation report (`trace_version=5`) reads and validates every
+serving shift buffer without refreshing it, then compares active QDQ/cache values.
+Known-failing scalar shadows are disabled by default; the legacy shadow helper
+remains an explicit internal test option. Passing first-layer shadow tests alone
+does not validate all layers, uninstrumented execution or model quality.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.
@@ -152,8 +170,9 @@ quantize queries or change router/model weights; downstream hidden states,
 queries and routing may still change because of KV error. Unsupported sharing
 modes are rejected instead of overwriting slots.
 
-Recipes are validated and immutable before warmup/capture. Forward uses only
-shape checks and device arithmetic; no device `.item()`, `.cpu()`, value-derived
+Recipes are validated and immutable before warmup/capture. After the one-time
+eager shift initialization described above, forward uses only metadata checks
+and device arithmetic; no device `.item()`, `.cpu()`, value-derived
 Python state, or activation caching is introduced. Temporary FP32 work is tiled
 at 1024 token/head rows without changing scheduler budgets; this is not an HBM
 peak guarantee. Replay must still be tested

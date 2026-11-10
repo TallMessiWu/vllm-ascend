@@ -69,6 +69,23 @@ def recipes():
 
 
 class KVFP4Tests(unittest.TestCase):
+    def test_mx4_tensor_shift_matches_scalar_oracle_and_rejects_invalid_metadata(self):
+        recipe = codec.FP4Recipe(32, "e8m0")
+        shift = torch.tensor([23], dtype=torch.int32)
+        for dtype in (torch.float32, torch.bfloat16):
+            x = torch.linspace(-9.1, 6.7, 259).reshape(7, 37).to(dtype)
+            actual = codec.qdq_fp4(x, recipe, exponent_shift=shift)
+            expected = torch.tensor([scalar_reference(row, recipe) for row in x.float().tolist()]).to(dtype)
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        for invalid in (
+            torch.tensor(23, dtype=torch.int32),
+            torch.tensor([23.0]),
+            torch.tensor([23, 23], dtype=torch.int32),
+            torch.empty(1, dtype=torch.int32, device="meta"),
+        ):
+            with self.assertRaisesRegex(ValueError, "exponent_shift"):
+                codec.qdq_fp4(x, recipe, exponent_shift=invalid)
+
     def test_mx4_exponent_input_has_independent_integer_storage(self):
         recipe = codec.FP4Recipe(32, "e8m0")
         x = torch.linspace(-6.0, 6.0, 128).reshape(4, 32)

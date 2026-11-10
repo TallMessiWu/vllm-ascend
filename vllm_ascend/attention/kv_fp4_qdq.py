@@ -12,7 +12,7 @@ from vllm.config import get_current_vllm_config
 from vllm.logger import logger
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend, AscendAttentionBackendImpl
-from vllm_ascend.quantization.kv_fp4 import qdq_fp4
+from vllm_ascend.quantization.kv_fp4 import FP32_EXPONENT_SHIFT, qdq_fp4
 from vllm_ascend.quantization.kv_qdq_config import parse_kv_qdq, validate_kv_qdq_runtime
 
 # Bound temporary FP32 buffers without changing model/scheduler token budgets.
@@ -20,15 +20,18 @@ QDQ_TILE_ROWS = 1024
 TRACE_DETAIL_LAYER = "model.layers.0.self_attn.attn"
 
 
-def _qdq_tiled(tensor, recipe, observer=None):
+def _qdq_tiled(tensor, recipe, observer=None, exponent_shift=None):
     shape = tensor.shape
     rows = tensor.reshape(-1, shape[-1])
     if rows.shape[0] <= QDQ_TILE_ROWS:
-        return qdq_fp4(rows, recipe, observer=observer).reshape(shape)
+        return qdq_fp4(rows, recipe, observer=observer, exponent_shift=exponent_shift).reshape(shape)
     if observer is not None:
         raise ValueError("Detailed KV trace only supports a single QDQ tile")
     return torch.cat(
-        [qdq_fp4(rows[start : start + QDQ_TILE_ROWS], recipe) for start in range(0, rows.shape[0], QDQ_TILE_ROWS)]
+        [
+            qdq_fp4(rows[start : start + QDQ_TILE_ROWS], recipe, exponent_shift=exponent_shift)
+            for start in range(0, rows.shape[0], QDQ_TILE_ROWS)
+        ]
     ).reshape(shape)
 
 
@@ -75,6 +78,7 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             raise ValueError("KV QDQ must not change the native cache storage dtype")
         self.kv_qdq_settings = settings  # immutable recipe, fixed before warmup/capture
         self.kv_trace = None  # optional, per-layer device buffers retained across replay
+        self._mx4_shift = None  # model-owned constant, independent of diagnostics
         super().__init__(
             num_heads,
             head_size,
@@ -98,6 +102,21 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             else ("copy-only (no quantization)" if settings.diagnostic_copy else "qdq"),
         )
 
+    def _prepare_mx4_shift(self, device):
+        if self._mx4_shift is None:
+            npu = getattr(torch, "npu", None)
+            if npu is not None and npu.is_current_stream_capturing():
+                raise RuntimeError("MX4 shift requires eager initialization before capture")
+            # This blocking copy is performed once during eager warmup. Assign
+            # readiness only after it completes; replay records no scalar H2D.
+            self._mx4_shift = torch.tensor([FP32_EXPONENT_SHIFT], dtype=torch.int32, device="cpu").to(
+                device=device, non_blocking=False
+            )
+            logger.info_once("MX4 exponent shift uses a persistent device int32 tensor, initialized before capture")
+        if self._mx4_shift.device != device:
+            raise ValueError("MX4 shift buffer must stay on its model device")
+        return self._mx4_shift
+
     def _transform_kv(self, key, value, trace=None):
         if key is None or value is None:
             if key is not None or value is not None:
@@ -113,6 +132,11 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
         if key.shape != value.shape or key.device != value.device:
             raise ValueError("K/V shapes and devices must match")
         settings = self.kv_qdq_settings
+        shift = (
+            self._prepare_mx4_shift(key.device)
+            if settings.format == "mx4" and settings.target != "off" and not settings.diagnostic_copy
+            else None
+        )
         # Explicit value-preserving control for the same writer/prefill seam.
         # No cached values or host reads; device copies are recorded for replay.
         # This does not reproduce all QDQ workspaces or timing.
@@ -120,13 +144,23 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             key = (
                 key.clone(memory_format=torch.contiguous_format)
                 if settings.diagnostic_copy
-                else _qdq_tiled(key, settings.k_recipe, observer=trace.observer("k") if trace is not None else None)
+                else _qdq_tiled(
+                    key,
+                    settings.k_recipe,
+                    observer=trace.observer("k") if trace is not None else None,
+                    exponent_shift=shift,
+                )
             )
         if settings.target in ("v", "kv"):
             value = (
                 value.clone(memory_format=torch.contiguous_format)
                 if settings.diagnostic_copy
-                else _qdq_tiled(value, settings.v_recipe, observer=trace.observer("v") if trace is not None else None)
+                else _qdq_tiled(
+                    value,
+                    settings.v_recipe,
+                    observer=trace.observer("v") if trace is not None else None,
+                    exponent_shift=shift,
+                )
             )
         return key, value
 

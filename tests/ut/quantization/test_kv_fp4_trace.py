@@ -89,7 +89,7 @@ class KVTraceTests(unittest.TestCase):
         self.assertEqual(trace_module.differences(torch.tensor([True]), torch.tensor([False])), 1)
 
     def test_scalar_and_tensor_shadow_steps_and_constant_ownership(self):
-        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True, probe_ops=True)
         self.assertEqual(self.trace.exponent_probe.seen, [set(), set()])
         self.assertEqual(int(self.trace.count[0]), 0)
         for factor in (1.0, 2.3, 0.0, -0.7):
@@ -138,7 +138,7 @@ class KVTraceTests(unittest.TestCase):
                 self.assertEqual(actual[name].flatten().tolist(), values, name)
 
     def test_missing_shadow_steps_are_unverified(self):
-        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True, probe_ops=True)
         self.record(self.key)
         self.trace.exponent_probe.seen[0].discard(("tensor", "shift"))
         row = self.trace.report(self.settings)
@@ -173,11 +173,19 @@ class KVTraceTests(unittest.TestCase):
         self.assertEqual(row["status"], "UNVERIFIED")
         self.assertEqual(row["k"]["detail"]["missing_stages"], ["amax"])
 
+    def test_default_detailed_trace_runs_no_scalar_shadow(self):
+        with patch.object(trace_module, "ExponentOpTrace", side_effect=AssertionError("legacy scalar probe created")):
+            self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+            self.record(self.key)
+            row = self.trace.report(self.settings, exponent_shift=torch.tensor([23], dtype=torch.int32))
+        self.assertEqual(row["status"], "GREEN")
+        self.assertNotIn("exponent_ops", row["k"]["detail"])
+
     def test_equal_mismatch_counts_do_not_imply_equal_oracles(self):
         self.record(self.key)
         calls = [0]
 
-        def different_oracles(tensor, recipe, observer=None):
+        def different_oracles(tensor, recipe, observer=None, exponent_shift=None):
             calls[0] += 1
             return codec.qdq_fp4(tensor, recipe) + (1 if calls[0] % 2 else 2)
 
@@ -191,7 +199,7 @@ class KVTraceTests(unittest.TestCase):
         self.record(self.key)
         calls = [0]
 
-        def oracle_with_fp32_difference(tensor, recipe, observer=None):
+        def oracle_with_fp32_difference(tensor, recipe, observer=None, exponent_shift=None):
             calls[0] += 1
             cpu_call = calls[0] % 2 == 0
 
@@ -222,7 +230,7 @@ class KVTraceTests(unittest.TestCase):
 
     def test_rpc_requires_arm_and_rejects_missing_layers(self):
         extension = trace_module.KVTraceWorkerExtension()
-        impl = NS(kv_trace=self.trace, kv_qdq_settings=self.settings)
+        impl = NS(kv_trace=self.trace, kv_qdq_settings=self.settings, _mx4_shift=torch.tensor([23], dtype=torch.int32))
         extension.model_runner = NS()
         extension.vllm_config = NS(
             compilation_config=NS(
@@ -258,7 +266,15 @@ class KVTraceTests(unittest.TestCase):
         extension.model_runner = NS()
         extension.vllm_config = NS(
             compilation_config=NS(
-                static_forward_context={"layer.0": NS(impl=NS(kv_trace=self.trace, kv_qdq_settings=self.settings))},
+                static_forward_context={
+                    "layer.0": NS(
+                        impl=NS(
+                            kv_trace=self.trace,
+                            kv_qdq_settings=self.settings,
+                            _mx4_shift=torch.tensor([23], dtype=torch.int32),
+                        )
+                    )
+                },
                 mode="VLLM_COMPILE",
                 cudagraph_mode="FULL",
             ),
@@ -276,6 +292,29 @@ class KVTraceTests(unittest.TestCase):
             report = extension.kv_trace_control("report")
             self.assertEqual(report["status"], "GREEN")
             self.assertEqual(report["allow_internal_format"], "UNVERIFIED: no getter")
+
+    def test_arm_validates_serving_shift_without_refreshing_or_replacing_it(self):
+        self.record(self.key)
+        shift = torch.tensor([22], dtype=torch.int32)
+        impl = NS(kv_trace=self.trace, kv_qdq_settings=self.settings, _mx4_shift=shift)
+        worker = trace_module.KVTraceWorkerExtension()
+        worker.model_runner = NS()
+        worker.vllm_config = NS(
+            compilation_config=NS(
+                static_forward_context={"layer.0": NS(impl=impl)}, mode="VLLM_COMPILE", cudagraph_mode="FULL"
+            ),
+            model_config=NS(hf_config=NS(num_hidden_layers=1)),
+        )
+        with (
+            patch.object(torch, "npu", NS(synchronize=lambda: None, config=NS()), create=True),
+            patch.object(trace_module.subprocess, "check_output", return_value="fake-sha\n"),
+        ):
+            self.assertEqual(worker.kv_trace_control("arm")["status"], "RED")
+            self.assertEqual(shift.tolist(), [22])
+            shift.fill_(23)
+            self.assertEqual(worker.kv_trace_control("arm")["status"], "ARMED")
+            self.assertIs(impl._mx4_shift, shift)
+            self.assertEqual(worker.kv_trace_control("arm")["shift_buffers"], 1)
 
     def test_inference_snapshots_survive_rpc_thread_arm_and_report_without_reallocation(self):
         # Model warmup/capture allocates inference tensors; the executor's RPC
@@ -298,13 +337,6 @@ class KVTraceTests(unittest.TestCase):
                 *self.trace.written,
                 *self.trace.raw_after,
                 *(tensor for side in self.trace.stages for tensor in side.values()),
-                *self.trace.exponent_probe.constants.values(),
-                *(
-                    tensor
-                    for side in self.trace.exponent_probe.outputs
-                    for mode in side.values()
-                    for tensor in mode.values()
-                ),
             ]
 
         addresses = [tensor.data_ptr() for tensor in buffers()]
@@ -312,7 +344,15 @@ class KVTraceTests(unittest.TestCase):
         extension.model_runner = NS()
         extension.vllm_config = NS(
             compilation_config=NS(
-                static_forward_context={"layer.0": NS(impl=NS(kv_trace=self.trace, kv_qdq_settings=self.settings))},
+                static_forward_context={
+                    "layer.0": NS(
+                        impl=NS(
+                            kv_trace=self.trace,
+                            kv_qdq_settings=self.settings,
+                            _mx4_shift=torch.tensor([23], dtype=torch.int32),
+                        )
+                    )
+                },
                 mode="VLLM_COMPILE",
                 cudagraph_mode="FULL",
             ),

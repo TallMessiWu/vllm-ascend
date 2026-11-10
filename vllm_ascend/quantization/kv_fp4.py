@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 FP4_MAX = 6.0
 FP32_MIN_NORMAL = 2.0**-126
+FP32_EXPONENT_SHIFT = 23
 FP8_MIN = 2.0**-9
 FP8_MAX = 448.0
 # midpoint, upper code, upper code has even least-significant bit
@@ -148,7 +149,7 @@ def _scale_values(scales: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
     return value * recipe.outer_scale
 
 
-def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None):
+def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None, exponent_shift=None):
     _check_shape(x)
     group = recipe.group_size
     padded = F.pad(x.float(), (0, (-x.shape[-1]) % group))
@@ -171,7 +172,15 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None):
         # FP32 allocation. The exponent formula is unchanged; graph validation
         # is still required for the materialized input on the target device.
         bits = raw.view(torch.int32).clone(memory_format=torch.contiguous_format)
-        exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
+        if exponent_shift is not None and (
+            not isinstance(exponent_shift, torch.Tensor)
+            or exponent_shift.dtype != torch.int32
+            or exponent_shift.shape != (1,)
+            or exponent_shift.device != bits.device
+        ):
+            raise ValueError("MX4 exponent_shift must be an initialized int32 [1] tensor on the input device")
+        shift = FP32_EXPONENT_SHIFT if exponent_shift is None else exponent_shift
+        exponent = ((bits >> shift) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
         if observer is not None:
             observer("raw_scale", raw)
             observer("scale_bits", bits)
@@ -190,13 +199,15 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None):
     return code, scale
 
 
-def qdq_fp4(x: torch.Tensor, recipe: FP4Recipe, observer=None) -> torch.Tensor:
+def qdq_fp4(x: torch.Tensor, recipe: FP4Recipe, observer=None, *, exponent_shift=None) -> torch.Tensor:
     """Device-only numerical QDQ; does not allocate a packed cache or save memory.
 
     The optional diagnostic observer may copy stage values on device. It must
     not read device values on the host during model capture/replay.
+    MX4 model graph callers supply an immutable device int32 [1] containing 23,
+    initialized outside capture. None retains the scalar offline/eager reference.
     """
-    code, scale = _quantize_groups(x, recipe, observer=observer)
+    code, scale = _quantize_groups(x, recipe, observer=observer, exponent_shift=exponent_shift)
     combined = scale * recipe.outer_scale if recipe.outer_scale is not None else scale
     result = (_values(code) * combined.unsqueeze(-1)).flatten(-2)[..., : x.shape[-1]]
     if observer is not None:

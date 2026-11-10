@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from vllm_ascend.quantization.kv_fp4 import qdq_fp4
+from vllm_ascend.quantization.kv_fp4 import FP32_EXPONENT_SHIFT, qdq_fp4
 
 MX4_TRACE_GROUP = 32
 MX4_STAGES = (
@@ -146,7 +146,7 @@ class ExponentOpTrace:
 
 
 class KVReplayTrace:
-    def __init__(self, key, query, slots, detailed=False):
+    def __init__(self, key, query, slots, detailed=False, probe_ops=False):
         self.raw = [torch.empty_like(key, memory_format=torch.contiguous_format) for _ in range(2)]
         self.qdq = [torch.empty_like(t) for t in self.raw]
         self.written = [torch.empty_like(t) for t in self.raw]
@@ -179,7 +179,8 @@ class KVReplayTrace:
                 }
                 for _ in range(2)
             ]
-            self.exponent_probe = ExponentOpTrace(self.stages[0]["exponent"])
+            if probe_ops:
+                self.exponent_probe = ExponentOpTrace(self.stages[0]["exponent"])
 
     def arm(self):
         self.count.zero_()
@@ -192,7 +193,7 @@ class KVReplayTrace:
     def _save_stage(self, side, name, tensor):
         self.stages[side][name].copy_(tensor)
         self.captured_stages[side].add(name)  # capture coverage, not a replay counter
-        if name == "scale_bits":
+        if name == "scale_bits" and self.exponent_probe is not None:
             self.exponent_probe.capture(side, tensor)
 
     def before(self, key, value, slots):
@@ -245,9 +246,10 @@ class KVReplayTrace:
         # Keep the legacy name as an alias for the graph-versus-eager question.
         # Cross-device FP32 differences are evidence, not automatically a graph failure.
         result["first_divergence"] = result["first_replay_divergence"]
-        result["exponent_ops"] = self.exponent_probe.report(
-            side, self.stages[side]["scale_bits"], self.stages[side]["exponent"].cpu()
-        )
+        if self.exponent_probe is not None:
+            result["exponent_ops"] = self.exponent_probe.report(
+                side, self.stages[side]["scale_bits"], self.stages[side]["exponent"].cpu()
+            )
         return result
 
     def after_writer(self, key_cache, value_cache, bnsd):
@@ -258,7 +260,7 @@ class KVReplayTrace:
             destination.copy_(read_slots(cache, self.slot, bnsd))
         self.count.add_(1)
 
-    def report(self, settings):
+    def report(self, settings, exponent_shift=None):
         count = int(self.count.cpu()[0])
         if count == 0:
             return {"status": "UNVERIFIED", "reason": "no one-token replay after arm", "replays": 0}
@@ -278,6 +280,7 @@ class KVReplayTrace:
                     raw.reshape(-1, raw.shape[-1]),
                     recipe,
                     observer=eager_stages.__setitem__ if self.stages is not None else None,
+                    exponent_shift=exponent_shift,
                 )
                 .reshape(raw.shape)
                 .cpu()
@@ -356,9 +359,10 @@ class KVTraceWorkerExtension:
             # a getter. Optional metadata must not prevent arm/report.
             "allow_internal_format": getattr(torch.npu.config, "allow_internal_format", "UNVERIFIED: no getter"),
             "operation": "mx4 K+V qdq; diagnostic_trace=true",
-            "trace_version": 4,
+            "trace_version": 5,
             "exponent_input": "materialized_int32",
-            "exponent_probe": "shadow_scalar_and_stable_tensor",
+            "exponent_probe": "disabled_for_fix_validation",
+            "shift_strategy": "persistent_device_int32_tensor",
             "detail_layer": next(
                 (name for name, impl in selected if impl.kv_trace is not None and impl.kv_trace.stages is not None),
                 None,
@@ -370,21 +374,36 @@ class KVTraceWorkerExtension:
             "attention_comparison": "UNVERIFIED: output finiteness only; no eager attention oracle",
         }
         torch.npu.synchronize()  # explicit idle-worker diagnostic boundary
+        shift_buffers = 0
         for name, impl in selected:
             trace = impl.kv_trace
+            shift = getattr(impl, "_mx4_shift", None)
+            if (
+                not isinstance(shift, torch.Tensor)
+                or shift.dtype != torch.int32
+                or shift.shape != (1,)
+                or (trace is not None and shift.device != trace.raw[0].device)
+            ):
+                result["layers"][name] = {"status": "UNVERIFIED", "reason": "MX4 shift buffer missing or invalid"}
+                continue
+            shift_buffers += 1
+            if not bool((shift.cpu() == FP32_EXPONENT_SHIFT).all()):
+                result["layers"][name] = {"status": "RED", "reason": "MX4 shift constant corrupted"}
+                continue
             if trace is None or trace.capture_calls == 0:
                 result["layers"][name] = {"status": "UNVERIFIED", "reason": "no captured one-token writer"}
             elif action == "arm":
                 trace.arm()
                 result["layers"][name] = {"status": "ARMED"}
             elif armed:
-                result["layers"][name] = trace.report(impl.kv_qdq_settings)
+                result["layers"][name] = trace.report(impl.kv_qdq_settings, exponent_shift=shift)
             else:
                 result["layers"][name] = {"status": "UNVERIFIED", "reason": "arm must precede requests"}
         torch.npu.synchronize()
         statuses = {row["status"] for row in result["layers"].values()}
         expected = self.vllm_config.model_config.hf_config.num_hidden_layers
         result["expected_layers"] = expected
+        result["shift_buffers"] = shift_buffers
         result["status"] = (
             "RED"
             if "RED" in statuses

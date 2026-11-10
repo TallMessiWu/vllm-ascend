@@ -16,6 +16,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 import torch
+from torch.utils._python_dispatch import TorchDispatchMode
 
 ROOT = Path(__file__).resolve().parents[3]
 package = types.ModuleType("kv_qdq_backend_numerics")
@@ -94,6 +95,54 @@ class KVQDQBackendTests(unittest.TestCase):
     def create(self, target):
         module = load_backend(target)
         return module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+
+    def test_ordinary_mx4_reuses_tensor_shift_through_capture_and_tiled_prefill(self):
+        class TensorShiftOnly(TorchDispatchMode):
+            def __init__(self):
+                super().__init__()
+                self.shifts = 0
+
+            def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+                if "right_shift" in str(func) or "rshift" in str(func):
+                    if not isinstance(args[1], torch.Tensor):
+                        raise AssertionError("scalar right shift reached the model path")
+                    self.shifts += 1
+                return func(*args, **(kwargs or {}))
+
+        module = load_backend(name="mx4")  # diagnostics remain off
+        backend = module.AscendKVFP4QDQImpl(8, 128, 0.1, 4, None, None, "bfloat16", None, "decoder", None)
+        capturing = [True]
+        key = torch.linspace(-3, 6, 512).reshape(1, 4, 128).bfloat16()
+        recipe = codec.FP4Recipe(32, "e8m0")
+        with (
+            torch.inference_mode(),
+            patch.object(torch, "npu", NS(is_current_stream_capturing=lambda: capturing[0]), create=True),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "eager initialization"):
+                backend._transform_kv(key, -key)
+            capturing[0] = False
+            backend._transform_kv(key, -key)
+            shift = backend._mx4_shift
+            self.assertTrue(shift.is_inference())
+            self.assertEqual(shift.tolist(), [23])
+            self.assertIsNone(backend.kv_trace)
+            address = shift.data_ptr()
+            for tokens in (1, 300):
+                current = key.repeat(tokens, 1, 1) * 2.3
+                expected = codec.qdq_fp4(current, recipe)
+                capturing[0] = True
+                with (
+                    TensorShiftOnly() as dispatch,
+                    patch.object(torch, "tensor", side_effect=AssertionError("capture allocated shift")),
+                ):
+                    actual_key, actual_value = backend._transform_kv(current, -current)
+                self.assertGreater(dispatch.shifts, 0)
+                torch.testing.assert_close(actual_key, expected, rtol=0, atol=0)
+                torch.testing.assert_close(actual_value, -expected, rtol=0, atol=0)
+                self.assertIs(backend._mx4_shift, shift)
+                self.assertEqual(backend._mx4_shift.data_ptr(), address)
+            with self.assertRaisesRegex(AssertionError, "scalar right shift"), TensorShiftOnly():
+                codec.qdq_fp4(key, recipe)  # negative control for the reference path
 
     def test_trace_is_preallocated_in_warmup_and_only_records_during_capture(self):
         trace_spec = importlib.util.spec_from_file_location(
