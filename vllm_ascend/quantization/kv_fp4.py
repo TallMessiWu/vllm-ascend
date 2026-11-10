@@ -167,7 +167,10 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None):
         # Ceiling power-of-two recipe. Integer exponent extraction avoids log2
         # rounding a value immediately above a power of two down to that power.
         raw = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL)
-        bits = raw.view(torch.int32)
+        # Give integer kernels owning storage instead of a dtype view of the
+        # FP32 allocation. The exponent formula is unchanged; graph validation
+        # is still required for the materialized input on the target device.
+        bits = raw.view(torch.int32).clone(memory_format=torch.contiguous_format)
         exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
         if observer is not None:
             observer("raw_scale", raw)

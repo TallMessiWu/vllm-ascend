@@ -107,11 +107,14 @@ class KVReplayTrace:
     def _stage_report(self, side, host_raw, qdq, eager_stages, cpu_stages):
         after = self.raw_after[side].cpu()
         result = {"raw_before_after": differences(host_raw, after), "stages": {}}
-        first = "source_changed_during_qdq" if result["raw_before_after"] else None
+        first_replay = "source_changed_during_qdq" if result["raw_before_after"] else None
+        first_oracle = None
         missing = set(MX4_STAGES) - self.captured_stages[side]
         if missing:
             result["missing_stages"] = sorted(missing)
-            result["first_divergence"] = first or "UNVERIFIED: missing stages"
+            result["first_divergence"] = first_replay or "UNVERIFIED: missing stages"
+            result["first_replay_divergence"] = result["first_divergence"]
+            result["first_oracle_divergence"] = "UNVERIFIED: missing stages"
             return result
         for name in MX4_STAGES:
             recorded, eager, cpu = self.stages[side][name].cpu(), eager_stages[name].cpu(), cpu_stages[name]
@@ -121,9 +124,20 @@ class KVReplayTrace:
                 "npu_eager_vs_cpu": differences(eager, cpu),
             }
             result["stages"][name] = counts
-            if first is None and any(counts.values()):
-                first = name
-        result["first_divergence"] = first or ("output_bf16" if any(qdq.values()) else "none")
+            if first_replay is None and counts["replay_vs_npu_eager"]:
+                first_replay = name
+            if first_oracle is None and counts["npu_eager_vs_cpu"]:
+                first_oracle = name
+            if name == "exponent":
+                deltas, sizes = torch.unique(recorded.to(torch.int64) - eager.to(torch.int64), return_counts=True)
+                result["exponent_delta_histogram"] = {
+                    str(delta): size for delta, size in zip(deltas.tolist(), sizes.tolist())
+                }
+        result["first_replay_divergence"] = first_replay or ("output_bf16" if qdq["replay_vs_npu_eager"] else "none")
+        result["first_oracle_divergence"] = first_oracle or ("output_bf16" if qdq["npu_eager_vs_cpu"] else "none")
+        # Keep the legacy name as an alias for the graph-versus-eager question.
+        # Cross-device FP32 differences are evidence, not automatically a graph failure.
+        result["first_divergence"] = result["first_replay_divergence"]
         return result
 
     def after_writer(self, key_cache, value_cache, bnsd):
@@ -226,7 +240,8 @@ class KVTraceWorkerExtension:
             # a getter. Optional metadata must not prevent arm/report.
             "allow_internal_format": getattr(torch.npu.config, "allow_internal_format", "UNVERIFIED: no getter"),
             "operation": "mx4 K+V qdq; diagnostic_trace=true",
-            "trace_version": 2,
+            "trace_version": 3,
+            "exponent_input": "materialized_int32",
             "detail_layer": next(
                 (name for name, impl in selected if impl.kv_trace is not None and impl.kv_trace.stages is not None),
                 None,

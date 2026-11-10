@@ -96,6 +96,18 @@ same-input interpretation; otherwise the earliest divergent stage narrows the
 investigation. Extra copies still perturb timing and allocation, so disappearance
 of a discrepancy is not a repair. This mode uses the same opt-in trace setting.
 
+The next diagnostic (`trace_version=3`) tests an equivalent materialization:
+the FP32 scale's int32 interpretation is cloned to owning device storage before
+the unchanged exponent formula consumes it. This isolates reliance on shared
+float/integer storage; it is not proof of a particular native-kernel defect or
+a validated NPU repair. The later E8M0 scale construction is unchanged.
+Materialization also applies to ordinary MX4 execution; only snapshots remain opt-in.
+Reports now separate `first_replay_divergence` (replay versus NPU eager) from
+`first_oracle_divergence` (NPU eager versus CPU). The old `first_divergence` name
+aliases the former. Cross-device FP32 intermediate differences alone do not
+mark a graph failure when final quantized values agree. An exponent-difference
+histogram is read on CPU only at the idle reporting boundary.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.

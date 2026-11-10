@@ -129,6 +129,40 @@ class KVTraceTests(unittest.TestCase):
         self.assertEqual(row["k"]["replay_vs_cpu"], row["k"]["replay_vs_npu_eager"])
         self.assertGreater(row["k"]["npu_eager_vs_cpu"], 0)
 
+    def test_oracle_only_fp32_differences_do_not_hide_replay_exponent_failure(self):
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.record(self.key)
+        calls = [0]
+
+        def oracle_with_fp32_difference(tensor, recipe, observer=None):
+            calls[0] += 1
+            cpu_call = calls[0] % 2 == 0
+
+            def publish(name, value):
+                if cpu_call and name == "raw_scale":
+                    value = torch.nextafter(value, torch.full_like(value, float("inf")))
+                elif cpu_call and name == "scale_bits":
+                    value = value + 1
+                observer(name, value)
+
+            return codec.qdq_fp4(tensor, recipe, observer=publish if observer is not None else None)
+
+        with patch.object(trace_module, "qdq_fp4", side_effect=oracle_with_fp32_difference):
+            row = self.trace.report(self.settings)
+            self.assertEqual(row["status"], "GREEN", row)
+            detail = row["k"]["detail"]
+            self.assertEqual(detail["first_replay_divergence"], "none")
+            self.assertEqual(detail["first_oracle_divergence"], "raw_scale")
+            self.assertEqual(row["k"]["npu_eager_vs_cpu"], 0)
+            self.trace.stages[0]["exponent"].add_(1)
+            row = self.trace.report(self.settings)
+            self.assertEqual(row["status"], "RED")
+            detail = row["k"]["detail"]
+            self.assertEqual(detail["first_divergence"], "exponent")
+            self.assertEqual(detail["first_replay_divergence"], "exponent")
+            self.assertEqual(detail["first_oracle_divergence"], "raw_scale")
+            self.assertEqual(detail["exponent_delta_histogram"], {"1": self.trace.stages[0]["exponent"].numel()})
+
     def test_rpc_requires_arm_and_rejects_missing_layers(self):
         extension = trace_module.KVTraceWorkerExtension()
         impl = NS(kv_trace=self.trace, kv_qdq_settings=self.settings)

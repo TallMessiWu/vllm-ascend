@@ -69,6 +69,21 @@ def recipes():
 
 
 class KVFP4Tests(unittest.TestCase):
+    def test_mx4_exponent_input_has_independent_integer_storage(self):
+        recipe = codec.FP4Recipe(32, "e8m0")
+        x = torch.linspace(-6.0, 6.0, 128).reshape(4, 32)
+        stages = {}
+        actual = codec.qdq_fp4(x, recipe, observer=stages.__setitem__)
+        expected = torch.tensor([scalar_reference(row, recipe) for row in x.tolist()])
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        raw, bits = stages["raw_scale"], stages["scale_bits"]
+        self.assertEqual(bits.dtype, torch.int32)
+        self.assertNotEqual(raw.data_ptr(), bits.data_ptr())
+        torch.testing.assert_close(bits, raw.view(torch.int32), rtol=0, atol=0)
+        saved = bits.clone()
+        raw.zero_()
+        torch.testing.assert_close(bits, saved, rtol=0, atol=0)
+
     def test_literal_codes_pack_low_nibble_first_and_keep_signed_zero(self):
         x = torch.tensor([[0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6]])
         recipe = codec.FP4Recipe(16, "bf16")
