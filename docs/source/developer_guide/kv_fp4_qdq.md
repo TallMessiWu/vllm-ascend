@@ -84,6 +84,18 @@ a normal answer under instrumentation is not a repair. Remove the diagnostic
 when the investigation closes. The default experiment does not enable it or
 the development RPC. Test-only CPU mocks do not validate NPU graph capture.
 
+The detailed diagnostic (`trace_version=2`) additionally observes ten codec
+stages in the first decoder layer only: FP32 blocks, amax, raw scale, scale bits,
+exponent, E8M0 scale, final scale, normalized values, FP4 codes and FP32 output.
+An optional device-only codec observer copies values to warmup-allocated buffers;
+it does not change the reference formula. All other layers retain the seam
+snapshots. The first layer also checks raw input before/after QDQ, and the idle
+RPC directly compares CPU and NPU eager results rather than equating mismatch
+counts. Missing stages are unverified. A changed input invalidates a simple
+same-input interpretation; otherwise the earliest divergent stage narrows the
+investigation. Extra copies still perturb timing and allocation, so disappearance
+of a discrepancy is not a repair. This mode uses the same opt-in trace setting.
+
 ## Supported experimental scope
 
 - Plain Qwen3 MoE, BF16 model and cache, single TP/DP/PP/PCP/DCP rank.

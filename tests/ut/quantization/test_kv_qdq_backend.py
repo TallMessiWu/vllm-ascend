@@ -104,6 +104,7 @@ class KVQDQBackendTests(unittest.TestCase):
             trace_spec.loader.exec_module(trace_module)
         module = load_backend(name="mx4", diagnostic_trace=True)
         backend = module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)
+        backend._layer_name = module.TRACE_DETAIL_LAYER
         q = torch.zeros(1, 2, 16, dtype=torch.bfloat16)
         k = torch.arange(16, dtype=torch.bfloat16).reshape(1, 1, 16)
         cache = [torch.zeros(1, 1, 1, 16, dtype=torch.bfloat16) for _ in range(2)]
@@ -122,6 +123,7 @@ class KVQDQBackendTests(unittest.TestCase):
             backend.reshape_and_cache(q, k * 2.3, -k * 2.3, cache, metadata, q.clone())
             self.assertIs(backend.kv_trace, retained)
             self.assertEqual(retained.report(backend.kv_qdq_settings)["status"], "GREEN")
+            self.assertEqual(retained.report(backend.kv_qdq_settings)["k"]["detail"]["first_divergence"], "none")
             capturing[0] = False
             backend.reshape_and_cache(q, k * 0.7, -k * 0.7, cache, metadata, q.clone())
             self.assertEqual(int(retained.count[0]), 1)

@@ -83,7 +83,9 @@ def _check_shape(x: torch.Tensor):
         raise ValueError("Expected BF16/FP32 tensor with a nonempty last dimension")
 
 
-def _codes(x: torch.Tensor) -> torch.Tensor:
+def _codes(x: torch.Tensor, observer=None) -> torch.Tensor:
+    if observer is not None:
+        observer("normalized", x)
     magnitude = x.abs()
     code = torch.zeros_like(x, dtype=torch.int32)
     for midpoint, upper, upper_even in FP4_BOUNDARIES:
@@ -146,13 +148,17 @@ def _scale_values(scales: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
     return value * recipe.outer_scale
 
 
-def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe):
+def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None):
     _check_shape(x)
     group = recipe.group_size
     padded = F.pad(x.float(), (0, (-x.shape[-1]) % group))
     blocks = padded.reshape(*x.shape[:-1], padded.shape[-1] // group, group)
+    if observer is not None:
+        observer("blocks", blocks)
     finite = torch.isfinite(blocks).all(dim=-1)
     amax = torch.where(torch.isfinite(blocks), blocks.abs(), 0.0).amax(dim=-1)
+    if observer is not None:
+        observer("amax", amax)
     if recipe.scale_type == "bf16":
         scale = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL).to(torch.bfloat16).float()
     elif recipe.scale_type == "e4m3":
@@ -163,19 +169,35 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe):
         raw = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL)
         bits = raw.view(torch.int32)
         exponent = ((bits >> 23) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
+        if observer is not None:
+            observer("raw_scale", raw)
+            observer("scale_bits", bits)
+            observer("exponent", exponent)
         scale = _e8m0_scale_values(exponent.clamp(1, 254))
+        if observer is not None:
+            observer("e8_scale", scale)
     scale = torch.where(amax == 0, 1.0, scale)
     scale = torch.where(finite, scale, float("nan"))
+    if observer is not None:
+        observer("scale", scale)
     combined = scale * recipe.outer_scale if recipe.outer_scale is not None else scale
-    code = _codes(blocks / combined.unsqueeze(-1))
+    code = _codes(blocks / combined.unsqueeze(-1), observer=observer)
+    if observer is not None:
+        observer("code", code)
     return code, scale
 
 
-def qdq_fp4(x: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
-    """Device-only numerical QDQ; does not allocate a packed cache or save memory."""
-    code, scale = _quantize_groups(x, recipe)
+def qdq_fp4(x: torch.Tensor, recipe: FP4Recipe, observer=None) -> torch.Tensor:
+    """Device-only numerical QDQ; does not allocate a packed cache or save memory.
+
+    The optional diagnostic observer may copy stage values on device. It must
+    not read device values on the host during model capture/replay.
+    """
+    code, scale = _quantize_groups(x, recipe, observer=observer)
     combined = scale * recipe.outer_scale if recipe.outer_scale is not None else scale
     result = (_values(code) * combined.unsqueeze(-1)).flatten(-2)[..., : x.shape[-1]]
+    if observer is not None:
+        observer("dq_fp32", result)
     return result.to(x.dtype)
 
 

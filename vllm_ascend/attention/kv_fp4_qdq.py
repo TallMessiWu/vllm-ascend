@@ -17,13 +17,16 @@ from vllm_ascend.quantization.kv_qdq_config import parse_kv_qdq, validate_kv_qdq
 
 # Bound temporary FP32 buffers without changing model/scheduler token budgets.
 QDQ_TILE_ROWS = 1024
+TRACE_DETAIL_LAYER = "model.layers.0.self_attn.attn"
 
 
-def _qdq_tiled(tensor, recipe):
+def _qdq_tiled(tensor, recipe, observer=None):
     shape = tensor.shape
     rows = tensor.reshape(-1, shape[-1])
     if rows.shape[0] <= QDQ_TILE_ROWS:
-        return qdq_fp4(rows, recipe).reshape(shape)
+        return qdq_fp4(rows, recipe, observer=observer).reshape(shape)
+    if observer is not None:
+        raise ValueError("Detailed KV trace only supports a single QDQ tile")
     return torch.cat(
         [qdq_fp4(rows[start : start + QDQ_TILE_ROWS], recipe) for start in range(0, rows.shape[0], QDQ_TILE_ROWS)]
     ).reshape(shape)
@@ -95,7 +98,7 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             else ("copy-only (no quantization)" if settings.diagnostic_copy else "qdq"),
         )
 
-    def _transform_kv(self, key, value):
+    def _transform_kv(self, key, value, trace=None):
         if key is None or value is None:
             if key is not None or value is not None:
                 raise ValueError("K and V must be present or absent together")
@@ -117,13 +120,13 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             key = (
                 key.clone(memory_format=torch.contiguous_format)
                 if settings.diagnostic_copy
-                else _qdq_tiled(key, settings.k_recipe)
+                else _qdq_tiled(key, settings.k_recipe, observer=trace.observer("k") if trace is not None else None)
             )
         if settings.target in ("v", "kv"):
             value = (
                 value.clone(memory_format=torch.contiguous_format)
                 if settings.diagnostic_copy
-                else _qdq_tiled(value, settings.v_recipe)
+                else _qdq_tiled(value, settings.v_recipe, observer=trace.observer("v") if trace is not None else None)
             )
         return key, value
 
@@ -139,13 +142,19 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             if self.kv_trace is None:
                 if capturing:
                     raise RuntimeError("KV trace requires a one-token warmup before capture")
-                self.kv_trace = KVReplayTrace(key, query, attn_metadata.slot_mapping)
+                self.kv_trace = KVReplayTrace(
+                    key,
+                    query,
+                    attn_metadata.slot_mapping,
+                    detailed=getattr(self, "_layer_name", None) == TRACE_DETAIL_LAYER,
+                )
             recording = capturing
             if recording:
                 self.kv_trace.before(key, value, attn_metadata.slot_mapping)
-        key, value = self._transform_kv(key, value)
+        source = (key, value) if recording and self.kv_trace.raw_after is not None else None
+        key, value = self._transform_kv(key, value, trace=self.kv_trace if recording else None)
         if recording:
-            self.kv_trace.transformed(key, value)
+            self.kv_trace.transformed(key, value, source=source)
         # The parent returns these K/V to its direct prefill path as well as
         # writing them to the persistent BF16 cache. Returning original K/V
         # here would leave PrefillNoCache mathematically unquantized.

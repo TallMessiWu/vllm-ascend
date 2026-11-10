@@ -36,8 +36,11 @@ class KVTraceTests(unittest.TestCase):
     def record(self, key, bnsd=False):
         trace = self.trace
         trace.before(key, -key, self.slots)
-        transformed = [codec.qdq_fp4(t, self.recipe) for t in (key, -key)]
-        trace.transformed(*transformed)
+        transformed = [
+            codec.qdq_fp4(t.reshape(-1, t.shape[-1]), self.recipe, observer=trace.observer(side)).reshape(t.shape)
+            for side, t in zip(("k", "v"), (key, -key))
+        ]
+        trace.transformed(*transformed, source=(key, -key))
         caches = [torch.zeros(2, 2, 4, 32, dtype=torch.bfloat16) for _ in range(2)]
         for cache, tensor in zip(caches, transformed):
             cache[1, 1].copy_(tensor[0])
@@ -83,6 +86,48 @@ class KVTraceTests(unittest.TestCase):
 
     def test_bit_comparison_includes_signed_zero(self):
         self.assertEqual(trace_module.differences(torch.tensor([0.0]).bfloat16(), torch.tensor([-0.0]).bfloat16()), 1)
+
+    def test_detailed_stages_detect_first_corruption_and_input_change(self):
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        for bnsd in (False, True):
+            for factor in (1.0, 2.3, 0.0, -0.7):
+                self.record(self.key * factor, bnsd)
+                row = self.trace.report(self.settings)
+                self.assertEqual(row["status"], "GREEN", row)
+                self.assertEqual(row["k"]["detail"]["first_divergence"], "none")
+                self.assertEqual(row["v"]["npu_eager_vs_cpu"], 0)
+        for stage in trace_module.MX4_STAGES:
+            self.record(self.key)
+            self.trace.stages[0][stage].flatten()[0] += 1
+            row = self.trace.report(self.settings)
+            self.assertEqual(row["status"], "RED")
+            self.assertEqual(row["k"]["detail"]["first_divergence"], stage)
+        self.record(self.key)
+        self.trace.raw_after[1].zero_()
+        self.assertEqual(
+            self.trace.report(self.settings)["v"]["detail"]["first_divergence"], "source_changed_during_qdq"
+        )
+
+    def test_missing_detail_stages_cannot_pass(self):
+        self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
+        self.record(self.key)
+        self.trace.captured_stages[0].discard("amax")
+        row = self.trace.report(self.settings)
+        self.assertEqual(row["status"], "UNVERIFIED")
+        self.assertEqual(row["k"]["detail"]["missing_stages"], ["amax"])
+
+    def test_equal_mismatch_counts_do_not_imply_equal_oracles(self):
+        self.record(self.key)
+        calls = [0]
+
+        def different_oracles(tensor, recipe, observer=None):
+            calls[0] += 1
+            return codec.qdq_fp4(tensor, recipe) + (1 if calls[0] % 2 else 2)
+
+        with patch.object(trace_module, "qdq_fp4", side_effect=different_oracles):
+            row = self.trace.report(self.settings)
+        self.assertEqual(row["k"]["replay_vs_cpu"], row["k"]["replay_vs_npu_eager"])
+        self.assertGreater(row["k"]["npu_eager_vs_cpu"], 0)
 
     def test_rpc_requires_arm_and_rejects_missing_layers(self):
         extension = trace_module.KVTraceWorkerExtension()
@@ -146,7 +191,7 @@ class KVTraceTests(unittest.TestCase):
         # thread does not inherit that thread-local mode. Exercise that boundary
         # with real CPU Torch tensors, not a mock of the failing zero_ operation.
         with torch.inference_mode():
-            self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots)
+            self.trace = trace_module.KVReplayTrace(self.key, self.query, self.slots, detailed=True)
             self.record(self.key)
             self.trace.attention.zero_()
             self.trace.attention_captured = True
@@ -160,6 +205,8 @@ class KVTraceTests(unittest.TestCase):
                 *self.trace.raw,
                 *self.trace.qdq,
                 *self.trace.written,
+                *self.trace.raw_after,
+                *(tensor for side in self.trace.stages for tensor in side.values()),
             ]
 
         addresses = [tensor.data_ptr() for tensor in buffers()]
