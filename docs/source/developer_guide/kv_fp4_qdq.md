@@ -71,6 +71,53 @@ scale-jump counterexample, changed inputs, non-contiguous views and the
 component check, not full model graph or long-context acceptance. CPU/mock
 tests alone do not establish NPU correctness.
 
+### Weight-free numerical study before model evaluation
+
+Run from this source checkout, using the existing PyTorch environment:
+
+```bash
+python3 examples/kv_fp4_numerics.py
+```
+
+The default is CPU-only; it disables device-plugin autoload and does not import
+the framework, load weights, start a server or access evaluation data. It uses
+five fixed synthetic cases (seed 20261113): an analytic query-critical-channel
+counterexample, zero/tail groups, Gaussian inputs, channel outliers and scale
+boundaries. All three candidates (G32-B, MX4-ceil, MX4-MSE) quantize **both K and V**.
+
+Literal scale/QDQ/packed anchors and a two-key analytic softmax check validate
+the reference arithmetic. The report separately measures K/V MSE, range
+exceedance (`abs(input)>6*scale`), newly zeroed values, MX4 scale changes, causal
+QK score RMSE, attention-distribution KL, output RMSE/relative L2 and worst-head
+output RMSE. Attention is a **CPU FP64 mathematical reference** with fixed BF16 Q
+and absolute query positions, not a native attention kernel. A null relative
+error has zero reference norm, not an arbitrary epsilon denominator.
+
+The constructed counterexample checks an important limitation: a lower
+unweighted group MSE can clip a channel important to Q and increase attention
+error. It is not evidence that a particular real model has this distribution,
+and the Gaussian/stress cases are not a model-quality benchmark.
+
+Optionally select one assigned NPU explicitly:
+
+```bash
+ASCEND_RT_VISIBLE_DEVICES=0 python3 examples/kv_fp4_numerics.py --device npu
+```
+
+This adds same-input CPU/NPU eager/raw codec ACL replay checks for scale, codes
+and final QDQ bits, including signed zero. Each case/format replays five changing
+inputs using the persistent device tensor shift. Reads occur outside capture.
+Retaining observed intermediates changes lifetimes versus an uninstrumented model.
+It does **not** run native NPU attention, a compiled opaque model boundary or a
+complete model graph; the preceding focused opaque test remains separate.
+
+`ARITHMETIC=GREEN` is restricted to the requested arithmetic checks. Mismatches,
+exceptions, missing NPU selection/runtime or zero measurements fail with nonzero
+exit status, not a CPU fallback or skip. `MODEL_QUALITY=UNVERIFIED` and
+`DECISION=HOLD_E2E` remain explicit: local KV MSE or a synthetic pass cannot
+automatically approve a full-model evaluation. The tool prints a compact report
+to stdout and does not write tensor dumps or modify the codec/model defaults.
+
 ### Value-preserving copy diagnostic
 
 `diagnostic_copy` defaults to `false` and must be a JSON boolean. Opt in with:
