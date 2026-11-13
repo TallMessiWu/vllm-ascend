@@ -40,6 +40,7 @@ class FP4Recipe:
     group_size: int
     scale_type: str
     outer_scale: float | None = None
+    scale_selection: str = "ceil"
 
     def __post_init__(self):
         if type(self.group_size) is not int or self.group_size not in (16, 32):
@@ -48,6 +49,10 @@ class FP4Recipe:
             raise ValueError("Unknown scale type")
         if self.scale_type == "e8m0" and self.group_size != 32:
             raise ValueError("MXFP4 requires group32")
+        if self.scale_selection not in ("ceil", "mse") or (
+            self.scale_selection != "ceil" and self.scale_type != "e8m0"
+        ):
+            raise ValueError("scale_selection must be ceil, or mse for MXFP4 only")
         if self.scale_type == "e4m3":
             scale = self.outer_scale
             if (
@@ -149,6 +154,20 @@ def _scale_values(scales: torch.Tensor, recipe: FP4Recipe) -> torch.Tensor:
     return value * recipe.outer_scale
 
 
+def _mx4_candidate_error(blocks, scale, amax, output_dtype):
+    """Per-group squared error of the actual output carrier, entirely on device.
+
+    Divide errors by the same amax for both candidates before squaring to avoid
+    FP32 overflow/underflow at ordinary large/small power-of-two input scales.
+    This preserves the mathematical ordering of group MSE. FP32 reductions can
+    still tie; the caller retains ceil on ties or unordered (invalid) comparisons.
+    """
+    expanded = scale.unsqueeze(-1)
+    reconstructed = (_values(_codes(blocks / expanded)) * expanded).to(output_dtype).float()
+    error = (reconstructed - blocks) / amax.clamp(min=FP32_MIN_NORMAL).unsqueeze(-1)
+    return error.square().sum(dim=-1)
+
+
 def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None, exponent_shift=None):
     _check_shape(x)
     group = recipe.group_size
@@ -181,6 +200,17 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None, exponent
             raise ValueError("MX4 exponent_shift must be an initialized int32 [1] tensor on the input device")
         shift = FP32_EXPONENT_SHIFT if exponent_shift is None else exponent_shift
         exponent = ((bits >> shift) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
+        if recipe.scale_selection == "mse":
+            ceil_exponent = exponent.clamp(1, 254)
+            lower_exponent = (ceil_exponent - 1).clamp(min=1)
+            ceil_scale = _e8m0_scale_values(ceil_exponent)
+            lower_scale = _e8m0_scale_values(lower_exponent)
+            # Do not change the E2M1 codebook, group axis, or storage format.
+            # Select independently for each new K/V group, never past cache.
+            use_lower = _mx4_candidate_error(blocks, lower_scale, amax, x.dtype) < _mx4_candidate_error(
+                blocks, ceil_scale, amax, x.dtype
+            )
+            exponent = torch.where(use_lower, lower_exponent, ceil_exponent)
         if observer is not None:
             observer("raw_scale", raw)
             observer("scale_bits", bits)

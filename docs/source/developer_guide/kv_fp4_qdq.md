@@ -31,6 +31,46 @@ scales, fit them on the evaluation set, or change them during an engine's
 lifetime. The replay recipe and model recipe must match. No new default
 calibration corpus or arbitrary production scale is supplied.
 
+### MX4 group-error scale selection
+
+The default MX4 scale selection remains `ceil`. Opt in to the alternative with:
+
+```text
+--additional-config '{"kv_fp4_qdq":{"format":"mx4","target":"kv","mx4_scale_selection":"mse"}}'
+```
+
+This applies to **both K and V**, independently for each new token/head/group32.
+It retains E2M1 RNE, E8M0 scale bytes, the post-normalization/RoPE writer boundary,
+and BF16 cache/attention. It changes only how the shared scale is selected:
+
+1. Construct the existing ceil exponent and its immediately smaller valid
+   exponent (both clamped to the reference's E8M0 range).
+2. Quantize/dequantize each candidate, including the final BF16 carrier rounding.
+3. Compare per-group squared errors in FP32, normalized by the same clamped amax
+   before squaring to limit overflow/underflow. Choose the smaller scale only
+   for strictly smaller error; ties retain ceil. Zero/invalid-group rules remain.
+4. Pass the selected QDQ values to both cache writing and direct prefill.
+
+Selection is device arithmetic on each invocation/replay, not a Python decision
+based on tensor data. It reuses the existing persistent tensor exponent shift,
+adds no host reads/synchronization, and does not revisit historical cache.
+There is no calibration corpus, fitted threshold, outer scale, additional cache
+metadata, precision fallback, new environment variable or native build change.
+
+The model option requires `target=kv`, without copy-only or the old trace
+diagnostic. Its startup marker includes `scale_selection=mse`. The local error
+criterion is not an attention-aware objective and does **not** guarantee task
+quality. Candidate evaluation adds temporary work; no performance benefit or
+native-kernel equivalence is claimed.
+
+The focused device regression is
+`KVFP4DeviceTests.test_mx4_mse_opaque_compile_replay` in
+`tests/e2e/pull_request/one_card/test_kv_fp4_codec.py`. It covers the literal
+scale-jump counterexample, changed inputs, non-contiguous views and the
+1024-row tile boundary under eager/opaque/ACL execution. It is a synthetic
+component check, not full model graph or long-context acceptance. CPU/mock
+tests alone do not establish NPU correctness.
+
 ### Value-preserving copy diagnostic
 
 `diagnostic_copy` defaults to `false` and must be a JSON boolean. Opt in with:

@@ -53,7 +53,7 @@ class CacheWriterParent:
         kv_cache[1].copy_(value)
 
 
-def load_backend(target="kv", name="g16-b", diagnostic_copy=False, diagnostic_trace=False):
+def load_backend(target="kv", name="g16-b", diagnostic_copy=False, diagnostic_trace=False, scale_selection=None):
     runtime = NS(
         model_config=NS(dtype=torch.bfloat16, hf_config=NS(model_type="qwen3_moe")),
         cache_config=NS(cache_dtype="bfloat16", enable_prefix_caching=False),
@@ -70,6 +70,8 @@ def load_backend(target="kv", name="g16-b", diagnostic_copy=False, diagnostic_tr
         quant_config=None,
         additional_config={"kv_fp4_qdq": {"format": name, "target": target}},
     )
+    if scale_selection is not None:
+        runtime.additional_config["kv_fp4_qdq"]["mx4_scale_selection"] = scale_selection
     if diagnostic_copy:
         runtime.additional_config["kv_fp4_qdq"]["diagnostic_copy"] = diagnostic_copy
     if diagnostic_trace:
@@ -92,6 +94,27 @@ def load_backend(target="kv", name="g16-b", diagnostic_copy=False, diagnostic_tr
 
 
 class KVQDQBackendTests(unittest.TestCase):
+    def test_mse_kv_cache_and_direct_prefill_share_selected_values_across_tiles(self):
+        module = load_backend(name="mx4", scale_selection="mse")
+        backend = module.AscendKVFP4QDQImpl(8, 128, 0.1, 4, None, None, "bfloat16", None, "decoder", None)
+        for tokens in (1, 257, 1):
+            for small, rounded in ((0.375, 0.5), (4.0, 4.0), (0.0, 0.0)):
+                key = torch.full((tokens, 4, 128), small, dtype=torch.bfloat16)
+                key[..., ::32] = 6.03125
+                value = -key
+                before = key.clone()
+                expected = torch.full_like(key, rounded)
+                expected[..., ::32] = 6.0
+                query = torch.zeros(tokens, 8, 128, dtype=key.dtype)
+                cache = [torch.zeros_like(key), torch.zeros_like(value)]
+                with patch.object(torch, "npu", NS(is_current_stream_capturing=lambda: False), create=True):
+                    q, k, v, _ = backend.reshape_and_cache(query, key, value, cache, NS(), query.clone())
+                self.assertIs(q, query)
+                self.assertEqual(backend._mx4_shift.tolist(), [23])
+                for actual, target in ((k, expected), (v, -expected), (cache[0], expected), (cache[1], -expected)):
+                    torch.testing.assert_close(actual, target, rtol=0, atol=0)
+                torch.testing.assert_close(key, before, rtol=0, atol=0)
+
     def create(self, target):
         module = load_backend(target)
         return module.AscendKVFP4QDQImpl(2, 16, 0.25, 1, None, None, "bfloat16", None, "decoder", None)

@@ -237,6 +237,32 @@ class KVFP4DeviceTests(unittest.TestCase):
         self.check_opaque_qdq("e8m0")
 
     @torch.inference_mode()
+    def test_mx4_mse_opaque_compile_replay(self):
+        from vllm_ascend.attention import kv_fp4_qdq as backend
+
+        self.addCleanup(torch._dynamo.reset)
+        expected_source = Path(__file__).resolve().parents[4] / "vllm_ascend/attention/kv_fp4_qdq.py"
+        self.assertEqual(Path(backend.__file__).resolve(), expected_source)
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="mse")
+        # Same persistent tensor shift as the model; initialize before capture.
+        shift = torch.tensor([23], dtype=torch.int32, device="cpu").to("npu", non_blocking=False)
+
+        def function(x):
+            return backend._qdq_tiled(x, recipe, exponent_shift=shift if x.device.type == "npu" else None)
+
+        opaque = make_opaque_qdq(function, "qdq_e8m0_mse")
+        literal = torch.tensor([[6.03125] + [0.375] * 31], dtype=torch.bfloat16)
+        expected = torch.tensor([[6.0] + [0.5] * 31], dtype=literal.dtype)
+        self.assert_outputs_equal(function(literal.npu()), expected, "MSE literal scale-jump regression")
+        for tokens in (1, 33, 257):
+            host = literal.repeat(tokens * 4 * 4, 1).reshape(tokens, 4, 128)
+            host[:, 1] = 6.03125  # Equal-error groups must retain the ceil candidate.
+            backing = torch.zeros(tokens, 3, 4, 128, dtype=host.dtype, device="npu")
+            device = backing[:, 1]
+            self.check_compiled_and_replayed(function, opaque, host, device, f"mx4-mse tokens={tokens}")
+        print("GREEN: MX4 MSE synthetic eager/opaque/ACL only; model quality/performance UNVERIFIED", flush=True)
+
+    @torch.inference_mode()
     def test_g32_b_opaque_compile_replay(self):
         self.check_opaque_qdq("bf16")
 

@@ -69,6 +69,92 @@ def recipes():
 
 
 class KVFP4Tests(unittest.TestCase):
+    def test_mx4_mse_keeps_both_sides_low_precision_without_scale_jump_zeroing(self):
+        # One outlier crosses the ceil boundary; all other elements are unchanged.
+        x = torch.tensor([[6.03125] + [0.375] * 31, [6.03125] * 32, [9.0] * 32], dtype=torch.bfloat16)
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="mse")
+        expected = torch.tensor([[6.0] + [0.5] * 31, [6.0] * 32, [8.0] * 32], dtype=x.dtype)
+        baseline = codec.qdq_fp4(x, codec.FP4Recipe(32, "e8m0"))
+        self.assertEqual(baseline[0, 1:].count_nonzero().item(), 0)
+        packed = codec.pack_fp4(x, recipe)
+        # Sparse row selects scale=1; ties and harmful clipping retain ceil=2.
+        self.assertEqual(packed.scales.tolist(), [[127], [128], [128]])
+        torch.testing.assert_close(codec.qdq_fp4(x, recipe), expected, rtol=0, atol=0)
+        torch.testing.assert_close(codec.unpack_fp4(packed, x.dtype), expected, rtol=0, atol=0)
+        torch.testing.assert_close(codec.qdq_fp4(-x, recipe), -expected, rtol=0, atol=0)
+
+    def test_mx4_mse_matches_independent_two_grid_search_across_groups_and_magnitudes(self):
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="mse")
+        generator = torch.Generator().manual_seed(814)
+        for dtype in (torch.float32, torch.bfloat16):
+            for power in (-100, 0, 100):
+                x = (torch.randn(7, 74, generator=generator) * 2.0**power).to(dtype)[:, ::2]
+                self.assertFalse(x.is_contiguous())
+                expected = []
+                for row in x.tolist():
+                    out = []
+                    for start in range(0, len(row), 32):
+                        block = row[start : start + 32]
+                        upper = 2.0 ** math.ceil(math.log2(max(map(abs, block)) / 6))
+                        candidates = []
+                        for scale in (upper, upper / 2):
+                            decoded = []
+                            for value in block:
+                                c = min(range(8), key=lambda c: (abs(abs(value / scale) - LEVELS[c]), c % 2))
+                                value = math.copysign(LEVELS[c] * scale, value)
+                                decoded.append(bf16(value) if dtype == torch.bfloat16 else f32(value))
+                            candidates.append(decoded)
+                        # Independent Python FP64 error accumulation and stable tie order.
+                        out.extend(min(candidates, key=lambda ys: sum((a - b) ** 2 for a, b in zip(block, ys))))
+                    expected.append(out)
+                result = codec.qdq_fp4(x, recipe, exponent_shift=torch.tensor([23], dtype=torch.int32))
+                torch.testing.assert_close(result, torch.tensor(expected, dtype=dtype), rtol=0, atol=0)
+                packed = codec.pack_fp4(x, recipe)
+                torch.testing.assert_close(codec.unpack_fp4(packed, dtype), result, rtol=0, atol=0)
+                self.assertEqual(packed.payload_bytes, 7 * 34)
+
+    def test_mx4_mse_preserves_zero_floor_nonfinite_and_recipe_guards(self):
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="mse")
+        x = torch.tensor([[0.0, -0.0] * 16, [6 * 2.0**-126] * 32], dtype=torch.bfloat16)
+        packed = codec.pack_fp4(x, recipe)
+        self.assertEqual(packed.scales.tolist(), [[127], [1]])
+        torch.testing.assert_close(codec.qdq_fp4(x, recipe).view(torch.int16), x.view(torch.int16), rtol=0, atol=0)
+        self.assertEqual(codec.qdq_fp4(x[:0], recipe).shape, x[:0].shape)
+        huge = torch.full((1, 32), torch.finfo(x.dtype).max, dtype=x.dtype)
+        # Ceil would round to infinity; finite lower-scale saturation must win.
+        huge_packed = codec.pack_fp4(huge, recipe)
+        self.assertEqual(huge_packed.scales.tolist(), [[252]])
+        torch.testing.assert_close(codec.qdq_fp4(huge, recipe), torch.full_like(huge, 6 * 2.0**125), rtol=0, atol=0)
+        for bad in (float("nan"), float("inf")):
+            invalid = torch.ones(2, 32, dtype=x.dtype)
+            invalid[0, 0] = bad
+            result = codec.qdq_fp4(invalid, recipe)
+            self.assertTrue(torch.isnan(result[0]).all())
+            self.assertTrue(torch.isfinite(result[1]).all())
+            with self.assertRaises(ValueError):
+                codec.pack_fp4(invalid, recipe)
+        for kind, selection in (("bf16", "mse"), ("e8m0", "floor"), ("e8m0", None)):
+            with self.assertRaisesRegex(ValueError, "scale_selection"):
+                codec.FP4Recipe(32, kind, scale_selection=selection)
+
+    def test_mx4_mse_cpu_fullgraph_reselects_with_changed_distribution(self):
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="mse")
+        shift = torch.tensor([23], dtype=torch.int32)
+        compiled = torch.compile(
+            lambda x: codec.qdq_fp4(x, recipe, exponent_shift=shift),
+            backend="eager",
+            fullgraph=True,
+            dynamic=True,
+        )
+        self.addCleanup(torch._dynamo.reset)
+        for rows in (1, 5, 1):
+            for small, expected_small in ((0.375, 0.5), (4.0, 4.0), (0.375, 0.5)):
+                x = torch.full((rows, 32), small, dtype=torch.bfloat16)
+                x[:, 0] = 6.03125
+                expected = torch.full_like(x, expected_small)
+                expected[:, 0] = 6.0
+                torch.testing.assert_close(compiled(x), expected, rtol=0, atol=0)
+
     def test_mx4_tensor_shift_matches_scalar_oracle_and_rejects_invalid_metadata(self):
         recipe = codec.FP4Recipe(32, "e8m0")
         shift = torch.tensor([23], dtype=torch.int32)

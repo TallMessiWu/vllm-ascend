@@ -23,6 +23,16 @@ nibble. The output of numerical QDQ is rounded back to the input dtype.
 | 16 / 32 | positive E4M3FN byte | `RNE_E4M3(clamp(amax / (6 * outer_scale), 2^-9, 448))` |
 | 32 | E8M0 byte | upward power-of-two of `max(amax / 6, 2^-126)` |
 
+MX4 additionally supports `FP4Recipe(32, "e8m0", scale_selection="mse")`.
+The default `"ceil"` preserves the table above. The optional selector compares
+ceil with the next smaller valid E8M0 scale using the per-group squared error
+after rounding to the input carrier dtype. It accumulates normalized errors
+in FP32 and keeps ceil on ties. Both codes and the selected scale are saved by
+the offline packer; the decoder does not rerun scale selection.
+It uses the same group axis, codebook and payload size. This is a local-error
+candidate, not guaranteed attention/task improvement or native MXFP4 support.
+See [model selection and boundaries](kv_fp4_qdq.md#mx4-group-error-scale-selection).
+
 E4M3 requires an **explicit** positive FP32 outer scale, fixed for the stored
 payload. It is not borrowed from activation/weight calibration and is never
 updated based on future tokens. This reference does not select a calibration

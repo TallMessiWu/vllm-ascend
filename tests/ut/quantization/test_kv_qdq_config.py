@@ -35,6 +35,26 @@ def runtime():
 
 
 class KVQDQConfigTests(unittest.TestCase):
+    def test_mx4_mse_is_opt_in_and_applies_to_both_k_and_v(self):
+        base = {"format": "mx4", "target": "kv"}
+        original = config.parse_kv_qdq(base)
+        self.assertEqual(original.k_recipe.scale_selection, "ceil")
+        selected = config.parse_kv_qdq({**base, "mx4_scale_selection": "mse"})
+        for recipe in (selected.k_recipe, selected.v_recipe):
+            self.assertEqual((recipe.group_size, recipe.scale_type, recipe.scale_selection), (32, "e8m0", "mse"))
+        for override in (
+            {"format": "g32-b"},
+            {"target": "k"},
+            {"target": "v"},
+            {"target": "off"},
+            {"diagnostic_copy": True},
+            {"diagnostic_trace": True},
+            {"mx4_scale_selection": "floor"},
+            {"mx4_scale_selection": None},
+        ):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                config.parse_kv_qdq({**base, "mx4_scale_selection": "mse", **override})
+
     def test_explicit_recipe_target_and_outer_scales(self):
         self.assertIsNone(config.parse_kv_qdq(None))
         for name, group, scale in (("g16-b", 16, "bf16"), ("g32-b", 32, "bf16"), ("mx4", 32, "e8m0")):

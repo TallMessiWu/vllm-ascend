@@ -30,9 +30,19 @@ class KVQDQSettings:
 def parse_kv_qdq(value: dict | None) -> KVQDQSettings | None:
     if value is None:
         return None
-    keys = {"format", "target", "k_outer_scale", "v_outer_scale", "diagnostic_copy", "diagnostic_trace"}
+    keys = {
+        "format",
+        "target",
+        "k_outer_scale",
+        "v_outer_scale",
+        "diagnostic_copy",
+        "diagnostic_trace",
+        "mx4_scale_selection",
+    }
     if not isinstance(value, dict) or set(value) - keys or not {"format", "target"} <= set(value):
-        raise ValueError("kv_fp4_qdq requires format/target; optional K/V outer scales and diagnostic_copy/trace only")
+        raise ValueError(
+            "kv_fp4_qdq requires format/target; optional outer scales, diagnostics, or mx4_scale_selection"
+        )
     if value["target"] not in ("off", "k", "v", "kv"):
         raise ValueError("kv_fp4_qdq.target must be off/k/v/kv")
     diagnostic_copy = value.get("diagnostic_copy", False)
@@ -43,13 +53,18 @@ def parse_kv_qdq(value: dict | None) -> KVQDQSettings | None:
         raise ValueError("kv_fp4_qdq.diagnostic_trace must be a boolean")
     if diagnostic_trace and (diagnostic_copy or value["format"] != "mx4" or value["target"] != "kv"):
         raise ValueError("diagnostic_trace requires ordinary mx4 K+V QDQ")
+    selection = value.get("mx4_scale_selection", "ceil")
+    if selection not in ("ceil", "mse") or ("mx4_scale_selection" in value and value["format"] != "mx4"):
+        raise ValueError("mx4_scale_selection must be ceil/mse and is only valid for mx4")
+    if selection == "mse" and (value["target"] != "kv" or diagnostic_copy or diagnostic_trace):
+        raise ValueError("MX4 mse scale selection requires K+V QDQ without copy/trace diagnostics")
     for name, group, scale in FORMATS:
         if value["format"] == name:
             return KVQDQSettings(
                 name,
                 value["target"],
-                FP4Recipe(group, scale, value.get("k_outer_scale")),
-                FP4Recipe(group, scale, value.get("v_outer_scale")),
+                FP4Recipe(group, scale, value.get("k_outer_scale"), scale_selection=selection),
+                FP4Recipe(group, scale, value.get("v_outer_scale"), scale_selection=selection),
                 diagnostic_copy=diagnostic_copy,
                 diagnostic_trace=diagnostic_trace,
             )

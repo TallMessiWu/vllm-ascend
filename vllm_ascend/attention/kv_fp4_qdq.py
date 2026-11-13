@@ -94,12 +94,14 @@ class AscendKVFP4QDQImpl(AscendAttentionBackendImpl):
             **kwargs,
         )
         logger.info_once(
-            "Experimental KV QDQ: format=%s target=%s operation=%s, BF16 cache/attention; no packed-cache claim",
+            "Experimental KV QDQ: format=%s target=%s operation=%s scale_selection=%s, "
+            "BF16 cache/attention; no packed-cache claim",
             settings.format,
             settings.target,
             "off"
             if settings.target == "off"
             else ("copy-only (no quantization)" if settings.diagnostic_copy else "qdq"),
+            settings.k_recipe.scale_selection,
         )
 
     def _prepare_mx4_shift(self, device):
