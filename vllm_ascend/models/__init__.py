@@ -2,6 +2,11 @@ from vllm import ModelRegistry
 
 
 def register_model():
+    # Opt-in diagnostics only; never replaces Qwen3MoeForCausalLM.
+    ModelRegistry.register_model(
+        "Qwen3MoeRoutingProbeForCausalLM",
+        "vllm_ascend.models.qwen3_moe_routing_probe:Qwen3MoeRoutingProbeForCausalLM",
+    )
     ModelRegistry.register_model(
         "Qwen4ExpForCausalLM",
         "vllm_ascend.models.qwen4_exp:AscendQwen4ExpForCausalLM",
