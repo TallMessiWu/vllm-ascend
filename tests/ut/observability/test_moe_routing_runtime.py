@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""CPU tests at the upstream router/logits-processor boundary, not NPU evidence."""
+"""CPU tests at the upstream router/native-trace boundary, not NPU evidence."""
 
 import importlib.util
 import io
@@ -39,19 +39,11 @@ class RuntimeBoundaryTests(unittest.TestCase):
             def __init__(self, top_k, global_num_experts):
                 self.top_k, self.global_num_experts = top_k, global_num_experts
 
-        def updates(state, batch, factory):
-            if batch is not None:
-                for row, params, prompt, output in batch.added:
-                    value = factory(params, prompt, output)
-                    if value is not None:
-                        state[row] = value
-
         self.modules = {
             "vllm.model_executor.layers.fused_moe.router.base_router": external_module(BaseRouter=BaseRouter),
             "vllm.model_executor.models.qwen3_moe": external_module(Qwen3MoeForCausalLM=torch.nn.Module),
             "vllm_ascend.observability.moe_routing": self.metrics,
-            "vllm.v1.sample.logits_processor": external_module(LogitsProcessor=object),
-            "vllm.v1.sample.logits_processor.builtin": external_module(process_dict_updates=updates),
+            "vllm": external_module(SamplingParams=SimpleNamespace),
         }
 
     def test_router_delegates_once_and_preserves_output_tensor_identity(self):
@@ -82,23 +74,18 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.assertEqual(base.calls, 1)
         self.assertEqual(trace.ids.tolist(), [[0, 2]])
 
-    def test_fixed_continuation_advances_with_forwarded_output_history(self):
+    def test_fixed_continuation_uses_native_trace_params_and_owns_token_copy(self):
         with patch.dict(sys.modules, self.modules):
             runtime = load("probe_test_force", "vllm_ascend/observability/moe_forced_tokens.py")
-        history = []
-        params = SimpleNamespace(extra_args={"routing_probe_tokens": [2, 1]}, max_tokens=2)
-        processor = runtime.ForcedContinuation(None, "cpu", False)
-        processor.update_state(SimpleNamespace(added=[(0, params, [0], history)]))
-        first = processor.apply(torch.tensor([[1.0, 2.0, 3.0]]))
-        self.assertEqual(first.argmax(dim=-1).tolist(), [2])
-        self.assertEqual(first[0, 2].item(), 3.0)
-        history.append(2)
-        processor.update_state(None)
-        second = processor.apply(torch.tensor([[1.0, 4.0, 3.0]]))
-        self.assertEqual(second.argmax(dim=-1).tolist(), [1])
-        history.append(1)
-        with self.assertRaises(ValueError):
-            processor.apply(torch.ones(1, 3))
+        tokens = [2, 1]
+        params = runtime.forced_continuation(tokens)
+        tokens.append(3)
+        self.assertEqual(params.trace_decode_token_ids, [2, 1])
+        self.assertEqual(params.max_tokens, 2)
+        self.assertEqual(params.n, 1)
+        self.assertTrue(params.ignore_eos)
+        self.assertFalse(params.detokenize)
+        self.assertFalse(hasattr(params, "extra_args"))
 
     def test_diagnostic_architecture_preserves_checkpoint_parameter_names_and_output(self):
         class Block(torch.nn.Module):
@@ -178,12 +165,15 @@ class RuntimeBoundaryTests(unittest.TestCase):
                 ):
                     if kwargs["enable_return_routed_experts"] and not kwargs["enable_prefix_caching"]:
                         raise ValueError("AuxOutput Connector requires prefix caching.")
+                    if "logits_processors" in kwargs or kwargs.get("enable_trace_replay") is not True:
+                        raise ValueError("Use native V2 trace replay, not a V1 logits processor")
                     self.kwargs, self.closed, self.failure = kwargs, False, _failure
                     self.reset_result, self.cached_tokens = _reset_result, _cached_tokens
                     self.cache_resets, self.generated, self.cache_used = 0, 0, False
                     self.llm_engine = SimpleNamespace(
                         vllm_config=SimpleNamespace(
                             use_v2_model_runner=True,
+                            model_config=SimpleNamespace(enable_trace_replay=kwargs["enable_trace_replay"]),
                             cache_config=SimpleNamespace(enable_prefix_caching=kwargs["enable_prefix_caching"]),
                             compilation_config=SimpleNamespace(mode=3, cudagraph_mode="FULL_DECODE_ONLY"),
                         ),
@@ -206,7 +196,7 @@ class RuntimeBoundaryTests(unittest.TestCase):
                     if self.failure:
                         raise RuntimeError("injected external inference failure")
                     result = SimpleNamespace(
-                        token_ids=params.extra_args["routing_probe_tokens"],
+                        token_ids=params.trace_decode_token_ids,
                         routed_experts=torch.arange(8).expand(544, 48, 8).numpy(),
                     )
                     hit = 512 if self.cache_used else self.cached_tokens
@@ -226,10 +216,13 @@ class RuntimeBoundaryTests(unittest.TestCase):
                     __version__="0.32.0",
                 ),
                 "vllm_ascend": external_module(__file__=str(ROOT / "vllm_ascend/__init__.py")),
-                "vllm_ascend.observability.moe_forced_tokens": external_module(ForcedContinuation=object),
                 "vllm_ascend.observability.moe_routing_rpc": external_module(reset_probe=object(), save_probe=object()),
             }
             with tempfile.TemporaryDirectory(dir=".") as directory, patch.dict(sys.modules, modules):
+                # Exercise the actual helper; do not hide an incompatible class
+                # behind an object placeholder in the engine boundary fixture.
+                forced = load("probe_driver_force", "vllm_ascend/observability/moe_forced_tokens.py")
+                sys.modules["vllm_ascend.observability.moe_forced_tokens"] = forced
                 folder = Path(directory)
                 manifest = folder / "inputs.json"
                 manifest.write_text(json.dumps([{"prompt": [0] * 512, "forced": [1] * 33}] * 4))
@@ -257,8 +250,6 @@ class RuntimeBoundaryTests(unittest.TestCase):
     def test_invalid_forced_sequences_are_rejected_before_sampling(self):
         with patch.dict(sys.modules, self.modules):
             runtime = load("probe_test_force_invalid", "vllm_ascend/observability/moe_forced_tokens.py")
-        for tokens in ([], [True], [-1], [1, 2], "token"):
+        for tokens in ([], [True], [-1], ["token"], "token", None):
             with self.assertRaises(ValueError):
-                runtime.ForcedContinuation.validate_params(
-                    SimpleNamespace(extra_args={"routing_probe_tokens": tokens}, max_tokens=1)
-                )
+                runtime.forced_continuation(tokens)
