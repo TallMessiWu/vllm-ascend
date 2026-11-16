@@ -10,7 +10,6 @@ import argparse
 import hashlib
 import json
 import subprocess
-from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -120,7 +119,6 @@ def collect(args):
     from vllm import LLM
 
     from vllm_ascend.observability.moe_forced_tokens import forced_continuation
-    from vllm_ascend.observability.moe_routing_rpc import reset_probe, save_probe
 
     provenance(args.source)
     samples = json.loads(Path(args.inputs).read_text())
@@ -144,6 +142,9 @@ def collect(args):
         compilation_config={"cudagraph_mode": "FULL_DECODE_ONLY"},
         enable_return_routed_experts=True,
         enable_trace_replay=True,
+        worker_extension_cls=(
+            "vllm_ascend.observability.moe_routing_rpc.MoeRoutingWorkerExtension" if args.phase == "probe" else ""
+        ),
         hf_overrides=overrides,
         seed=0,
         generation_config="auto",
@@ -178,8 +179,8 @@ def collect(args):
                     raise ValueError("Idle prefix-cache reset failed; refusing a potentially cached request")
                 emit("prefix_cache_reset", phase=args.phase, repeat=repeat, sample=sample_id, success=True)
                 if args.phase == "probe":
-                    armed = llm.apply_model(reset_probe)
-                    if len(armed) != 1 or armed[0] != {"armed_layers": LAYERS}:
+                    armed = llm.collective_rpc("moe_routing_arm")
+                    if armed != [{"armed_layers": LAYERS}]:
                         raise ValueError("Missing or unexpected worker arm response")
                 params = forced_continuation(sample["forced"])
                 outputs = llm.generate([{"prompt_token_ids": sample["prompt"]}], params, use_tqdm=False)
@@ -196,10 +197,10 @@ def collect(args):
                     raise ValueError("Missing/truncated/misaligned native routed-experts output")
                 all_ids.append(ids.int())
                 if args.phase == "probe":
-                    dest = str(relative_new(args.output) / f"probe-{sample_id}.pt")
-                    saved = llm.apply_model(partial(save_probe, path=dest))
-                    if len(saved) != 1 or saved[0].get("rows_per_layer") != PREFILL + DECODE:
-                        raise ValueError("Missing worker snapshot result")
+                    dest = str(relative_new(args.output) / f"probe-snapshot-{sample_id}.pt")
+                    saved = llm.collective_rpc("moe_routing_save", args=(dest,))
+                    if saved != [{"saved": dest, "layers": LAYERS, "rows_per_layer": PREFILL + DECODE}]:
+                        raise ValueError("Missing or unexpected worker snapshot metadata")
                 emit(
                     "request_complete",
                     phase=args.phase,
@@ -264,7 +265,7 @@ def analyze(args):
     review = False
     replay_verified = True
     for sample in range(4):
-        snapshot = torch.load(root / f"probe-{sample}.pt", map_location="cpu", weights_only=True)
+        snapshot = torch.load(root / f"probe-snapshot-{sample}.pt", map_location="cpu", weights_only=True)
         if len(snapshot["layers"]) != LAYERS:
             raise ValueError("Missing captured layers")
         emit("runtime_config", sample=sample, **snapshot["config"])

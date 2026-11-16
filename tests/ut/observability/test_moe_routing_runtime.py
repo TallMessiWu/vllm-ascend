@@ -12,6 +12,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+import msgspec
 import torch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -167,6 +168,8 @@ class RuntimeBoundaryTests(unittest.TestCase):
                         raise ValueError("AuxOutput Connector requires prefix caching.")
                     if "logits_processors" in kwargs or kwargs.get("enable_trace_replay") is not True:
                         raise ValueError("Use native V2 trace replay, not a V1 logits processor")
+                    if kwargs.get("worker_extension_cls") != "":
+                        raise ValueError("Reference keeps ParallelConfig's empty string extension default")
                     self.kwargs, self.closed, self.failure = kwargs, False, _failure
                     self.reset_result, self.cached_tokens = _reset_result, _cached_tokens
                     self.cache_resets, self.generated, self.cache_used = 0, 0, False
@@ -216,7 +219,6 @@ class RuntimeBoundaryTests(unittest.TestCase):
                     __version__="0.32.0",
                 ),
                 "vllm_ascend": external_module(__file__=str(ROOT / "vllm_ascend/__init__.py")),
-                "vllm_ascend.observability.moe_routing_rpc": external_module(reset_probe=object(), save_probe=object()),
             }
             with tempfile.TemporaryDirectory(dir=".") as directory, patch.dict(sys.modules, modules):
                 # Exercise the actual helper; do not hide an incompatible class
@@ -246,6 +248,91 @@ class RuntimeBoundaryTests(unittest.TestCase):
             self.assertEqual(instances[0].kwargs["max_num_seqs"], 100)
             self.assertEqual(instances[0].kwargs["max_num_batched_tokens"], 16384)
             self.assertEqual(instances[0].kwargs["compilation_config"], {"cudagraph_mode": "FULL_DECODE_ONLY"})
+
+    def test_probe_driver_sends_only_named_rpc_and_primitive_metadata(self):
+        instances = []
+
+        class LLM:
+            def __init__(self, **kwargs):
+                self.kwargs, self.closed, self.calls = kwargs, False, []
+                self.llm_engine = SimpleNamespace(
+                    vllm_config=SimpleNamespace(
+                        use_v2_model_runner=True,
+                        model_config=SimpleNamespace(enable_trace_replay=True),
+                        cache_config=SimpleNamespace(enable_prefix_caching=True),
+                        compilation_config=SimpleNamespace(mode=3, cudagraph_mode="FULL_DECODE_ONLY"),
+                    ),
+                    engine_core=SimpleNamespace(shutdown=self.shutdown),
+                )
+                instances.append(self)
+
+            def shutdown(self):
+                self.closed = True
+
+            def reset_prefix_cache(self, **kwargs):
+                return True
+
+            def apply_model(self, func):
+                # Reproduce the real default transport failure, not a callable
+                # shortcut that would hide serialization errors in a mock.
+                return msgspec.msgpack.encode(("apply_model", (func,)))
+
+            def collective_rpc(self, method, timeout=None, args=(), kwargs=None):
+                decoded = msgspec.msgpack.decode(msgspec.msgpack.encode((method, timeout, args, kwargs)))
+                name, _, parameters, _ = decoded
+                self.calls.append((name, parameters))
+                if name == "moe_routing_arm":
+                    return [{"armed_layers": 48}]
+                if name == "moe_routing_save":
+                    return [{"saved": parameters[0], "layers": 48, "rows_per_layer": 544}]
+                raise ValueError("Unexpected worker method")
+
+            def generate(self, prompts, params, use_tqdm):
+                return [
+                    SimpleNamespace(
+                        prompt_token_ids=prompts[0]["prompt_token_ids"],
+                        num_cached_tokens=0,
+                        outputs=[
+                            SimpleNamespace(
+                                token_ids=params.trace_decode_token_ids,
+                                routed_experts=torch.arange(8).expand(544, 48, 8).numpy(),
+                            )
+                        ],
+                    )
+                ]
+
+        modules = {
+            **self.modules,
+            "vllm": external_module(
+                LLM=LLM,
+                SamplingParams=SimpleNamespace,
+                __file__=str(ROOT.parents[1] / "vllm/vllm/__init__.py"),
+                __version__="0.32.0",
+            ),
+            "vllm_ascend": external_module(__file__=str(ROOT / "vllm_ascend/__init__.py")),
+        }
+        with tempfile.TemporaryDirectory(dir=".") as directory, patch.dict(sys.modules, modules):
+            sys.modules["vllm_ascend.observability.moe_forced_tokens"] = load(
+                "probe_rpc_force", "vllm_ascend/observability/moe_forced_tokens.py"
+            )
+            sys.modules["vllm_ascend.observability.moe_routing_rpc"] = load(
+                "probe_rpc_helpers", "vllm_ascend/observability/moe_routing_rpc.py"
+            )
+            folder = Path(directory)
+            manifest = folder / "inputs.json"
+            manifest.write_text(json.dumps([{"prompt": [0] * 512, "forced": [1] * 33}] * 4))
+            driver = load("probe_rpc_driver", "examples/moe_routing_check.py")
+            args = SimpleNamespace(
+                phase="probe", source=str(ROOT), inputs=str(manifest), output=str(folder), model="unused"
+            )
+            with redirect_stdout(io.StringIO()):
+                driver.collect(args)
+        self.assertTrue(instances[0].closed)
+        self.assertEqual(
+            instances[0].kwargs["worker_extension_cls"],
+            "vllm_ascend.observability.moe_routing_rpc.MoeRoutingWorkerExtension",
+        )
+        self.assertEqual([method for method, _ in instances[0].calls], ["moe_routing_arm", "moe_routing_save"] * 4)
 
     def test_invalid_forced_sequences_are_rejected_before_sampling(self):
         with patch.dict(sys.modules, self.modules):
