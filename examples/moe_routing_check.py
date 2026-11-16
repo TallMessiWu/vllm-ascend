@@ -117,9 +117,9 @@ def make_inputs(model, dest):
 
 def collect(args):
     import torch
-    from vllm import LLM, SamplingParams
+    from vllm import LLM
 
-    from vllm_ascend.observability.moe_forced_tokens import ForcedContinuation
+    from vllm_ascend.observability.moe_forced_tokens import forced_continuation
     from vllm_ascend.observability.moe_routing_rpc import reset_probe, save_probe
 
     provenance(args.source)
@@ -143,7 +143,7 @@ def collect(args):
         enable_chunked_prefill=True,
         compilation_config={"cudagraph_mode": "FULL_DECODE_ONLY"},
         enable_return_routed_experts=True,
-        logits_processors=[ForcedContinuation],
+        enable_trace_replay=True,
         hf_overrides=overrides,
         seed=0,
         generation_config="auto",
@@ -158,10 +158,14 @@ def collect(args):
             runner_v2=bool(runtime_config.use_v2_model_runner),
             prefix_caching=bool(runtime_config.cache_config.enable_prefix_caching),
             prefix_cache_policy="idle_reset_before_every_request",
+            continuation_mode="native_trace_decode_token_ids",
+            trace_replay=bool(runtime_config.model_config.enable_trace_replay),
             checkpoint_revision="UNVERIFIED",
         )
         if not runtime_config.use_v2_model_runner or not runtime_config.cache_config.enable_prefix_caching:
             raise ValueError("AuxOutput requires Runner V2 and prefix caching")
+        if not runtime_config.model_config.enable_trace_replay:
+            raise ValueError("Fixed continuation requires native trace replay")
         rounds = 2 if args.phase == "reference" else 1
         for repeat in range(rounds):
             all_ids = []
@@ -177,15 +181,7 @@ def collect(args):
                     armed = llm.apply_model(reset_probe)
                     if len(armed) != 1 or armed[0] != {"armed_layers": LAYERS}:
                         raise ValueError("Missing or unexpected worker arm response")
-                params = SamplingParams(
-                    temperature=0,
-                    top_p=1,
-                    min_p=0,
-                    max_tokens=DECODE + 1,
-                    ignore_eos=True,
-                    detokenize=False,
-                    extra_args={"routing_probe_tokens": sample["forced"]},
-                )
+                params = forced_continuation(sample["forced"])
                 outputs = llm.generate([{"prompt_token_ids": sample["prompt"]}], params, use_tqdm=False)
                 if len(outputs) != 1 or len(outputs[0].outputs) != 1:
                     raise ValueError("Expected exactly one completed request")

@@ -12,6 +12,11 @@ Each has 512 prompt tokens and 33 forced sampled tokens. Only the first 32
 sampled tokens are subsequently forwarded, giving exactly 512 prefill and 32
 actual decode routing positions. The final sampled token has no routing data.
 There is no chat-template, reasoning-quality, long-context, or performance claim.
+The engine uses existing V2 native trace replay (`enable_trace_replay=True`)
+and request `trace_decode_token_ids`. No custom logits processor is registered.
+The native sampler advances from committed device lengths, not a host output
+list; the existing Ascend V2 trace-replay adapter is reused without changes.
+Every returned token sequence is checked against the input trace.
 
 Run these phases in separate processes in the order below, using the same local
 BF16 reference checkpoint, editable Ascend source, input manifest, and output
@@ -90,7 +95,8 @@ CPU unit tests are in `tests/ut/observability/test_moe_routing*.py`. They includ
 literal metric/softmax examples, fault rejection, inference-tensor reset,
 changing-input CPU fullgraph buffers, and mocked upstream interface contracts.
 The NPU component test is
-`tests/e2e/pull_request/one_card/test_moe_routing_trace.py`; it checks changing
-inputs in raw ACL replay, not a compiled full model. Full model loading, actual
+`tests/e2e/pull_request/one_card/test_moe_routing_trace.py`; it checks native
+trace request-slot/committed-length indexing and changing inputs in raw ACL
+snapshot replay, not a compiled full model. Full model loading, actual
 NPU collection, graph integration and self-comparison require the example to
 run on the target system. CPU/mock tests do not establish those results.

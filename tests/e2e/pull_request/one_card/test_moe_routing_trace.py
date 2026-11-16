@@ -16,6 +16,23 @@ class RoutingTraceNPUTests(unittest.TestCase):
         torch.npu.set_device(0)
 
     @torch.inference_mode()
+    def test_native_trace_uses_request_slots_and_committed_device_lengths(self):
+        from vllm_ascend.worker.v2.sample.trace_replay import apply_trace_tokens
+
+        sampled = torch.full((3,), -1, device="npu", dtype=torch.int64)
+        mapping = torch.tensor([1, 0, -1], device="npu", dtype=torch.int32)
+        tokens = torch.tensor([[11, 22, 33], [44, 55, 66]], device="npu", dtype=torch.int32)
+        lengths = torch.tensor([3, 2], device="npu", dtype=torch.int32)
+        prompt = torch.tensor([512, 512], device="npu", dtype=torch.int32)
+        total = torch.tensor([512, 514], device="npu", dtype=torch.int32)
+        apply_trace_tokens(sampled, mapping, tokens, lengths, total, prompt)
+        self.assertEqual(sampled.cpu().tolist(), [-1, 11, -1])
+        total.copy_(torch.tensor([513, 512], device="npu", dtype=torch.int32))
+        sampled.fill_(-1)
+        apply_trace_tokens(sampled, mapping, tokens, lengths, total, prompt)
+        self.assertEqual(sampled.cpu().tolist(), [44, 22, -1])
+
+    @torch.inference_mode()
     def test_changed_decode_inputs_replay_into_persistent_buffers(self):
         trace = RoutingTrace(5, 3, 4, 2, "npu", detailed=True)
         h = torch.ones(1, 3, device="npu", dtype=torch.bfloat16)
