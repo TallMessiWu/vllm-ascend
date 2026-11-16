@@ -138,7 +138,8 @@ def collect(args):
         tensor_parallel_size=1,
         enable_expert_parallel=True,
         distributed_executor_backend="mp",
-        enable_prefix_caching=False,
+        # AuxOutput uses prefix-block hashes even for an uncached diagnostic run.
+        enable_prefix_caching=True,
         enable_chunked_prefill=True,
         compilation_config={"cudagraph_mode": "FULL_DECODE_ONLY"},
         enable_return_routed_experts=True,
@@ -155,14 +156,23 @@ def collect(args):
             compilation_mode=str(runtime_config.compilation_config.mode),
             cudagraph_mode=str(runtime_config.compilation_config.cudagraph_mode),
             runner_v2=bool(runtime_config.use_v2_model_runner),
+            prefix_caching=bool(runtime_config.cache_config.enable_prefix_caching),
+            prefix_cache_policy="idle_reset_before_every_request",
             checkpoint_revision="UNVERIFIED",
         )
-        if not runtime_config.use_v2_model_runner:
-            raise ValueError("Expected Runner V2")
+        if not runtime_config.use_v2_model_runner or not runtime_config.cache_config.enable_prefix_caching:
+            raise ValueError("AuxOutput requires Runner V2 and prefix caching")
         rounds = 2 if args.phase == "reference" else 1
         for repeat in range(rounds):
             all_ids = []
             for sample_id, sample in enumerate(samples):
+                # Required in BOTH processes/repeats: cached native routing can
+                # look complete even when most prefill rows were not recomputed.
+                # The scheduler also advances the auxiliary output namespace on
+                # a successful reset. Never preempt running requests to force it.
+                if llm.reset_prefix_cache(reset_running_requests=False, reset_connector=False) is not True:
+                    raise ValueError("Idle prefix-cache reset failed; refusing a potentially cached request")
+                emit("prefix_cache_reset", phase=args.phase, repeat=repeat, sample=sample_id, success=True)
                 if args.phase == "probe":
                     armed = llm.apply_model(reset_probe)
                     if len(armed) != 1 or armed[0] != {"armed_layers": LAYERS}:
@@ -179,6 +189,9 @@ def collect(args):
                 outputs = llm.generate([{"prompt_token_ids": sample["prompt"]}], params, use_tqdm=False)
                 if len(outputs) != 1 or len(outputs[0].outputs) != 1:
                     raise ValueError("Expected exactly one completed request")
+                cached_tokens = getattr(outputs[0], "num_cached_tokens", None)
+                if cached_tokens != 0:
+                    raise ValueError(f"Expected zero prefix-cache hits, got {cached_tokens!r}")
                 out = outputs[0].outputs[0]
                 if list(outputs[0].prompt_token_ids) != sample["prompt"] or list(out.token_ids) != sample["forced"]:
                     raise ValueError("Teacher-forced token alignment failed")
@@ -199,6 +212,7 @@ def collect(args):
                     forwarded_rows=PREFILL + DECODE,
                     layers=LAYERS,
                     token_alignment="GREEN",
+                    num_cached_tokens=cached_tokens,
                 )
             path = relative_new(args.output) / f"{args.phase}-{repeat}.pt"
             if path.exists():

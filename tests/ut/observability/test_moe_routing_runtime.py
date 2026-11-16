@@ -161,16 +161,30 @@ class RuntimeBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runtime.Qwen3MoeRoutingProbeForCausalLM(vllm_config=vc)
 
-    def test_reference_driver_keeps_defaults_and_closes_its_engine_on_failure(self):
-        for fail in (False, True):
+    def test_reference_driver_requires_cold_prefix_and_closes_engine_on_failure(self):
+        """Native routing may include cache hits, so complete IDs alone are insufficient."""
+        cases = ((False, True, 0), (True, True, 0), (False, False, 0), (False, True, 128), (False, True, None))
+        for fail, reset_result, cached_tokens in cases:
             instances = []
 
             class LLM:
-                def __init__(self, _instances=instances, _failure=fail, **kwargs):
+                def __init__(
+                    self,
+                    _instances=instances,
+                    _failure=fail,
+                    _reset_result=reset_result,
+                    _cached_tokens=cached_tokens,
+                    **kwargs,
+                ):
+                    if kwargs["enable_return_routed_experts"] and not kwargs["enable_prefix_caching"]:
+                        raise ValueError("AuxOutput Connector requires prefix caching.")
                     self.kwargs, self.closed, self.failure = kwargs, False, _failure
+                    self.reset_result, self.cached_tokens = _reset_result, _cached_tokens
+                    self.cache_resets, self.generated, self.cache_used = 0, 0, False
                     self.llm_engine = SimpleNamespace(
                         vllm_config=SimpleNamespace(
                             use_v2_model_runner=True,
+                            cache_config=SimpleNamespace(enable_prefix_caching=kwargs["enable_prefix_caching"]),
                             compilation_config=SimpleNamespace(mode=3, cudagraph_mode="FULL_DECODE_ONLY"),
                         ),
                         engine_core=SimpleNamespace(shutdown=self.shutdown),
@@ -180,14 +194,28 @@ class RuntimeBoundaryTests(unittest.TestCase):
                 def shutdown(self):
                     self.closed = True
 
+                def reset_prefix_cache(self, reset_running_requests=False, reset_connector=False):
+                    if reset_running_requests or reset_connector:
+                        raise AssertionError("Only idle local cache reset is permitted")
+                    self.cache_resets += 1
+                    self.cache_used = False
+                    return self.reset_result
+
                 def generate(self, prompts, params, use_tqdm):
+                    self.generated += 1
                     if self.failure:
                         raise RuntimeError("injected external inference failure")
                     result = SimpleNamespace(
                         token_ids=params.extra_args["routing_probe_tokens"],
                         routed_experts=torch.arange(8).expand(544, 48, 8).numpy(),
                     )
-                    return [SimpleNamespace(prompt_token_ids=prompts[0]["prompt_token_ids"], outputs=[result])]
+                    hit = 512 if self.cache_used else self.cached_tokens
+                    self.cache_used = True
+                    return [
+                        SimpleNamespace(
+                            prompt_token_ids=prompts[0]["prompt_token_ids"], outputs=[result], num_cached_tokens=hit
+                        )
+                    ]
 
             modules = {
                 **self.modules,
@@ -210,13 +238,18 @@ class RuntimeBoundaryTests(unittest.TestCase):
                     phase="reference", source=str(ROOT), inputs=str(manifest), output=str(folder), model="unused"
                 )
                 with redirect_stdout(io.StringIO()):
-                    if fail:
-                        with self.assertRaises(RuntimeError):
+                    if fail or not reset_result or cached_tokens != 0:
+                        error = RuntimeError if fail else ValueError
+                        with self.assertRaises(error):
                             driver.collect(args)
                     else:
                         driver.collect(args)
                         self.assertTrue((folder / "reference-1.pt").exists())
+            expected_requests = 1 if fail or not reset_result or cached_tokens != 0 else 8
+            self.assertEqual(instances[0].cache_resets, expected_requests)
+            self.assertEqual(instances[0].generated, expected_requests if reset_result else 0)
             self.assertTrue(instances[0].closed)
+            self.assertIs(instances[0].kwargs["enable_prefix_caching"], True)
             self.assertEqual(instances[0].kwargs["max_num_seqs"], 100)
             self.assertEqual(instances[0].kwargs["max_num_batched_tokens"], 16384)
             self.assertEqual(instances[0].kwargs["compilation_config"], {"cudagraph_mode": "FULL_DECODE_ONLY"})
