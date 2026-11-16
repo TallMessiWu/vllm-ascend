@@ -41,8 +41,17 @@ python examples/moe_routing_check.py --help
    and a separate CPU FP64 mathematical gate/softmax reference.
 
 The two model processes use BF16 model/KV, FULL_DECODE_ONLY, TP/DP/PP/PCP/DCP=1,
-EP enabled, no EPLB/SP/LoRA/speculation, prefix caching disabled, and chunked
-prefill enabled. Model limits remain 40960 context, 100 sequences, 16384 batched
+EP enabled, no EPLB/SP/LoRA/speculation, prefix caching enabled as required by
+AuxOutput, and chunked prefill enabled. Before EVERY request in both processes
+and repeats, the idle public `LLM.reset_prefix_cache(reset_running_requests=False,
+reset_connector=False)` API must return `True`. The scheduler resets the prefix
+cache and advances the auxiliary output namespace. Each completed request must
+report `num_cached_tokens == 0`; failure, a missing count, or a cache hit aborts
+collection. Complete native routing alone is insufficient: it may include
+cached rows that were not recomputed. This diagnostic-only cache setting does
+not change ordinary service defaults.
+
+Model limits remain 40960 context, 100 sequences, 16384 batched
 tokens, and 0.95 memory utilization. Requests are intentionally sequential;
 these are not changes to a running service's concurrency configuration.
 
