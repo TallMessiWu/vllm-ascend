@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import msgspec
 import torch
+from safetensors.torch import save_file
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -87,6 +88,48 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.assertTrue(params.ignore_eos)
         self.assertFalse(params.detokenize)
         self.assertFalse(hasattr(params, "extra_args"))
+        scored = runtime.forced_continuation([2, 1], score_tokens=True)
+        self.assertEqual(scored.logprobs, 0)
+        output = SimpleNamespace(logprobs=[{2: SimpleNamespace(logprob=-1.5)}, {1: SimpleNamespace(logprob=-0.5)}])
+        self.assertEqual(runtime.continuation_nll(output, scored.trace_decode_token_ids), [1.5, 0.5])
+        with self.assertRaisesRegex(ValueError, "forced token"):
+            runtime.continuation_nll(output, [1, 2])
+
+    def test_layer_zero_attention_overlay_reaches_the_normal_loader(self):
+        class ReferenceLoader(torch.nn.Module):
+            def load_weights(self, weights):
+                self.received = dict(weights)
+                return set(self.received)
+
+        self.modules["vllm.model_executor.models.qwen3_moe"] = external_module(Qwen3MoeForCausalLM=ReferenceLoader)
+        with patch.dict(sys.modules, self.modules):
+            runtime = load("probe_test_l0_overlay", "vllm_ascend/models/qwen3_moe_routing_probe.py")
+        probe_type = runtime.Qwen3MoeRoutingProbeForCausalLM
+        probe = probe_type.__new__(probe_type)
+        ReferenceLoader.__init__(probe)
+        reference_weights = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in runtime.L0_ATTENTION_WEIGHTS}
+        candidate_weights = {name: torch.zeros_like(value) for name, value in reference_weights.items()}
+        other_weight = torch.full((2, 2), 3, dtype=torch.bfloat16)
+        candidate_weights["model.layers.1.self_attn.q_proj.weight"] = other_weight
+        probe.routing_config = {}
+        probe.l0_attention_source = None
+        self.assertEqual(probe.load_weights(iter(candidate_weights.items())), set(candidate_weights))
+        self.assertFalse(probe.routing_config)
+        with tempfile.TemporaryDirectory(dir=".") as folder:
+            root = Path(folder)
+            shard = "model.safetensors"
+            save_file(reference_weights, root / shard)
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": dict.fromkeys(reference_weights, shard)})
+            )
+            probe.l0_attention_source = root
+            self.assertEqual(probe.load_weights(iter(candidate_weights.items())), set(candidate_weights))
+            self.assertEqual(set(probe.routing_config["l0_attention_changed"]), runtime.L0_ATTENTION_WEIGHTS)
+            for name, tensor in reference_weights.items():
+                torch.testing.assert_close(probe.received[name], tensor)
+            self.assertIs(probe.received["model.layers.1.self_attn.q_proj.weight"], other_weight)
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                probe.load_weights(iter(list(candidate_weights.items())[:1]))
 
     def test_diagnostic_architecture_preserves_checkpoint_parameter_names_and_output(self):
         class Block(torch.nn.Module):

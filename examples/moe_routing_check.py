@@ -115,17 +115,21 @@ def make_inputs(model, dest):
     )
 
 
-def collect(args):
+def collect(args, *, score_tokens=False, l0_attention_source=None):
     import torch
     from vllm import LLM
 
-    from vllm_ascend.observability.moe_forced_tokens import forced_continuation
+    from vllm_ascend.observability.moe_forced_tokens import continuation_nll, forced_continuation
 
     provenance(args.source)
     samples = json.loads(Path(args.inputs).read_text())
     if len(samples) != 4 or any(len(s["prompt"]) != PREFILL or len(s["forced"]) != DECODE + 1 for s in samples):
         raise ValueError("Unexpected fixed input manifest")
     overrides = {"architectures": ["Qwen3MoeRoutingProbeForCausalLM"]} if args.phase == "probe" else None
+    if l0_attention_source is not None:
+        if overrides is None:
+            raise ValueError("Layer 0 attention replacement requires the diagnostic architecture")
+        overrides["routing_probe_l0_attention_source"] = str(l0_attention_source)
     llm = LLM(
         model=args.model,
         dtype="bfloat16",
@@ -169,6 +173,7 @@ def collect(args):
         if not runtime_config.model_config.enable_trace_replay:
             raise ValueError("Fixed continuation requires native trace replay")
         rounds = 2 if args.phase == "reference" else 1
+        scores = []
         for repeat in range(rounds):
             all_ids = []
             for sample_id, sample in enumerate(samples):
@@ -183,7 +188,7 @@ def collect(args):
                     armed = llm.collective_rpc("moe_routing_arm")
                     if armed != [{"armed_layers": LAYERS}]:
                         raise ValueError("Missing or unexpected worker arm response")
-                params = forced_continuation(sample["forced"])
+                params = forced_continuation(sample["forced"], score_tokens=score_tokens)
                 outputs = llm.generate([{"prompt_token_ids": sample["prompt"]}], params, use_tqdm=False)
                 if len(outputs) != 1 or len(outputs[0].outputs) != 1:
                     raise ValueError("Expected exactly one completed request")
@@ -193,6 +198,8 @@ def collect(args):
                 out = outputs[0].outputs[0]
                 if list(outputs[0].prompt_token_ids) != sample["prompt"] or list(out.token_ids) != sample["forced"]:
                     raise ValueError("Teacher-forced token alignment failed")
+                if score_tokens:
+                    scores.append(continuation_nll(out, sample["forced"]))
                 ids = torch.as_tensor(out.routed_experts.copy()) if out.routed_experts is not None else None
                 if ids is None or tuple(ids.shape) != (PREFILL + DECODE, LAYERS, TOP_K):
                     raise ValueError("Missing/truncated/misaligned native routed-experts output")
@@ -217,6 +224,7 @@ def collect(args):
                 raise ValueError("Refusing to replace routing artifacts")
             torch.save(torch.stack(all_ids), path)
         emit("collection_complete", phase=args.phase, rounds=rounds, model_quality="UNVERIFIED")
+        return scores
 
     finally:
         # Only shut down the engine this diagnostic created, never another service.

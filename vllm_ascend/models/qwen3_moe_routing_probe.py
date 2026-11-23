@@ -6,15 +6,32 @@ patches or environment switches. The delegated router computes the original
 result once, snapshots it, and returns the very same tensors.
 """
 
+import json
 from functools import partial
+from pathlib import Path
 
 import torch
+from safetensors import safe_open
 from vllm.model_executor.layers.fused_moe.router.base_router import BaseRouter
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeForCausalLM
 
 from vllm_ascend.observability.moe_routing import TRACE_ROWS, RoutingTrace
 
 DETAILED_LAYERS = (0, 23, 47)
+L0_ATTENTION_WEIGHTS = frozenset(f"model.layers.0.self_attn.{projection}_proj.weight" for projection in "qkvo")
+
+
+def load_l0_attention_weights(path):
+    root = Path(path).resolve()
+    index = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
+    weights = {}
+    for name in sorted(L0_ATTENTION_WEIGHTS):
+        shard = (root / index[name]).resolve()
+        if not shard.is_relative_to(root):
+            raise ValueError("Layer 0 reference shard escapes the checkpoint")
+        with safe_open(shard, framework="pt", device="cpu") as handle:
+            weights[name] = handle.get_tensor(name)
+    return weights
 
 
 class ObservedRouter(BaseRouter):
@@ -63,6 +80,7 @@ class Qwen3MoeRoutingProbeForCausalLM(Qwen3MoeForCausalLM):
         if vllm_config.lora_config is not None or not vllm_config.use_v2_model_runner:
             raise ValueError("Routing probe requires Runner V2 without LoRA")
         super().__init__(vllm_config=vllm_config, prefix=prefix)
+        self.l0_attention_source = getattr(config, "routing_probe_l0_attention_source", None)
         self.routing_traces = []
         self.routing_config = {
             "compilation_mode": str(vllm_config.compilation_config.mode),
@@ -91,3 +109,32 @@ class Qwen3MoeRoutingProbeForCausalLM(Qwen3MoeForCausalLM):
             if trace.detailed:
                 block.register_forward_hook(partial(_capture_output, trace))
             self.routing_traces.append(trace)
+
+    def load_weights(self, weights):
+        if self.l0_attention_source is None:
+            return super().load_weights(weights)
+
+        replacements = load_l0_attention_weights(self.l0_attention_source)
+        seen, changed = set(), set()
+
+        def overlay():
+            for name, original in weights:
+                if name not in replacements:
+                    yield name, original
+                    continue
+                replacement = replacements[name]
+                if name in seen or replacement.shape != original.shape or replacement.dtype != torch.bfloat16:
+                    raise ValueError(f"Invalid layer 0 attention replacement: {name}")
+                if original.dtype != replacement.dtype:
+                    raise ValueError(f"Layer 0 candidate projection was not BF16: {name}")
+                seen.add(name)
+                if not torch.equal(original.cpu(), replacement):
+                    changed.add(name)
+                yield name, replacement
+
+        loaded = super().load_weights(overlay())
+        if seen != L0_ATTENTION_WEIGHTS or not changed:
+            raise ValueError("Layer 0 attention replacement was incomplete or had no numerical effect")
+        self.routing_config["l0_attention_loaded"] = sorted(seen)
+        self.routing_config["l0_attention_changed"] = sorted(changed)
+        return loaded
