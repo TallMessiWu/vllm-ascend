@@ -4,21 +4,14 @@
 import argparse
 import hashlib
 import json
-import re
-import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import moe_mxfp4_w_check as comparison
 import moe_routing_check as reference
 
 SIDES = ("reference", "candidate", "oracle")
-FIXTURE_REVISION = "5df63a7203cdb9328d824a27b682e77c7b9928be"
-FIXTURE_FILES = (
-    "docs/design/prefix_caching.md",
-    "docs/design/paged_attention.md",
-    "docs/design/metrics.md",
-    "docs/features/lora.md",
-)
+FIXTURE = Path(__file__).with_name("moe_l23_independent.txt")
 
 
 def prepare(args, output):
@@ -26,28 +19,25 @@ def prepare(args, output):
 
     comparison.validate_pair(args.reference, args.candidate)
     tokenizer = AutoTokenizer.from_pretrained(args.reference, local_files_only=True, trust_remote_code=False)
+    passages = FIXTURE.read_text(encoding="utf-8").split("\n---\n")
+    if len(passages) != 4:
+        raise ValueError("Expected four independent input passages")
     samples = []
-    for path in FIXTURE_FILES:
-        document = subprocess.check_output(
-            ["git", "-C", args.vllm_source, "show", f"{FIXTURE_REVISION}:{path}"],
-            text=True,
-            encoding="utf-8",
-        )
-        text = re.sub(r"```.*?```", "\n", document, flags=re.DOTALL)
-        tokens = tokenizer.encode(text, add_special_tokens=False)
+    for sample_id, text in enumerate(passages):
+        tokens = tokenizer.encode(text.strip(), add_special_tokens=False)
         prompt = tokens[: reference.PREFILL]
         forced = tokens[reference.PREFILL : reference.PREFILL + reference.DECODE + 1]
         if len(forced) != reference.DECODE + 1 or any(
             tokens[start : start + len(forced)] == forced for start in range(reference.PREFILL)
         ):
-            raise ValueError(f"Missing or repeated fixed continuation in {path}")
+            raise ValueError(f"Missing or repeated fixed continuation for sample {sample_id}")
         samples.append({"prompt": prompt, "forced": forced})
     body = json.dumps(samples, sort_keys=True)
     (output / "inputs.json").write_text(body + "\n", encoding="utf-8", newline="\n")
     reference.emit(
         "fixed_inputs",
         requests=len(samples),
-        source_revision=FIXTURE_REVISION,
+        input_set="independent_prose_v1",
         token_sha256=hashlib.sha256(body.encode()).hexdigest(),
     )
 
@@ -145,7 +135,7 @@ def analyze(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("prepare", *SIDES, "analyze"), required=True)
-    for name in ("reference", "candidate", "source", "output", "vllm-source"):
+    for name in ("reference", "candidate", "source", "output"):
         parser.add_argument(f"--{name}", required=True)
     args = parser.parse_args()
     try:

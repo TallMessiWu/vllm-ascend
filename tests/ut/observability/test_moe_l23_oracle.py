@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise route alignment and prediction metrics without a device runtime."""
 
+import json
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,32 @@ from test_moe_routing_runtime import external_module, load
 
 
 class Layer23OracleTests(unittest.TestCase):
+    def test_prepare_uses_four_independent_passages_with_the_same_token_budget(self):
+        comparison, _ = driver_module()
+        with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
+            driver = load("l23_independent_example_fixture", "examples/moe_l23_oracle.py")
+
+        words = {}
+
+        def encode(text, *, add_special_tokens):
+            self.assertFalse(add_special_tokens)
+            return [words.setdefault(word, len(words)) for word in text.split()]
+
+        tokenizer = SimpleNamespace(encode=encode)
+        transformers = external_module(AutoTokenizer=SimpleNamespace(from_pretrained=lambda *a, **kw: tokenizer))
+        with (
+            tempfile.TemporaryDirectory(dir=".") as folder,
+            patch.dict(sys.modules, {"transformers": transformers}),
+            patch.object(comparison, "validate_pair"),
+            patch.object(driver.reference, "emit") as emit,
+        ):
+            output = Path(folder)
+            driver.prepare(SimpleNamespace(reference="reference", candidate="candidate"), output)
+            samples = json.loads((output / "inputs.json").read_text())
+            self.assertEqual([(len(s["prompt"]), len(s["forced"])) for s in samples], [(512, 33)] * 4)
+            self.assertEqual(len({tuple(s["forced"]) for s in samples}), 4)
+            self.assertEqual(emit.call_args.kwargs["input_set"], "independent_prose_v1")
+
     def test_arm_from_snapshot_and_switch_using_the_device_row_cursor(self):
         traces = load("l23_trace_fixture", "vllm_ascend/observability/moe_routing.py")
 
