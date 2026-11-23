@@ -29,6 +29,7 @@ def prepare(args, output):
     (output / "inputs.json").write_text(body + "\n", encoding="utf-8", newline="\n")
     (output / "baseline-run.txt").write_text(str(run), encoding="utf-8", newline="\n")
     reference.emit("fallback_inputs", baseline_run=str(run), token_sha256=token_hash)
+    return {"baseline_run": str(run), "token_sha256": token_hash}
 
 
 def collect(args, output, *, attention_band=None):

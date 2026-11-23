@@ -1,14 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compare three upstream attention fallbacks using archived controls."""
+"""Compare upstream attention fallbacks using archived controls."""
 
 import argparse
 import json
+from pathlib import Path
 from statistics import fmean
 
 import moe_l23_attn_fallback as fallback
 import moe_l23_oracle as prediction
 import moe_mxfp4_w_check as comparison
 import moe_routing_check as reference
+
+PARENT_BAND = "layers_8_15"
+
+
+def prepare_parent_report(report, output, controls):
+    lines = Path(report).read_text(encoding="utf-8").splitlines()
+    path = next((line.removeprefix("原始产物=") for line in lines if line.startswith("原始产物=")), "")
+    events = [json.loads(line.removeprefix("MOE1 ")) for line in lines if line.startswith("MOE1 ")]
+    inputs = next((r for r in events if r.get("event") == "fallback_inputs"), {})
+    completed = any(r.get("decision") == "UPSTREAM_BANDS_MEASURED" and r.get("graph_replay") == "GREEN" for r in events)
+    if not path or not completed or any(inputs.get(key) != value for key, value in controls.items()):
+        raise ValueError("Need the completed upstream comparison on the same archived controls")
+    run = reference.relative_new(path)
+    (output / "parent-run.txt").write_text(str(run), encoding="utf-8", newline="\n")
+    reference.emit("parent_band", source_run=str(run), band=PARENT_BAND)
 
 
 def layer_metrics(ref_ids, ids, ref_weights, weights):
@@ -33,11 +49,12 @@ def routing_weights(bundle):
     return torch.stack([torch.stack([r["weights"] for r in s["layers"]], dim=1) for s in bundle[1]])
 
 
-def analyze(output):
+def analyze(output, *, split=False):
     import torch
 
     from vllm_ascend.observability.moe_routing import (
         ATTENTION_BANDS,
+        MIDDLE_BANDS,
         ORACLE_LAYER,
         attention_projection_names,
         tensor_error,
@@ -69,9 +86,13 @@ def analyze(output):
         )
         for phase, span in spans.items()
     }
+    band_runs = {group: (output, layers) for group, layers in (MIDDLE_BANDS if split else ATTENTION_BANDS).items()}
+    if split:
+        parent_run = reference.relative_new((output / "parent-run.txt").read_text())
+        band_runs = {PARENT_BAND: (parent_run, ATTENTION_BANDS[PARENT_BAND]), **band_runs}
     ranking = {}
-    for group, layers in ATTENTION_BANDS.items():
-        treated = comparison.load_artifacts(output, group)
+    for group, (band_run, layers) in band_runs.items():
+        treated = comparison.load_artifacts(band_run, group)
         if not treated[2]:
             raise ValueError(f"Missing graph replay evidence for {group}")
         if not torch.equal(candidate[0][:, :, : layers.start], treated[0][:, :, : layers.start]):
@@ -120,30 +141,45 @@ def analyze(output):
                     for group, phases in by_band.items()
                 },
             )
+    retained = {}
+    if split:
+        parent_delta = ranking[PARENT_BAND]
+        retained = {
+            "parent_decode_nll_gain_retained": {
+                group: ranking[group] / parent_delta if parent_delta < 0 else None for group in MIDDLE_BANDS
+            }
+        }
     reference.emit(
         "result",
-        decision="UPSTREAM_BANDS_MEASURED",
+        decision="MIDDLE_BANDS_MEASURED" if split else "UPSTREAM_BANDS_MEASURED",
         graph_replay="GREEN",
         task_quality="UNVERIFIED",
         bands_ranked_by_decode_delta_nll=sorted(ranking.items(), key=lambda item: item[1]),
+        **retained,
     )
 
 
 def main():
-    from vllm_ascend.observability.moe_routing import ATTENTION_BANDS
+    from vllm_ascend.observability.moe_routing import ATTENTION_BANDS, MIDDLE_BANDS
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("prepare", *ATTENTION_BANDS, "analyze"), required=True)
+    parser.add_argument("--phase", choices=("prepare", *ATTENTION_BANDS, *MIDDLE_BANDS, "analyze"), required=True)
     for name in ("reference", "candidate", "source", "output", "previous-report"):
         parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--parent-report")
     args = parser.parse_args()
     try:
         output = reference.relative_new(args.output)
+        split = args.parent_report is not None
         if args.phase == "prepare":
-            fallback.prepare(args, output)
+            controls = fallback.prepare(args, output)
+            if split:
+                prepare_parent_report(args.parent_report, output, controls)
         elif args.phase == "analyze":
-            analyze(output)
+            analyze(output, split=split)
         else:
+            if args.phase not in (MIDDLE_BANDS if split else ATTENTION_BANDS):
+                raise ValueError("Attention band is outside the selected comparison")
             fallback.collect(args, output, attention_band=args.phase)
     except Exception as exc:
         reference.emit("error", phase=args.phase, exception_type=type(exc).__name__, reason=str(exc)[:500])

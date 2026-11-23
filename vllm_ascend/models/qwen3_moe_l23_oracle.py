@@ -11,6 +11,7 @@ from vllm_ascend.models.qwen3_moe_routing_probe import ObservedRouter, Qwen3MoeR
 from vllm_ascend.observability.moe_routing import (
     ATTENTION_BANDS,
     DECODE_ROWS,
+    MIDDLE_BANDS,
     ORACLE_LAYER,
     attention_projection_names,
     validate_routes,
@@ -88,7 +89,7 @@ class Qwen3MoeL23OracleForCausalLM(Qwen3MoeRoutingProbeForCausalLM):
         names = (
             ATTENTION_WEIGHTS
             if self.attention_band is None
-            else attention_projection_names(ATTENTION_BANDS[self.attention_band])
+            else attention_projection_names((ATTENTION_BANDS | MIDDLE_BANDS)[self.attention_band])
         )
         replacements = load_reference_attention(self.attention_reference, names)
         seen, changed = set(), set()

@@ -64,9 +64,13 @@ class Layer23OracleTests(unittest.TestCase):
         model = model_type.__new__(model_type)
         ProbeModel.__init__(model)
         model.routing_config = {}
-        band = "layers_16_22"
-        band_names = traces.attention_projection_names(traces.ATTENTION_BANDS[band])
-        all_names = runtime.ATTENTION_WEIGHTS | band_names
+        scopes = {None: runtime.ATTENTION_WEIGHTS}
+        scopes.update({band: traces.attention_projection_names(layers) for band, layers in traces.MIDDLE_BANDS.items()})
+        self.assertEqual(
+            scopes["layers_8_11"] | scopes["layers_12_15"], traces.attention_projection_names(range(8, 16))
+        )
+        self.assertFalse(scopes["layers_8_11"] & scopes["layers_12_15"])
+        all_names = frozenset().union(*scopes.values())
         reference_weights = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in all_names}
         candidate_weights = {name: torch.zeros_like(tensor) for name, tensor in reference_weights.items()}
         non_target = "model.layers.23.mlp.gate.weight"
@@ -79,7 +83,7 @@ class Layer23OracleTests(unittest.TestCase):
                 json.dumps({"weight_map": dict.fromkeys(reference_weights, shard)})
             )
             model.attention_reference = root
-            for label, expected in ((None, runtime.ATTENTION_WEIGHTS), (band, band_names)):
+            for label, expected in scopes.items():
                 model.attention_band = label
                 self.assertEqual(model.load_weights(iter(candidate_weights.items())), set(candidate_weights))
                 self.assertEqual(set(model.routing_config["attention_fallback_loaded"]), expected)
@@ -211,3 +215,25 @@ class Layer23OracleTests(unittest.TestCase):
             self.assertAlmostEqual(summary["top8_overlap"][layer], expected["overlap_mean"])
             self.assertAlmostEqual(summary["top8_set_equal"][layer], expected["set_equal_rate"])
             self.assertAlmostEqual(summary["weight_l1"][layer], expected["weight_l1_mean"])
+
+    def test_split_reuses_only_the_parent_run_on_the_same_controls(self):
+        comparison, _ = driver_module()
+        with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
+            load("moe_l23_oracle", "examples/moe_l23_oracle.py")
+            load("moe_l23_attn_fallback", "examples/moe_l23_attn_fallback.py")
+            driver = load("middle_bands_example_fixture", "examples/moe_upstream_bands.py")
+        controls = {"baseline_run": "outputs/independent-run", "token_sha256": "same-fixed-tokens"}
+        result = {"event": "result", "decision": "UPSTREAM_BANDS_MEASURED", "graph_replay": "GREEN"}
+        with tempfile.TemporaryDirectory(dir=".") as folder:
+            root = Path(folder)
+            report = root / "report.txt"
+            report.write_text(
+                f"原始产物={root}\nMOE1 {json.dumps({'event': 'fallback_inputs', **controls})}\n"
+                f"MOE1 {json.dumps(result)}\n",
+                encoding="utf-8",
+            )
+            with patch.object(driver.reference, "emit"):
+                driver.prepare_parent_report(report, root, controls)
+            self.assertEqual((root / "parent-run.txt").read_text(), str(root))
+            with self.assertRaisesRegex(ValueError, "same archived controls"):
+                driver.prepare_parent_report(report, root, {**controls, "token_sha256": "different-fixed-tokens"})
