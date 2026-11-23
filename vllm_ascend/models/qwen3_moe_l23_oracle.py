@@ -8,18 +8,22 @@ import torch
 from safetensors import safe_open
 
 from vllm_ascend.models.qwen3_moe_routing_probe import ObservedRouter, Qwen3MoeRoutingProbeForCausalLM
-from vllm_ascend.observability.moe_routing import DECODE_ROWS, ORACLE_LAYER, validate_routes
-
-ATTENTION_WEIGHTS = frozenset(
-    f"model.layers.{ORACLE_LAYER}.self_attn.{projection}_proj.weight" for projection in "qkvo"
+from vllm_ascend.observability.moe_routing import (
+    ATTENTION_BANDS,
+    DECODE_ROWS,
+    ORACLE_LAYER,
+    attention_projection_names,
+    validate_routes,
 )
 
+ATTENTION_WEIGHTS = attention_projection_names((ORACLE_LAYER,))
 
-def load_reference_attention(path):
+
+def load_reference_attention(path, names):
     root = Path(path).resolve()
     index = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
     weights = {}
-    for name in sorted(ATTENTION_WEIGHTS):
+    for name in sorted(names):
         shard = (root / index[name]).resolve()
         if not shard.is_relative_to(root):
             raise ValueError("Reference attention shard escapes the checkpoint")
@@ -64,6 +68,7 @@ class Qwen3MoeL23OracleForCausalLM(Qwen3MoeRoutingProbeForCausalLM):
         super().__init__(vllm_config=vllm_config, prefix=prefix)
         config = vllm_config.model_config.hf_text_config
         self.attention_reference = getattr(config, "routing_probe_l23_attention_source", None)
+        self.attention_band = getattr(config, "routing_probe_attention_band", None)
         runner = self.model.layers[ORACLE_LAYER].mlp.experts
         router = Layer23OracleRouter(runner.router.base, self.routing_traces[ORACLE_LAYER])
         runner.router = router
@@ -80,7 +85,12 @@ class Qwen3MoeL23OracleForCausalLM(Qwen3MoeRoutingProbeForCausalLM):
     def load_weights(self, weights):
         if self.attention_reference is None:
             return super().load_weights(weights)
-        replacements = load_reference_attention(self.attention_reference)
+        names = (
+            ATTENTION_WEIGHTS
+            if self.attention_band is None
+            else attention_projection_names(ATTENTION_BANDS[self.attention_band])
+        )
+        replacements = load_reference_attention(self.attention_reference, names)
         seen, changed = set(), set()
 
         def overlay():
@@ -95,15 +105,15 @@ class Qwen3MoeL23OracleForCausalLM(Qwen3MoeRoutingProbeForCausalLM):
                     or original.dtype != torch.bfloat16
                     or replacement.dtype != original.dtype
                 ):
-                    raise ValueError(f"Invalid layer 23 attention replacement: {name}")
+                    raise ValueError(f"Invalid attention replacement: {name}")
                 seen.add(name)
                 if not torch.equal(original.cpu(), replacement):
                     changed.add(name)
                 yield name, replacement
 
         loaded = super().load_weights(overlay())
-        if seen != ATTENTION_WEIGHTS or not changed:
-            raise ValueError("Layer 23 attention replacement was incomplete or had no numerical effect")
+        if seen != names or not changed:
+            raise ValueError("Attention replacement was incomplete or had no numerical effect")
         self.routing_config["attention_fallback_loaded"] = sorted(seen)
         self.routing_config["attention_fallback_changed"] = sorted(changed)
         return loaded

@@ -11,6 +11,11 @@ PREFILL_ROWS = 512
 DECODE_ROWS = 32
 TRACE_ROWS = PREFILL_ROWS + DECODE_ROWS
 ORACLE_LAYER = 23
+ATTENTION_BANDS = {"layers_0_7": range(0, 8), "layers_8_15": range(8, 16), "layers_16_22": range(16, 23)}
+
+
+def attention_projection_names(layers):
+    return frozenset(f"model.layers.{layer}.self_attn.{proj}_proj.weight" for layer in layers for proj in "qkvo")
 
 
 class RoutingTrace:

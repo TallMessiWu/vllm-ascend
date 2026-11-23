@@ -115,7 +115,7 @@ def analyze(output):
     reference.emit("result", decision="L23_ORACLE_MEASURED", graph_replay="GREEN", task_quality="UNVERIFIED")
 
 
-def report_predictions(scores, *, treatment):
+def report_predictions(scores, *, treatment, **context):
     for label, span in (("end_of_prefill", slice(0, 1)), ("decode", slice(1, None))):
         reference_nll, candidate_nll, treated_nll, candidate_kl, treated_kl = scores[:, :, span].transpose(0, 1)
         reference.emit(
@@ -134,6 +134,7 @@ def report_predictions(scores, *, treatment):
                 f"{treatment}_nll": treated_nll.mean().item(),
                 f"{treatment}_kl_to_reference": treated_kl.mean().item(),
             },
+            **context,
         )
 
 

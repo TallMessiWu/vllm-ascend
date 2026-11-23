@@ -31,8 +31,8 @@ def prepare(args, output):
     reference.emit("fallback_inputs", baseline_run=str(run), token_sha256=token_hash)
 
 
-def collect(args, output):
-    side = output / "fallback"
+def collect(args, output, *, attention_band=None):
+    side = output / (attention_band or "fallback")
     side.mkdir(exist_ok=False)
     reference.collect(
         SimpleNamespace(
@@ -44,6 +44,7 @@ def collect(args, output):
         ),
         probe_architecture="Qwen3MoeL23OracleForCausalLM",
         l23_attention_source=Path(args.reference).resolve(),
+        attention_band=attention_band,
     )
 
 

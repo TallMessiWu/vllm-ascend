@@ -116,7 +116,12 @@ def make_inputs(model, dest):
 
 
 def collect(
-    args, *, probe_architecture="Qwen3MoeRoutingProbeForCausalLM", reference_routes=None, l23_attention_source=None
+    args,
+    *,
+    probe_architecture="Qwen3MoeRoutingProbeForCausalLM",
+    reference_routes=None,
+    l23_attention_source=None,
+    attention_band=None,
 ):
     import torch
     from vllm import LLM
@@ -132,6 +137,8 @@ def collect(
         if overrides is None or reference_routes is not None:
             raise ValueError("Attention fallback requires the probe with native routing")
         overrides["routing_probe_l23_attention_source"] = str(l23_attention_source)
+        if attention_band is not None:
+            overrides["routing_probe_attention_band"] = attention_band
     llm = LLM(
         model=args.model,
         dtype="bfloat16",

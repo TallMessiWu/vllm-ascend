@@ -64,7 +64,10 @@ class Layer23OracleTests(unittest.TestCase):
         model = model_type.__new__(model_type)
         ProbeModel.__init__(model)
         model.routing_config = {}
-        reference_weights = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in runtime.ATTENTION_WEIGHTS}
+        band = "layers_16_22"
+        band_names = traces.attention_projection_names(traces.ATTENTION_BANDS[band])
+        all_names = runtime.ATTENTION_WEIGHTS | band_names
+        reference_weights = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in all_names}
         candidate_weights = {name: torch.zeros_like(tensor) for name, tensor in reference_weights.items()}
         non_target = "model.layers.23.mlp.gate.weight"
         candidate_weights[non_target] = torch.full((2, 2), 2, dtype=torch.bfloat16)
@@ -76,11 +79,15 @@ class Layer23OracleTests(unittest.TestCase):
                 json.dumps({"weight_map": dict.fromkeys(reference_weights, shard)})
             )
             model.attention_reference = root
-            self.assertEqual(model.load_weights(iter(candidate_weights.items())), set(candidate_weights))
-            self.assertEqual(set(model.routing_config["attention_fallback_loaded"]), runtime.ATTENTION_WEIGHTS)
-            for name, tensor in reference_weights.items():
-                torch.testing.assert_close(model.received[name], tensor)
-            self.assertIs(model.received[non_target], candidate_weights[non_target])
+            for label, expected in ((None, runtime.ATTENTION_WEIGHTS), (band, band_names)):
+                model.attention_band = label
+                self.assertEqual(model.load_weights(iter(candidate_weights.items())), set(candidate_weights))
+                self.assertEqual(set(model.routing_config["attention_fallback_loaded"]), expected)
+                for name, tensor in candidate_weights.items():
+                    if name in expected:
+                        torch.testing.assert_close(model.received[name], reference_weights[name])
+                    else:
+                        self.assertIs(model.received[name], tensor)
             with self.assertRaisesRegex(ValueError, "native expert selection"):
                 model.arm_l23_trial({"ids": []})
 
@@ -184,3 +191,23 @@ class Layer23OracleTests(unittest.TestCase):
         torch.testing.assert_close(scores[4], torch.zeros(2, dtype=torch.float64))
         self.assertTrue((scores[1] > scores[2]).all())
         self.assertTrue((scores[3] > 0).all())
+
+    def test_vectorized_layer_drift_matches_existing_sparse_route_metrics(self):
+        comparison, _ = driver_module()
+        with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
+            load("moe_l23_oracle", "examples/moe_l23_oracle.py")
+            load("moe_l23_attn_fallback", "examples/moe_l23_attn_fallback.py")
+            driver = load("upstream_bands_example_fixture", "examples/moe_upstream_bands.py")
+        traces = load("upstream_bands_traces_fixture", "vllm_ascend/observability/moe_routing.py")
+        ref = torch.tensor([[[[1, 0], [2, 3]], [[0, 3], [1, 2]]]], dtype=torch.int32)
+        ids = torch.tensor([[[[0, 1], [2, 0]], [[0, 2], [2, 1]]]], dtype=torch.int32)
+        ref_w = torch.tensor([[[[0.75, 0.25], [0.5, 0.5]], [[0.8, 0.2], [0.8, 0.2]]]])
+        weights = torch.tensor([[[[0.2, 0.8], [0.4, 0.6]], [[0.7, 0.3], [0.2, 0.8]]]])
+        summary = driver.layer_metrics(ref, ids, ref_w, weights)
+        for layer in range(ref.shape[2]):
+            expected = traces.routing_metrics(
+                ref[0, :, layer], ids[0, :, layer], ref_w[0, :, layer], weights[0, :, layer], 4
+            )
+            self.assertAlmostEqual(summary["top8_overlap"][layer], expected["overlap_mean"])
+            self.assertAlmostEqual(summary["top8_set_equal"][layer], expected["set_equal_rate"])
+            self.assertAlmostEqual(summary["weight_l1"][layer], expected["weight_l1_mean"])
