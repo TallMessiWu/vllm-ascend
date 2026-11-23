@@ -215,9 +215,19 @@ class MXFP4WeightDriverTests(unittest.TestCase):
 
     def test_conversion_pair_identity_and_mutation_guards(self):
         roots = [self.folder.resolve() / side for side in ("source-weights", "candidate-weights")]
+        config = {
+            "architectures": ["Qwen3MoeForCausalLM"],
+            "num_hidden_layers": 48,
+            "hidden_size": 2048,
+            "num_experts": 128,
+            "num_experts_per_tok": 8,
+            "max_position_embeddings": 40960,
+            "norm_topk_prob": True,
+        }
         for root in roots:
             root.mkdir()
-            for name in ("config.json", "model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json"):
+            (root / "config.json").write_text(json.dumps(config))
+            for name in ("model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json"):
                 (root / name).write_text("{}\n")
             (root / "model.safetensors").write_bytes(b"not_loaded_CPU_identity_fixture")
         manifest = {
@@ -252,10 +262,10 @@ class MXFP4WeightDriverTests(unittest.TestCase):
         metadata = roots[1] / ".mxfp4_w_metadata/manifest.json"
         metadata.parent.mkdir()
         metadata.write_text(json.dumps(manifest))
-        with patch.object(self.reference, "validate_model", return_value={"norm_topk_prob": True}):
+        alias = self.folder / "weights-mount"
+        alias.symlink_to(self.folder.resolve(), target_is_directory=True)
+        with patch.object(self.reference, "SHARED_WEIGHT_ROOT", alias.absolute()):
             self.assertEqual(self.driver.validate_pair(*map(str, roots)), manifest)
-            alias = self.folder / "weights-mount"
-            alias.symlink_to(self.folder.resolve(), target_is_directory=True)
             source, target = [str(alias.absolute() / root.name) for root in roots]
             manifest.update(source=source, output=target)
             metadata.write_text(json.dumps(manifest))

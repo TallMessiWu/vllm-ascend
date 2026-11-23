@@ -15,6 +15,7 @@ from pathlib import Path
 
 PREFILL, DECODE, LAYERS, EXPERTS, TOP_K = 512, 32, 48, 128, 8
 DETAIL_LAYERS = (0, 23, 47)
+SHARED_WEIGHT_ROOT = Path("/mnt/share/weight")
 TEXTS = (
     "Explain how rainwater moves from a mountain forest to a river. Discuss soil, roots, evaporation, "
     "and measurements a student can record. Compare observations before and after a storm. ",
@@ -40,7 +41,7 @@ def relative_new(path):
 
 def validate_model(path):
     model = Path(path)
-    if not model.is_absolute() or not model.is_relative_to(Path("/mnt/share/weight")):
+    if not model.is_absolute() or not model.resolve().is_relative_to(SHARED_WEIGHT_ROOT.resolve()):
         raise ValueError("Reference weights must be under /mnt/share/weight/")
     config = json.loads((model / "config.json").read_text())
     if (model / ".nvfp4_to_bf16.incomplete").exists() or config.get("quantization_config"):
