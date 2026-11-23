@@ -8,6 +8,10 @@ def register_model():
         "vllm_ascend.models.qwen3_moe_routing_probe:Qwen3MoeRoutingProbeForCausalLM",
     )
     ModelRegistry.register_model(
+        "Qwen3MoeL23OracleForCausalLM",
+        "vllm_ascend.models.qwen3_moe_l23_oracle:Qwen3MoeL23OracleForCausalLM",
+    )
+    ModelRegistry.register_model(
         "Qwen4ExpForCausalLM",
         "vllm_ascend.models.qwen4_exp:AscendQwen4ExpForCausalLM",
     )

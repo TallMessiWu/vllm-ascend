@@ -10,6 +10,7 @@ import torch
 PREFILL_ROWS = 512
 DECODE_ROWS = 32
 TRACE_ROWS = PREFILL_ROWS + DECODE_ROWS
+ORACLE_LAYER = 23
 
 
 class RoutingTrace:

@@ -115,7 +115,7 @@ def make_inputs(model, dest):
     )
 
 
-def collect(args):
+def collect(args, *, probe_architecture="Qwen3MoeRoutingProbeForCausalLM", reference_routes=None):
     import torch
     from vllm import LLM
 
@@ -125,7 +125,7 @@ def collect(args):
     samples = json.loads(Path(args.inputs).read_text())
     if len(samples) != 4 or any(len(s["prompt"]) != PREFILL or len(s["forced"]) != DECODE + 1 for s in samples):
         raise ValueError("Unexpected fixed input manifest")
-    overrides = {"architectures": ["Qwen3MoeRoutingProbeForCausalLM"]} if args.phase == "probe" else None
+    overrides = {"architectures": [probe_architecture]} if args.phase == "probe" else None
     llm = LLM(
         model=args.model,
         dtype="bfloat16",
@@ -180,7 +180,11 @@ def collect(args):
                     raise ValueError("Idle prefix-cache reset failed; refusing a potentially cached request")
                 emit("prefix_cache_reset", phase=args.phase, repeat=repeat, sample=sample_id, success=True)
                 if args.phase == "probe":
-                    armed = llm.collective_rpc("moe_routing_arm")
+                    if reference_routes is None:
+                        armed = llm.collective_rpc("moe_routing_arm")
+                    else:
+                        snapshot = relative_new(f"{reference_routes}/probe-snapshot-{sample_id}.pt")
+                        armed = llm.collective_rpc("moe_routing_arm", args=(str(snapshot),))
                     if armed != [{"armed_layers": LAYERS}]:
                         raise ValueError("Missing or unexpected worker arm response")
                 params = forced_continuation(sample["forced"])

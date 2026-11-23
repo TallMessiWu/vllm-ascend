@@ -5,16 +5,25 @@ from pathlib import Path
 
 import torch
 
-from vllm_ascend.observability.moe_routing import DECODE_ROWS, PREFILL_ROWS, TRACE_ROWS
+from vllm_ascend.observability.moe_routing import DECODE_ROWS, ORACLE_LAYER, PREFILL_ROWS, TRACE_ROWS
 
 
 @torch.inference_mode()
-def reset_probe(model):
+def reset_probe(model, reference_path=None):
     torch.npu.synchronize()
     if len(model.routing_traces) != 48:
         raise ValueError("Missing routing trace layers")
     for trace in model.routing_traces:
         trace.reset()
+    arm_l23_trial = getattr(model, "arm_l23_trial", None)
+    routes = None
+    if reference_path is not None:
+        source = Path(reference_path)
+        if arm_l23_trial is None or source.is_absolute() or not source.resolve().is_relative_to(Path.cwd().resolve()):
+            raise ValueError("Reference routing requires an oracle model and an execution-relative snapshot")
+        routes = torch.load(source, map_location="cpu", weights_only=True)["layers"][ORACLE_LAYER]
+    if arm_l23_trial is not None:
+        arm_l23_trial(routes)
     torch.npu.synchronize()
     return {"armed_layers": len(model.routing_traces)}
 
@@ -34,6 +43,9 @@ def save_probe(model, path):
         raise ValueError("Trace destination must be a new execution-relative file")
     torch.npu.synchronize()
     result = {"config": model.routing_config, "layers": []}
+    take_logits = getattr(model, "take_continuation_logits", None)
+    if take_logits is not None:
+        result["continuation_logits"] = take_logits()
     for layer_id, trace in enumerate(model.routing_traces):
         row = trace.snapshot(PREFILL_ROWS, DECODE_ROWS)
         runner = model.model.layers[layer_id].mlp.experts
@@ -68,9 +80,9 @@ class MoeRoutingWorkerExtension:
     model-runner/global patch is needed.
     """
 
-    def moe_routing_arm(self):
+    def moe_routing_arm(self, reference_path=None):
         self._moe_routing_armed = False
-        result = reset_probe(self.get_model())
+        result = reset_probe(self.get_model(), reference_path)
         self._moe_routing_armed = True
         return result
 
