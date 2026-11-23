@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise route alignment and prediction metrics without a device runtime."""
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -10,11 +11,79 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from safetensors.torch import save_file
 from test_moe_mxfp4_w_check import driver_module
 from test_moe_routing_runtime import external_module, load
 
 
 class Layer23OracleTests(unittest.TestCase):
+    def test_fallback_reuses_the_completed_independent_input_manifest(self):
+        comparison, _ = driver_module()
+        with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
+            oracle = load("moe_l23_oracle", "examples/moe_l23_oracle.py")
+            driver = load("l23_fallback_example_fixture", "examples/moe_l23_attn_fallback.py")
+        body = json.dumps([{"prompt": [1], "forced": [2]}], sort_keys=True)
+        fixture = {
+            "event": "fixed_inputs",
+            "input_set": "independent_prose_v1",
+            "token_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        }
+        result = {"event": "result", "decision": "L23_ORACLE_MEASURED"}
+        with tempfile.TemporaryDirectory(dir=".") as folder, patch.object(comparison, "validate_pair"):
+            run = Path(folder)
+            output = run / "fallback"
+            output.mkdir()
+            (run / "inputs.json").write_text(body)
+            report = run / "report.txt"
+            report.write_text(
+                f"原始产物={run}\nMOE1 {json.dumps(fixture)}\nMOE1 {json.dumps(result)}\n", encoding="utf-8"
+            )
+            args = SimpleNamespace(reference="reference", candidate="candidate", previous_report=report)
+            driver.prepare(args, output)
+            self.assertEqual((output / "inputs.json").read_text(), body + "\n")
+            self.assertEqual((output / "baseline-run.txt").read_text(), str(run))
+            self.assertIs(driver.prediction.report_predictions, oracle.report_predictions)
+
+    def test_fallback_only_replaces_layer23_attention_in_the_original_loader(self):
+        traces = load("l23_fallback_trace_fixture", "vllm_ascend/observability/moe_routing.py")
+
+        class ProbeModel(torch.nn.Module):
+            def load_weights(self, weights):
+                self.received = dict(weights)
+                return set(self.received)
+
+        modules = {
+            "vllm_ascend.models.qwen3_moe_routing_probe": external_module(
+                ObservedRouter=object, Qwen3MoeRoutingProbeForCausalLM=ProbeModel
+            ),
+            "vllm_ascend.observability.moe_routing": traces,
+        }
+        with patch.dict(sys.modules, modules):
+            runtime = load("l23_attn_weight_fixture", "vllm_ascend/models/qwen3_moe_l23_oracle.py")
+        model_type = runtime.Qwen3MoeL23OracleForCausalLM
+        model = model_type.__new__(model_type)
+        ProbeModel.__init__(model)
+        model.routing_config = {}
+        reference_weights = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in runtime.ATTENTION_WEIGHTS}
+        candidate_weights = {name: torch.zeros_like(tensor) for name, tensor in reference_weights.items()}
+        non_target = "model.layers.23.mlp.gate.weight"
+        candidate_weights[non_target] = torch.full((2, 2), 2, dtype=torch.bfloat16)
+        with tempfile.TemporaryDirectory(dir=".") as folder:
+            root = Path(folder)
+            shard = "model.safetensors"
+            save_file(reference_weights, root / shard)
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": dict.fromkeys(reference_weights, shard)})
+            )
+            model.attention_reference = root
+            self.assertEqual(model.load_weights(iter(candidate_weights.items())), set(candidate_weights))
+            self.assertEqual(set(model.routing_config["attention_fallback_loaded"]), runtime.ATTENTION_WEIGHTS)
+            for name, tensor in reference_weights.items():
+                torch.testing.assert_close(model.received[name], tensor)
+            self.assertIs(model.received[non_target], candidate_weights[non_target])
+            with self.assertRaisesRegex(ValueError, "native expert selection"):
+                model.arm_l23_trial({"ids": []})
+
     def test_prepare_uses_four_independent_passages_with_the_same_token_budget(self):
         comparison, _ = driver_module()
         with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
@@ -93,6 +162,7 @@ class Layer23OracleTests(unittest.TestCase):
         model = model_type.__new__(model_type)
         ProbeModel.__init__(model)
         model.oracle_router = router
+        model.attention_reference = None
         model.arm_l23_trial(None)
         for step in range(traces.DECODE_ROWS + 1):
             logits = torch.tensor([[float(step), 2.0]])

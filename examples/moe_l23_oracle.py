@@ -111,25 +111,30 @@ def analyze(output):
         logits = [snapshot["continuation_logits"] for snapshot in (target, baseline, restored)]
         predictions.append(compare_predictions(*logits, sample["forced"]))
 
-    scores = torch.stack(predictions)
+    report_predictions(torch.stack(predictions), treatment="oracle")
+    reference.emit("result", decision="L23_ORACLE_MEASURED", graph_replay="GREEN", task_quality="UNVERIFIED")
+
+
+def report_predictions(scores, *, treatment):
     for label, span in (("end_of_prefill", slice(0, 1)), ("decode", slice(1, None))):
-        reference_nll, candidate_nll, oracle_nll, candidate_kl, oracle_kl = scores[:, :, span].transpose(0, 1)
+        reference_nll, candidate_nll, treated_nll, candidate_kl, treated_kl = scores[:, :, span].transpose(0, 1)
         reference.emit(
             "predictions",
             phase=label,
             tokens=candidate_nll.numel(),
             reference_nll=reference_nll.mean().item(),
             candidate_nll=candidate_nll.mean().item(),
-            oracle_nll=oracle_nll.mean().item(),
-            delta_nll=(oracle_nll - candidate_nll).mean().item(),
+            delta_nll=(treated_nll - candidate_nll).mean().item(),
             candidate_kl_to_reference=candidate_kl.mean().item(),
-            oracle_kl_to_reference=oracle_kl.mean().item(),
-            delta_kl=(oracle_kl - candidate_kl).mean().item(),
-            lower_nll_tokens=int((oracle_nll < candidate_nll).sum()),
-            delta_nll_by_request=(oracle_nll - candidate_nll).mean(dim=1).tolist(),
-            delta_kl_by_request=(oracle_kl - candidate_kl).mean(dim=1).tolist(),
+            delta_kl=(treated_kl - candidate_kl).mean().item(),
+            lower_nll_tokens=int((treated_nll < candidate_nll).sum()),
+            delta_nll_by_request=(treated_nll - candidate_nll).mean(dim=1).tolist(),
+            delta_kl_by_request=(treated_kl - candidate_kl).mean(dim=1).tolist(),
+            **{
+                f"{treatment}_nll": treated_nll.mean().item(),
+                f"{treatment}_kl_to_reference": treated_kl.mean().item(),
+            },
         )
-    reference.emit("result", decision="L23_ORACLE_MEASURED", graph_replay="GREEN", task_quality="UNVERIFIED")
 
 
 def main():

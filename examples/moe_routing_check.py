@@ -115,7 +115,9 @@ def make_inputs(model, dest):
     )
 
 
-def collect(args, *, probe_architecture="Qwen3MoeRoutingProbeForCausalLM", reference_routes=None):
+def collect(
+    args, *, probe_architecture="Qwen3MoeRoutingProbeForCausalLM", reference_routes=None, l23_attention_source=None
+):
     import torch
     from vllm import LLM
 
@@ -126,6 +128,10 @@ def collect(args, *, probe_architecture="Qwen3MoeRoutingProbeForCausalLM", refer
     if len(samples) != 4 or any(len(s["prompt"]) != PREFILL or len(s["forced"]) != DECODE + 1 for s in samples):
         raise ValueError("Unexpected fixed input manifest")
     overrides = {"architectures": [probe_architecture]} if args.phase == "probe" else None
+    if l23_attention_source is not None:
+        if overrides is None or reference_routes is not None:
+            raise ValueError("Attention fallback requires the probe with native routing")
+        overrides["routing_probe_l23_attention_source"] = str(l23_attention_source)
     llm = LLM(
         model=args.model,
         dtype="bfloat16",
