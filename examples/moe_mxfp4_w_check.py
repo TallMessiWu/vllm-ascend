@@ -49,12 +49,14 @@ def validate_pair(model, candidate):
     if (
         manifest.get("status") != "COMPLETE"
         or manifest.get("candidate") != "R-M16"
-        or manifest.get("source") != str(source)
-        or manifest.get("output") != str(target)
         or recipe != expected
         or manifest.get("statistics", {}).get("changed_values", 0) <= 0
     ):
         raise ValueError("Wrong candidate identity/recipe or no actual quantization")
+    for key, directory in (("source", source), ("output", target)):
+        recorded = manifest.get(key)
+        if not isinstance(recorded, str) or not Path(recorded).is_absolute() or Path(recorded).resolve() != directory:
+            raise ValueError("Reference/candidate directory does not match conversion manifest")
     for name, key in (("config.json", "source_config_sha256"), ("model.safetensors.index.json", "source_index_sha256")):
         for root in (source, target):
             if hashlib.sha256((root / name).read_bytes()).hexdigest() != manifest.get(key):

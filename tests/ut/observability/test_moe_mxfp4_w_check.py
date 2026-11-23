@@ -254,6 +254,12 @@ class MXFP4WeightDriverTests(unittest.TestCase):
         metadata.write_text(json.dumps(manifest))
         with patch.object(self.reference, "validate_model", return_value={"norm_topk_prob": True}):
             self.assertEqual(self.driver.validate_pair(*map(str, roots)), manifest)
+            alias = self.folder / "weights-mount"
+            alias.symlink_to(self.folder.resolve(), target_is_directory=True)
+            source, target = [str(alias.absolute() / root.name) for root in roots]
+            manifest.update(source=source, output=target)
+            metadata.write_text(json.dumps(manifest))
+            self.assertEqual(self.driver.validate_pair(source, target), manifest)
             manifest["statistics"]["changed_values"] = 0
             metadata.write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
