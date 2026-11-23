@@ -12,6 +12,10 @@ def register_model():
         "vllm_ascend.models.qwen3_moe_l23_oracle:Qwen3MoeL23OracleForCausalLM",
     )
     ModelRegistry.register_model(
+        "Qwen3MoeAttentionFallbackForCausalLM",
+        "vllm_ascend.models.qwen3_moe_attention_fallback:Qwen3MoeAttentionFallbackForCausalLM",
+    )
+    ModelRegistry.register_model(
         "Qwen4ExpForCausalLM",
         "vllm_ascend.models.qwen4_exp:AscendQwen4ExpForCausalLM",
     )

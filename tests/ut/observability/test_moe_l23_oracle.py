@@ -17,6 +17,50 @@ from test_moe_routing_runtime import external_module, load
 
 
 class Layer23OracleTests(unittest.TestCase):
+    def setUp(self):
+        self.attention_loader = load("attention_loader_fixture", "vllm_ascend/observability/moe_attention_fallback.py")
+
+    def test_serving_candidate_only_changes_the_sixteen_selected_projections(self):
+        class NativeModel(torch.nn.Module):
+            def __init__(self, *, vllm_config, prefix):
+                super().__init__()
+
+            def load_weights(self, weights):
+                self.received = dict(weights)
+                return set(self.received)
+
+        modules = {
+            "vllm.model_executor.models.qwen3_moe": external_module(Qwen3MoeForCausalLM=NativeModel),
+            "vllm.logger": external_module(logger=SimpleNamespace(info=lambda *args: None)),
+            "vllm_ascend.observability.moe_attention_fallback": self.attention_loader,
+            "vllm_ascend.observability.moe_routing": load(
+                "gpqa_serving_routes_fixture", "vllm_ascend/observability/moe_routing.py"
+            ),
+        }
+        with patch.dict(sys.modules, modules):
+            runtime = load("gpqa_serving_fixture", "vllm_ascend/models/qwen3_moe_attention_fallback.py")
+        self.assertEqual(len(runtime.ATTENTION_WEIGHTS), 16)
+        reference = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in runtime.ATTENTION_WEIGHTS}
+        original = {name: torch.zeros_like(weight) for name, weight in reference.items()}
+        outside = "model.layers.11.self_attn.q_proj.weight"
+        original[outside] = torch.full((2, 2), 2, dtype=torch.bfloat16)
+        with tempfile.TemporaryDirectory(dir=".") as folder:
+            root = Path(folder)
+            shard = "model.safetensors"
+            save_file(reference, root / shard)
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": dict.fromkeys(reference, shard)})
+            )
+            for source in (None, root):
+                config = SimpleNamespace(l12_15_attention_source=source)
+                args = SimpleNamespace(model_config=SimpleNamespace(hf_text_config=config))
+                model = runtime.Qwen3MoeAttentionFallbackForCausalLM(vllm_config=args)
+                self.assertEqual(model.load_weights(iter(original.items())), set(original))
+                expected = original if source is None else original | reference
+                for name, tensor in expected.items():
+                    torch.testing.assert_close(model.received[name], tensor)
+                self.assertIs(model.received[outside], original[outside])
+
     def test_fallback_reuses_the_completed_independent_input_manifest(self):
         comparison, _ = driver_module()
         with patch.dict(sys.modules, {"moe_mxfp4_w_check": comparison}):
@@ -57,6 +101,7 @@ class Layer23OracleTests(unittest.TestCase):
                 ObservedRouter=object, Qwen3MoeRoutingProbeForCausalLM=ProbeModel
             ),
             "vllm_ascend.observability.moe_routing": traces,
+            "vllm_ascend.observability.moe_attention_fallback": self.attention_loader,
         }
         with patch.dict(sys.modules, modules):
             runtime = load("l23_attn_weight_fixture", "vllm_ascend/models/qwen3_moe_l23_oracle.py")
@@ -137,6 +182,7 @@ class Layer23OracleTests(unittest.TestCase):
                 ObservedRouter=ObservedRouter, Qwen3MoeRoutingProbeForCausalLM=ProbeModel
             ),
             "vllm_ascend.observability.moe_routing": traces,
+            "vllm_ascend.observability.moe_attention_fallback": self.attention_loader,
         }
         with patch.dict(sys.modules, modules):
             runtime = load("l23_model_fixture", "vllm_ascend/models/qwen3_moe_l23_oracle.py")

@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Layer 23 reference routing for the single-request Qwen3 MoE diagnostic."""
 
-import json
-from pathlib import Path
-
 import torch
-from safetensors import safe_open
 
 from vllm_ascend.models.qwen3_moe_routing_probe import ObservedRouter, Qwen3MoeRoutingProbeForCausalLM
+from vllm_ascend.observability.moe_attention_fallback import load_attention_fallback
 from vllm_ascend.observability.moe_routing import (
     ATTENTION_BANDS,
     DECODE_ROWS,
@@ -18,19 +15,6 @@ from vllm_ascend.observability.moe_routing import (
 )
 
 ATTENTION_WEIGHTS = attention_projection_names((ORACLE_LAYER,))
-
-
-def load_reference_attention(path, names):
-    root = Path(path).resolve()
-    index = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
-    weights = {}
-    for name in sorted(names):
-        shard = (root / index[name]).resolve()
-        if not shard.is_relative_to(root):
-            raise ValueError("Reference attention shard escapes the checkpoint")
-        with safe_open(shard, framework="pt", device="cpu") as handle:
-            weights[name] = handle.get_tensor(name)
-    return weights
 
 
 class Layer23OracleRouter(ObservedRouter):
@@ -91,30 +75,7 @@ class Qwen3MoeL23OracleForCausalLM(Qwen3MoeRoutingProbeForCausalLM):
             if self.attention_band is None
             else attention_projection_names((ATTENTION_BANDS | MIDDLE_BANDS)[self.attention_band])
         )
-        replacements = load_reference_attention(self.attention_reference, names)
-        seen, changed = set(), set()
-
-        def overlay():
-            for name, original in weights:
-                if name not in replacements:
-                    yield name, original
-                    continue
-                replacement = replacements[name]
-                if (
-                    name in seen
-                    or original.shape != replacement.shape
-                    or original.dtype != torch.bfloat16
-                    or replacement.dtype != original.dtype
-                ):
-                    raise ValueError(f"Invalid attention replacement: {name}")
-                seen.add(name)
-                if not torch.equal(original.cpu(), replacement):
-                    changed.add(name)
-                yield name, replacement
-
-        loaded = super().load_weights(overlay())
-        if seen != names or not changed:
-            raise ValueError("Attention replacement was incomplete or had no numerical effect")
+        loaded, seen, changed = load_attention_fallback(super().load_weights, weights, self.attention_reference, names)
         self.routing_config["attention_fallback_loaded"] = sorted(seen)
         self.routing_config["attention_fallback_changed"] = sorted(changed)
         return loaded
