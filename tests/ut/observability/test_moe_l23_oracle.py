@@ -20,7 +20,7 @@ class Layer23OracleTests(unittest.TestCase):
     def setUp(self):
         self.attention_loader = load("attention_loader_fixture", "vllm_ascend/observability/moe_attention_fallback.py")
 
-    def test_serving_candidate_only_changes_the_sixteen_selected_projections(self):
+    def test_serving_candidate_only_changes_the_selected_projections(self):
         class NativeModel(torch.nn.Module):
             def __init__(self, *, vllm_config, prefix):
                 super().__init__()
@@ -40,7 +40,14 @@ class Layer23OracleTests(unittest.TestCase):
         with patch.dict(sys.modules, modules):
             runtime = load("gpqa_serving_fixture", "vllm_ascend/models/qwen3_moe_attention_fallback.py")
         self.assertEqual(len(runtime.ATTENTION_WEIGHTS), 16)
-        reference = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in runtime.ATTENTION_WEIGHTS}
+        expected_early_weights = {
+            f"model.layers.{layer}.self_attn.{projector}_proj.weight"
+            for layer in range(8)
+            for projector in ("q", "k", "v", "o")
+        }
+        self.assertEqual(runtime.L0_7_ATTENTION_WEIGHTS, expected_early_weights)
+        names = runtime.ATTENTION_WEIGHTS | runtime.L0_7_ATTENTION_WEIGHTS
+        reference = {name: torch.ones(2, 2, dtype=torch.bfloat16) for name in names}
         original = {name: torch.zeros_like(weight) for name, weight in reference.items()}
         outside = "model.layers.11.self_attn.q_proj.weight"
         original[outside] = torch.full((2, 2), 2, dtype=torch.bfloat16)
@@ -51,15 +58,20 @@ class Layer23OracleTests(unittest.TestCase):
             (root / "model.safetensors.index.json").write_text(
                 json.dumps({"weight_map": dict.fromkeys(reference, shard)})
             )
-            for source in (None, root):
-                config = SimpleNamespace(l12_15_attention_source=source)
+            for args_by_band, selected in (
+                ({}, set()),
+                ({"l12_15_attention_source": root}, runtime.ATTENTION_WEIGHTS),
+                ({"l0_7_attention_source": root}, expected_early_weights),
+            ):
+                config = SimpleNamespace(**args_by_band)
                 args = SimpleNamespace(model_config=SimpleNamespace(hf_text_config=config))
                 model = runtime.Qwen3MoeAttentionFallbackForCausalLM(vllm_config=args)
                 self.assertEqual(model.load_weights(iter(original.items())), set(original))
-                expected = original if source is None else original | reference
-                for name, tensor in expected.items():
-                    torch.testing.assert_close(model.received[name], tensor)
-                self.assertIs(model.received[outside], original[outside])
+                for name, tensor in original.items():
+                    if name in selected:
+                        torch.testing.assert_close(model.received[name], reference[name])
+                    else:
+                        self.assertIs(model.received[name], tensor)
 
     def test_fallback_reuses_the_completed_independent_input_manifest(self):
         comparison, _ = driver_module()
