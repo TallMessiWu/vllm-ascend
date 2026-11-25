@@ -54,10 +54,10 @@ def parse_kv_qdq(value: dict | None) -> KVQDQSettings | None:
     if diagnostic_trace and (diagnostic_copy or value["format"] != "mx4" or value["target"] != "kv"):
         raise ValueError("diagnostic_trace requires ordinary mx4 K+V QDQ")
     selection = value.get("mx4_scale_selection", "ceil")
-    if selection not in ("ceil", "mse") or ("mx4_scale_selection" in value and value["format"] != "mx4"):
-        raise ValueError("mx4_scale_selection must be ceil/mse and is only valid for mx4")
-    if selection == "mse" and (value["target"] != "kv" or diagnostic_copy or diagnostic_trace):
-        raise ValueError("MX4 mse scale selection requires K+V QDQ without copy/trace diagnostics")
+    if selection not in ("ceil", "mse", "floor") or ("mx4_scale_selection" in value and value["format"] != "mx4"):
+        raise ValueError("mx4_scale_selection must be ceil/mse/floor and is only valid for mx4")
+    if selection != "ceil" and (value["target"] != "kv" or diagnostic_copy or diagnostic_trace):
+        raise ValueError(f"MX4 {selection} scale selection requires K+V QDQ without copy/trace diagnostics")
     for name, group, scale in FORMATS:
         if value["format"] == name:
             return KVQDQSettings(

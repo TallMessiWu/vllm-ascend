@@ -21,6 +21,7 @@ import torch.nn.functional as F
 FP4_MAX = 6.0
 FP32_MIN_NORMAL = 2.0**-126
 FP32_EXPONENT_SHIFT = 23
+FP4_MAX_EXPONENT = 2
 FP8_MIN = 2.0**-9
 FP8_MAX = 448.0
 # midpoint, upper code, upper code has even least-significant bit
@@ -49,10 +50,10 @@ class FP4Recipe:
             raise ValueError("Unknown scale type")
         if self.scale_type == "e8m0" and self.group_size != 32:
             raise ValueError("MXFP4 requires group32")
-        if self.scale_selection not in ("ceil", "mse") or (
+        if self.scale_selection not in ("ceil", "mse", "floor") or (
             self.scale_selection != "ceil" and self.scale_type != "e8m0"
         ):
-            raise ValueError("scale_selection must be ceil, or mse for MXFP4 only")
+            raise ValueError("scale_selection must be ceil, or mse/floor for MXFP4 only")
         if self.scale_type == "e4m3":
             scale = self.outer_scale
             if (
@@ -184,12 +185,11 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None, exponent
     elif recipe.scale_type == "e4m3":
         scale = _e4m3_round(_e4m3_scale_input(amax, recipe))
     else:
-        # Ceiling power-of-two recipe. Integer exponent extraction avoids log2
-        # rounding a value immediately above a power of two down to that power.
-        raw = (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL)
+        use_floor = recipe.scale_selection == "floor"
+        # Floor uses the largest E2M1 power of two (4); ceil uses its max value (6).
+        raw = amax if use_floor else (amax / FP4_MAX).clamp(min=FP32_MIN_NORMAL)
         # Give integer kernels owning storage instead of a dtype view of the
-        # FP32 allocation. The exponent formula is unchanged; graph validation
-        # is still required for the materialized input on the target device.
+        # FP32 allocation. Keep the caller's persistent device shift for graph replay.
         bits = raw.view(torch.int32).clone(memory_format=torch.contiguous_format)
         if exponent_shift is not None and (
             not isinstance(exponent_shift, torch.Tensor)
@@ -199,7 +199,11 @@ def _quantize_groups(x: torch.Tensor, recipe: FP4Recipe, observer=None, exponent
         ):
             raise ValueError("MX4 exponent_shift must be an initialized int32 [1] tensor on the input device")
         shift = FP32_EXPONENT_SHIFT if exponent_shift is None else exponent_shift
-        exponent = ((bits >> shift) & 255) + ((bits & 0x7FFFFF) != 0).to(torch.int32)
+        exponent = (bits >> shift) & 255
+        if use_floor:
+            exponent = exponent - FP4_MAX_EXPONENT
+        else:
+            exponent = exponent + ((bits & 0x7FFFFF) != 0).to(torch.int32)
         if recipe.scale_selection == "mse":
             ceil_exponent = exponent.clamp(1, 254)
             lower_exponent = (ceil_exponent - 1).clamp(min=1)

@@ -69,6 +69,33 @@ def recipes():
 
 
 class KVFP4Tests(unittest.TestCase):
+    def test_mx4_floor_fixes_the_scale_even_when_ceil_has_lower_mse(self):
+        recipe = codec.FP4Recipe(32, "e8m0", scale_selection="floor")
+        shift = torch.tensor([23], dtype=torch.int32)
+        compiled = torch.compile(
+            lambda x: codec.qdq_fp4(x, recipe, exponent_shift=shift), backend="eager", fullgraph=True
+        )
+        self.addCleanup(torch._dynamo.reset)
+        for maximum, expected_maximum, expected_small, scale_byte in (
+            (6.03125, 6.0, 0.5, 127),
+            (7.5, 6.0, 0.5, 127),
+            (8.0, 8.0, 0.0, 128),
+            (6.03125, 6.0, 0.5, 127),
+        ):
+            x = torch.tensor([[maximum] + [0.375] * 31, [maximum] * 32], dtype=torch.bfloat16)
+            expected = torch.tensor(
+                [[expected_maximum] + [expected_small] * 31, [expected_maximum] * 32], dtype=x.dtype
+            )
+            packed = codec.pack_fp4(x, recipe)
+            self.assertEqual(packed.scales.tolist(), [[scale_byte], [scale_byte]])
+            torch.testing.assert_close(codec.unpack_fp4(packed, x.dtype), expected, rtol=0, atol=0)
+            torch.testing.assert_close(compiled(x), expected, rtol=0, atol=0)
+
+        tiny = torch.full((1, 32), 2.0**-127, dtype=torch.bfloat16)
+        packed = codec.pack_fp4(tiny, recipe)
+        self.assertEqual(packed.scales.tolist(), [[1]])
+        torch.testing.assert_close(codec.unpack_fp4(packed, tiny.dtype), tiny, rtol=0, atol=0)
+
     def test_mx4_mse_keeps_both_sides_low_precision_without_scale_jump_zeroing(self):
         # One outlier crosses the ceil boundary; all other elements are unchanged.
         x = torch.tensor([[6.03125] + [0.375] * 31, [6.03125] * 32, [9.0] * 32], dtype=torch.bfloat16)
@@ -133,7 +160,7 @@ class KVFP4Tests(unittest.TestCase):
             self.assertTrue(torch.isfinite(result[1]).all())
             with self.assertRaises(ValueError):
                 codec.pack_fp4(invalid, recipe)
-        for kind, selection in (("bf16", "mse"), ("e8m0", "floor"), ("e8m0", None)):
+        for kind, selection in (("bf16", "mse"), ("bf16", "floor"), ("e8m0", None)):
             with self.assertRaisesRegex(ValueError, "scale_selection"):
                 codec.FP4Recipe(32, kind, scale_selection=selection)
 
